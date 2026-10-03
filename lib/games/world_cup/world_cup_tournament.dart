@@ -17,6 +17,51 @@ Map<String, WorldCupSquad> buildAllSquads() => {
       for (final n in kWorldCupNations) n.id: initialSquadForNation(n.id),
     };
 
+WorldCupSquad reconcileSquad(WorldCupSquad squad) {
+  if (squadLooksCorrupt(squad)) {
+    return initialSquadForNation(squad.nationId);
+  }
+
+  final canonical = playersForNation(squad.nationId);
+  final canonicalIds = canonical.map((p) => p.id).toSet();
+
+  var ids = squad.playerIds.where((id) {
+    if (isBannedPlayerId(id)) return false;
+    if (id.startsWith('${squad.nationId}_') && canonicalIds.contains(id)) {
+      return true;
+    }
+    if (!id.startsWith('${squad.nationId}_')) {
+      final foreign = playerById(id);
+      return foreign.nationId != squad.nationId && foreign.id == id;
+    }
+    return false;
+  }).toList();
+
+  for (final p in canonical) {
+    if (ids.length >= kWorldCupSquadSize) break;
+    if (!ids.contains(p.id)) ids.add(p.id);
+  }
+  ids = ids.take(kWorldCupSquadSize).toList();
+
+  var xi = squad.startingXiIds.where(ids.contains).take(kWorldCupStartingXi).toList();
+  for (final id in ids) {
+    if (xi.length >= kWorldCupStartingXi) break;
+    if (!xi.contains(id)) xi.add(id);
+  }
+
+  return squad.copyWith(
+    playerIds: ids,
+    startingXiIds: xi.take(kWorldCupStartingXi).toList(),
+  );
+}
+
+WorldCupRun rehydrateWorldCupRun(WorldCupRun run) {
+  final squads = <String, WorldCupSquad>{
+    for (final e in run.squads.entries) e.key: reconcileSquad(e.value),
+  };
+  return run.copyWith(squads: squads);
+}
+
 WorldCupRun createTournament(String userNationId) {
   validateWorldCup2026Field();
   final letter = groupLetterForNation(userNationId)!;
@@ -72,6 +117,7 @@ WorldCupRun updateSquad(WorldCupRun run, WorldCupSquad squad) {
 }
 
 WorldCupSquad addPlayerToSquad(WorldCupSquad squad, WorldCupPlayer player) {
+  if (isBannedPlayer(player)) return squad;
   if (squad.playerIds.contains(player.id)) return squad;
   final ids = [...squad.playerIds, player.id];
   var xi = List<String>.from(squad.startingXiIds);
@@ -85,7 +131,7 @@ WorldCupSquad removePlayerFromSquad(WorldCupSquad squad, String playerId) {
   if (xi.length < kWorldCupStartingXi && ids.isNotEmpty) {
     final bench = ids.where((id) => !xi.contains(id)).toList()
       ..sort(
-        (a, b) => playerById(b).rating2526.compareTo(playerById(a).rating2526),
+        (a, b) => playerFromSquad(squad, b).rating2526.compareTo(playerFromSquad(squad, a).rating2526),
       );
     for (final id in bench) {
       if (xi.length >= kWorldCupStartingXi) break;
@@ -97,8 +143,7 @@ WorldCupSquad removePlayerFromSquad(WorldCupSquad squad, String playerId) {
 
 List<WorldCupPlayer> stealablePlayers(WorldCupRun run, String loserId) {
   final squad = squadOf(run, loserId);
-  return squad.playerIds.map(playerById).toList()
-    ..sort((a, b) => b.rating2526.compareTo(a.rating2526));
+  return squadPlayers(squad)..sort((a, b) => b.rating2526.compareTo(a.rating2526));
 }
 
 ({WorldCupRun run, String news}) applyAutoTransfer(
@@ -111,7 +156,10 @@ List<WorldCupPlayer> stealablePlayers(WorldCupRun run, String loserId) {
   if (loserSquad.playerIds.isEmpty) {
     return (run: run, news: '${nationById(winnerId).name} beat ${nationById(loserId).name}');
   }
-  final pick = stealablePlayers(run, loserId);
+  final pick = stealablePlayers(run, loserId).where((p) => !isBannedPlayer(p)).toList();
+  if (pick.isEmpty) {
+    return (run: run, news: '${nationById(winnerId).name} beat ${nationById(loserId).name}');
+  }
   final stolen = pick[rng.nextInt(pick.length)];
   var updated = run;
   updated = updateSquad(
@@ -197,10 +245,12 @@ MatchApplyResult recordMatchResult(
 }
 
 WorldCupRun applyUserSteal(WorldCupRun run, String playerId) {
+  if (isBannedPlayerId(playerId)) return run.copyWith(clearTransfer: true);
   final w = run.transferWinnerId!;
   final l = run.transferLoserId!;
   var updated = run;
   final player = playerById(playerId);
+  if (isBannedPlayer(player)) return run.copyWith(clearTransfer: true);
   updated = updateSquad(updated, removePlayerFromSquad(squadOf(updated, l), playerId));
   updated = updateSquad(updated, addPlayerToSquad(squadOf(updated, w), player));
   final line =

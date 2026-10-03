@@ -246,6 +246,8 @@ class SaveService {
 
   static const String _worldCupCoinsKey = 'world_cup_coins';
   static const String _worldCupOwnedNationsKey = 'world_cup_owned_nations';
+  static const String _worldCupSaveVersionKey = 'world_cup_save_version';
+  static const int kWorldCupSaveVersion = 4;
 
   int get worldCupCoins => _prefs.getInt(_worldCupCoinsKey) ?? 0;
 
@@ -260,12 +262,18 @@ class SaveService {
   Future<void> ensureWorldCupDefaults() async {
     if (!_prefs.containsKey(_worldCupOwnedNationsKey)) {
       await _prefs.setStringList(_worldCupOwnedNationsKey, const ['jpn', 'alg', 'aut']);
-      return;
+    } else {
+      final stored = List<String>.from(_prefs.getStringList(_worldCupOwnedNationsKey) ?? []);
+      if (!stored.contains('jpn')) {
+        stored.insert(0, 'jpn');
+        await _prefs.setStringList(_worldCupOwnedNationsKey, stored);
+      }
     }
-    final stored = List<String>.from(_prefs.getStringList(_worldCupOwnedNationsKey) ?? []);
-    if (!stored.contains('jpn')) {
-      stored.insert(0, 'jpn');
-      await _prefs.setStringList(_worldCupOwnedNationsKey, stored);
+
+    final version = _prefs.getInt(_worldCupSaveVersionKey) ?? 0;
+    if (version < kWorldCupSaveVersion) {
+      await _prefs.remove(_worldCupActiveRunKey);
+      await _prefs.setInt(_worldCupSaveVersionKey, kWorldCupSaveVersion);
     }
   }
 }

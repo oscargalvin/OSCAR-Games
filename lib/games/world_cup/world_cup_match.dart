@@ -99,7 +99,7 @@ class WorldCupLiveMatch {
   }
 
   MatchActionResult _pass(double userStrength, double oppStrength) {
-    final gain = 16 + (sprintTicks > 0 ? 10 : 0) + (userStrength / oppStrength) * 4;
+    final gain = 20 + (sprintTicks > 0 ? 12 : 0) + (userStrength / oppStrength) * 5;
     buildup = (buildup + gain).clamp(0, 100);
     fuel = (fuel - 4).clamp(0, 100);
     _say('Pass · Build ${buildup.round()}%');
@@ -107,7 +107,7 @@ class WorldCupLiveMatch {
   }
 
   MatchActionResult _cross(double userStrength) {
-    if (buildup < 30) {
+    if (buildup < 15) {
       _say('Pass more before you cross');
       return MatchActionResult.none;
     }
@@ -127,7 +127,7 @@ class WorldCupLiveMatch {
     if (freeKickActive) {
       return _freeKick(rng: rng, userIsHome: userIsHome, userStrength: userStrength);
     }
-    final need = crossReady ? 25.0 : 40.0;
+    final need = crossReady ? 18.0 : 28.0;
     if (buildup < need) {
       _say('Build up with Pass first');
       return MatchActionResult.none;
@@ -144,6 +144,14 @@ class WorldCupLiveMatch {
     }
     _say('Off target!');
     return MatchActionResult.none;
+  }
+
+  void onDribble(double forward) {
+    if (forward <= 0.05) return;
+    buildup = (buildup + forward * 3.5).clamp(0, 100);
+    fuel = (fuel - 0.4).clamp(0, 100);
+    if (sprintTicks > 0) buildup = (buildup + 1.5).clamp(0, 100);
+    if (feedbackTicks == 0) _say('Dribbling · ${buildup.round()}%');
   }
 
   MatchActionResult _freeKick({

@@ -15,6 +15,7 @@ import 'world_cup_groups.dart';
 import 'world_cup_logic.dart';
 import 'world_cup_match.dart';
 import 'world_cup_models.dart';
+import 'world_cup_joystick.dart';
 import 'world_cup_lineup.dart';
 import 'world_cup_match_sim.dart';
 import 'world_cup_pitch.dart';
@@ -52,6 +53,10 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
   String? _championNationName;
   final _liveMatch = WorldCupLiveMatch();
   final _rng = Random();
+  Offset _playerPos = defaultPickSpawn(userIsHome: true);
+  Offset _ballPos = defaultPickSpawn(userIsHome: true);
+  Offset _joystickDir = Offset.zero;
+  Timer? _moveTimer;
   final _countrySearchController = TextEditingController();
   String? _countryLetterFilter;
 
@@ -65,6 +70,10 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
     _coins = save.worldCupCoins;
     _ownedNationIds = List<String>.from(save.worldCupOwnedNationIds);
     _run = decodeWorldCupRun(save.worldCupActiveRunJson);
+    if (_run != null) {
+      _run = rehydrateWorldCupRun(_run!);
+      _persist(runOverride: _run);
+    }
     if (_run != null) {
       if (userMustSteal(_run!)) {
         _phase = WorldCupPhase.stealPlayer;
@@ -87,6 +96,7 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
   @override
   void dispose() {
     _matchTimer?.cancel();
+    _moveTimer?.cancel();
     _countrySearchController.dispose();
     super.dispose();
   }
@@ -129,8 +139,8 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
 
   WorldCupPlayer? _pickedPlayer() {
     final id = _run?.matchPickPlayerId;
-    if (id == null) return null;
-    return playerById(id);
+    if (id == null || _run == null) return null;
+    return playerFromSquad(_run!.squad, id);
   }
 
   void _grantCoinReward(WorldCupRun run, {required bool champion}) {
@@ -232,8 +242,12 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
     _lastAwayId = sides.$2;
     _liveMatch.reset();
     _lastMatchGoals = [];
+    final userIsHome = sides.$1 == run.userNationId;
+    _playerPos = defaultPickSpawn(userIsHome: userIsHome);
+    _ballPos = ballOffsetFromPlayer(_playerPos, userIsHome: userIsHome);
+    _joystickDir = Offset.zero;
     _liveMatch
-      ..feedback = 'Pass · Cross · Shoot · Tackle — use the buttons below!'
+      ..feedback = 'Joystick = move · Pass · Cross · Shoot · Sprint on the right'
       ..feedbackTicks = 0;
     setState(() {
       _secondsLeft = kWorldCupMatchSeconds;
@@ -244,10 +258,38 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
     });
     _matchTimer?.cancel();
     _matchTimer = Timer.periodic(const Duration(seconds: 1), _onMatchTick);
+    _moveTimer?.cancel();
+    _moveTimer = Timer.periodic(const Duration(milliseconds: 50), _onMoveTick);
+  }
+
+  void _onJoystick(Offset dir) {
+    _joystickDir = dir;
+  }
+
+  void _onMoveTick(Timer _) {
+    if (_phase != WorldCupPhase.matchLive || _run == null) return;
+    if (_joystickDir.distance < 0.08) return;
+
+    final run = _run!;
+    final sides = pendingFixtureSides(run)!;
+    final userIsHome = sides.$1 == run.userNationId;
+    const speed = 0.016;
+    final sprintMult = _liveMatch.sprintTicks > 0 ? 1.55 : 1.0;
+    final moveY = userIsHome ? _joystickDir.dy : -_joystickDir.dy;
+
+    setState(() {
+      _playerPos = Offset(
+        (_playerPos.dx + _joystickDir.dx * speed * sprintMult).clamp(0.08, 0.92),
+        (_playerPos.dy + moveY * speed * sprintMult).clamp(0.08, 0.92),
+      );
+      _ballPos = ballOffsetFromPlayer(_playerPos, userIsHome: userIsHome);
+      _liveMatch.onDribble(forwardMotion(_joystickDir, userIsHome: userIsHome));
+    });
   }
 
   void _onMatchAction(MatchAction action) {
     if (_phase != WorldCupPhase.matchLive || _run == null) return;
+    SoundService.instance.play(GameSound.tap);
     final run = _run!;
     final sides = pendingFixtureSides(run)!;
     final homeId = sides.$1;
@@ -258,17 +300,56 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
     final oppId = userIsHome ? awayId : homeId;
     final oppStr = strengthForSide(run, oppId);
 
+    _nudgePlayerForAction(action, userIsHome);
+
+    var boost = _pickPlayerBoost();
+    if (action == MatchAction.shoot) {
+      boost += _shootZoneBoost(userIsHome);
+    }
+
     final result = _liveMatch.handle(
       action,
       rng: _rng,
       userIsHome: userIsHome,
       userStrength: userStr,
       oppStrength: oppStr,
-      pickBoost: _pickPlayerBoost(),
+      pickBoost: boost,
     );
     _applyLiveGoal(result);
     HapticFeedback.selectionClick();
     setState(() {});
+  }
+
+  void _nudgePlayerForAction(MatchAction action, bool userIsHome) {
+    final step = userIsHome ? -1.0 : 1.0;
+    switch (action) {
+      case MatchAction.pass:
+        _playerPos = Offset(
+          _playerPos.dx.clamp(0.08, 0.92),
+          (_playerPos.dy + step * 0.05).clamp(0.08, 0.92),
+        );
+      case MatchAction.cross:
+        _playerPos = Offset(
+          (_playerPos.dx + (_playerPos.dx < 0.5 ? -0.06 : 0.06)).clamp(0.08, 0.92),
+          (_playerPos.dy + step * 0.04).clamp(0.08, 0.92),
+        );
+      case MatchAction.shoot:
+        _playerPos = Offset(
+          _playerPos.dx.clamp(0.08, 0.92),
+          (_playerPos.dy + step * 0.08).clamp(0.08, 0.92),
+        );
+      case MatchAction.sprint:
+      case MatchAction.tackle:
+      case MatchAction.freeKick:
+        break;
+    }
+    _ballPos = ballOffsetFromPlayer(_playerPos, userIsHome: userIsHome);
+  }
+
+  double _shootZoneBoost(bool userIsHome) {
+    if (userIsHome && _playerPos.dy < 0.42) return 15;
+    if (!userIsHome && _playerPos.dy > 0.58) return 15;
+    return 0;
   }
 
   void _applyLiveGoal(MatchActionResult result) {
@@ -379,6 +460,7 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
 
     if (_secondsLeft <= 0) {
       t.cancel();
+      _moveTimer?.cancel();
       _lastHomeGoals = _liveHomeGoals;
       _lastAwayGoals = _liveAwayGoals;
       _applyPendingMatchResult(_liveHomeGoals, _liveAwayGoals);
@@ -402,6 +484,7 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
 
   void _forfeitRun() {
     _matchTimer?.cancel();
+    _moveTimer?.cancel();
     setState(() => _run = null);
     _persist(clearRun: true);
     _go(WorldCupPhase.hub);
@@ -1113,6 +1196,8 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
     final mm = (_secondsLeft ~/ 60).toString().padLeft(2, '0');
     final ss = (_secondsLeft % 60).toString().padLeft(2, '0');
     final pick = _pickedPlayer();
+    final homeXi = startingXiPlayers(squadOf(run, fix.homeNationId));
+    final awayXi = startingXiPlayers(squadOf(run, fix.awayNationId));
 
     return Column(
       children: [
@@ -1148,7 +1233,11 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
                     userNationId: run.userNationId,
                     homeGoals: _liveHomeGoals,
                     awayGoals: _liveAwayGoals,
+                    homePlayers: homeXi,
+                    awayPlayers: awayXi,
                     pickPlayer: pick,
+                    playerPos: _playerPos,
+                    ballPos: _ballPos,
                     fuel: _liveMatch.fuel,
                     buildup: _liveMatch.buildup,
                   ),
@@ -1194,48 +1283,64 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
           color: AppTheme.surface.withValues(alpha: 0.92),
           border: Border(top: BorderSide(color: AppTheme.textSecondary.withValues(alpha: 0.15))),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Row(
-              children: [
-                Expanded(child: _ctrlBtn('Pass', Icons.swap_horiz_rounded, AppTheme.blue, MatchAction.pass)),
-                const SizedBox(width: 8),
-                Expanded(child: _ctrlBtn('Cross', Icons.upload_rounded, AppTheme.purple, MatchAction.cross)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _ctrlBtn(
-                    'Shoot',
-                    Icons.sports_soccer_rounded,
-                    AppTheme.warning,
-                    MatchAction.shoot,
-                    emphasized: true,
+            VirtualJoystick(onDirectionChanged: _onJoystick, size: 128),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _ctrlBtn('Pass', Icons.swap_horiz_rounded, AppTheme.blue, MatchAction.pass),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _ctrlBtn(
+                          'Shoot',
+                          Icons.sports_soccer_rounded,
+                          AppTheme.warning,
+                          MatchAction.shoot,
+                          emphasized: true,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _ctrlBtn('Tackle', Icons.shield_rounded, AppTheme.blue, MatchAction.tackle),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: _ctrlBtn(
-                    'Free Kick',
-                    Icons.flag_rounded,
-                    _liveMatch.freeKickActive ? AppTheme.warning : AppTheme.textSecondary,
-                    MatchAction.freeKick,
-                    enabled: _liveMatch.freeKickActive,
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _ctrlBtn('Cross', Icons.upload_rounded, AppTheme.purple, MatchAction.cross),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _ctrlBtn(
+                          'Sprint',
+                          Icons.directions_run_rounded,
+                          AppTheme.success,
+                          MatchAction.sprint,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _ctrlBtn('Sprint', Icons.directions_run_rounded, AppTheme.success, MatchAction.sprint),
-                ),
-              ],
+                  if (_liveMatch.freeKickActive) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: _ctrlBtn(
+                        'Free Kick',
+                        Icons.flag_rounded,
+                        AppTheme.warning,
+                        MatchAction.freeKick,
+                        emphasized: true,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
         ),
@@ -1249,30 +1354,30 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
     Color color,
     MatchAction action, {
     bool emphasized = false,
-    bool enabled = true,
   }) {
-    return Material(
-      color: emphasized ? color.withValues(alpha: 0.25) : color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: enabled ? () => _onMatchAction(action) : () => _onMatchAction(action),
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Column(
-            children: [
-              Icon(icon, color: enabled ? color : color.withValues(alpha: 0.4), size: emphasized ? 28 : 24),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: emphasized ? 13 : 12,
-                  fontWeight: FontWeight.bold,
-                  color: enabled ? color : color.withValues(alpha: 0.45),
-                ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _onMatchAction(action),
+      child: Container(
+        decoration: BoxDecoration(
+          color: emphasized ? color.withValues(alpha: 0.28) : color.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: emphasized ? 0.7 : 0.35), width: emphasized ? 2 : 1),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: emphasized ? 30 : 26),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: emphasized ? 14 : 13,
+                fontWeight: FontWeight.bold,
+                color: color,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1461,7 +1566,7 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
     final run = _run!;
     final winnerId = run.transferWinnerId!;
     final squad = run.squad;
-    final players = squad.playerIds.map(playerById).toList()
+    final players = squadPlayers(squad)
       ..sort((a, b) => b.rating2526.compareTo(a.rating2526));
 
     return ListView(
@@ -1537,7 +1642,7 @@ class _WorldCupScreenState extends State<WorldCupScreen> {
   }
 
   Widget _buildSquadCard(WorldCupSquad squad) {
-    final players = squad.playerIds.map(playerById).toList()
+    final players = squadPlayers(squad)
       ..sort((a, b) => b.rating2526.compareTo(a.rating2526));
     final xi = squad.startingXiIds.toSet();
     final starters = players.where((p) => xi.contains(p.id)).toList();

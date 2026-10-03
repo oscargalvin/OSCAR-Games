@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'world_cup_data.dart';
+import 'world_cup_lineup.dart';
 import 'world_cup_logic.dart';
 import 'world_cup_models.dart';
 
@@ -34,10 +35,11 @@ class SimulatedMatch {
 }
 
 WorldCupPlayer pickGoalScorer(WorldCupSquad squad, Random rng) {
-  final xi = squad.startingXiIds.map(playerById).toList();
+  final xi = startingPlayers(squad);
   if (xi.isEmpty) {
-    return squad.playerIds.isNotEmpty
-        ? playerById(squad.playerIds.first)
+    final all = squadPlayers(squad);
+    return all.isNotEmpty
+        ? all.first
         : const WorldCupPlayer(
             id: 'unknown',
             name: 'Unknown',
@@ -94,7 +96,7 @@ SimulatedMatch simulateMatchDetailed({
       if (preferredHomeScorerId != null &&
           homeSquad.startingXiIds.contains(preferredHomeScorerId) &&
           rng.nextDouble() < 0.55) {
-        scorer = playerById(preferredHomeScorerId);
+        scorer = playerFromSquad(homeSquad, preferredHomeScorerId);
       } else {
         scorer = pickGoalScorer(homeSquad, rng);
       }
@@ -113,7 +115,7 @@ SimulatedMatch simulateMatchDetailed({
       if (preferredAwayScorerId != null &&
           awaySquad.startingXiIds.contains(preferredAwayScorerId) &&
           rng.nextDouble() < 0.55) {
-        scorer = playerById(preferredAwayScorerId);
+        scorer = playerFromSquad(awaySquad, preferredAwayScorerId);
       } else {
         scorer = pickGoalScorer(awaySquad, rng);
       }
@@ -144,7 +146,7 @@ MatchGoal liveGoalEvent({
   if (preferredScorerId != null &&
       squad.startingXiIds.contains(preferredScorerId) &&
       rng.nextDouble() < 0.6) {
-    scorer = playerById(preferredScorerId);
+    scorer = playerFromSquad(squad, preferredScorerId);
   } else {
     scorer = pickGoalScorer(squad, rng);
   }

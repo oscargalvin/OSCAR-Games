@@ -1,6 +1,7 @@
 import 'world_cup_models.dart';
 import 'world_cup_nations.dart';
 import 'world_cup_ratings.dart';
+import 'world_cup_rosters.dart';
 
 export 'world_cup_nations.dart'
     show kWorldCupNations, kHandcraftedNationIds, kWorldCupQualifiedTeamCount, confederationForNation;
@@ -10,10 +11,25 @@ export 'world_cup_ratings.dart'
 WorldCupNation nationById(String id) =>
     kWorldCupNations.firstWhere((n) => n.id == id, orElse: () => kWorldCupNations.first);
 
+/// Banned from the entire game — never appears in any squad or lookup.
+const Set<String> kBannedPlayerIds = {'bra_alisson'};
+const Set<String> kBannedPlayerNames = {'Alisson'};
+
+bool isBannedPlayer(WorldCupPlayer player) {
+  final lower = player.name.toLowerCase();
+  return kBannedPlayerIds.contains(player.id) ||
+      kBannedPlayerNames.any((n) => lower.contains(n.toLowerCase()));
+}
+
+bool isBannedPlayerId(String id) => kBannedPlayerIds.contains(id);
+
+List<WorldCupPlayer> withoutBannedPlayers(Iterable<WorldCupPlayer> players) =>
+    players.where((p) => !isBannedPlayer(p)).toList();
+
 /// Raw curated values — normalized to 1–99 (England → 1, Japan → 99) via [kWorldCupPlayerPool].
 const List<WorldCupPlayer> _kWorldCupPlayerPoolRaw = [
   // Brazil
-  WorldCupPlayer(id: 'bra_alisson', name: 'Alisson', nationId: 'bra', position: 'GK', rating2526: 89),
+  WorldCupPlayer(id: 'bra_ederson', name: 'Ederson', nationId: 'bra', position: 'GK', rating2526: 89),
   WorldCupPlayer(id: 'bra_marquinhos', name: 'Marquinhos', nationId: 'bra', position: 'DEF', rating2526: 88),
   WorldCupPlayer(id: 'bra_militao', name: 'Militão', nationId: 'bra', position: 'DEF', rating2526: 86),
   WorldCupPlayer(id: 'bra_casemiro', name: 'Casemiro', nationId: 'bra', position: 'MID', rating2526: 85),
@@ -225,16 +241,27 @@ const List<WorldCupPlayer> _kWorldCupPlayerPoolRaw = [
 ];
 
 List<WorldCupPlayer> get kWorldCupPlayerPool =>
-    _kWorldCupPlayerPoolRaw.map(normalizePlayerRating).toList();
+    withoutBannedPlayers(_kWorldCupPlayerPoolRaw.map(normalizePlayerRating));
 
-final Map<String, WorldCupPlayer> kWorldCupPlayerById = {
-  for (final p in kWorldCupPlayerPool) p.id: p,
-};
+final Map<String, WorldCupPlayer> _allPlayersById = {};
+bool _allPlayersCacheBuilt = false;
+
+void _ensureAllPlayersCache() {
+  if (_allPlayersCacheBuilt) return;
+  for (final nation in kWorldCupNations) {
+    for (final p in playersForNation(nation.id)) {
+      if (!isBannedPlayer(p)) {
+        _allPlayersById[p.id] = p;
+      }
+    }
+  }
+  _allPlayersCacheBuilt = true;
+}
 
 List<WorldCupPlayer> playersForNation(String nationId) {
-  final generated = _generatedPlayersForNation(nationId);
+  final generated = withoutBannedPlayers(_generatedPlayersForNation(nationId));
   final handcrafted =
-      kWorldCupPlayerPool.where((p) => p.nationId == nationId).toList()
+      withoutBannedPlayers(kWorldCupPlayerPool.where((p) => p.nationId == nationId)).toList()
         ..sort((a, b) => b.rating2526.compareTo(a.rating2526));
   if (handcrafted.isEmpty) return generated;
 
@@ -245,7 +272,7 @@ List<WorldCupPlayer> playersForNation(String nationId) {
     merged.add(filler);
   }
   merged.sort((a, b) => b.rating2526.compareTo(a.rating2526));
-  return merged.take(kWorldCupSquadSize).toList();
+  return withoutBannedPlayers(merged.take(kWorldCupSquadSize));
 }
 
 /// 11 starters + 7 on the bench.
@@ -268,7 +295,13 @@ List<WorldCupPlayer> _generatedPlayersForNation(String nationId) {
   for (var i = 0; i < kWorldCupSquadSize; i++) {
     final pos = _genPositions[i];
     final roleNames = _genRoleNames[pos]!;
-    final name = roleNames[(seed + i) % roleNames.length];
+    final names = kRealSquadNames[nationId];
+    var name = names != null && names.length > i
+        ? names[i]
+        : roleNames[(seed + i) % roleNames.length];
+    if (name.toLowerCase().contains('alisson')) {
+      name = '${roleNames[(seed + i + 2) % roleNames.length]} (${nation.name})';
+    }
     final rating = seasonRatingForGeneratedNation(
       nationId,
       base,
@@ -277,7 +310,7 @@ List<WorldCupPlayer> _generatedPlayersForNation(String nationId) {
     );
     players.add(WorldCupPlayer(
       id: '${nationId}_gen_$i',
-      name: '$name (${nation.name})',
+      name: names != null ? name : '$name (${nation.name})',
       nationId: nationId,
       position: pos,
       rating2526: rating.toDouble(),
@@ -286,8 +319,118 @@ List<WorldCupPlayer> _generatedPlayersForNation(String nationId) {
   return players;
 }
 
-WorldCupPlayer playerById(String id) =>
-    kWorldCupPlayerById[id] ?? kWorldCupPlayerPool.first;
+WorldCupPlayer playerById(String id) {
+  if (id.isEmpty) {
+    return WorldCupPlayer(
+      id: 'unknown',
+      name: 'Unknown',
+      nationId: 'unk',
+      position: 'MID',
+      rating2526: kPlayerRatingFloor.toDouble(),
+    );
+  }
+
+  if (isBannedPlayerId(id)) {
+    final nationId = id.split('_').first;
+    final pool = playersForNation(nationId);
+    if (pool.isNotEmpty) return pool.first;
+    return WorldCupPlayer(
+      id: 'unknown',
+      name: 'Unknown',
+      nationId: nationId,
+      position: 'MID',
+      rating2526: kPlayerRatingFloor.toDouble(),
+    );
+  }
+
+  _ensureAllPlayersCache();
+  final cached = _allPlayersById[id];
+  if (cached != null) {
+    if (isBannedPlayer(cached)) {
+      final pool = playersForNation(cached.nationId);
+      return pool.isNotEmpty ? pool.first : cached;
+    }
+    return cached;
+  }
+
+  final nationId = id.split('_').first;
+  if (nationId.length == 3 && kWorldCupNations.any((n) => n.id == nationId)) {
+    for (final p in playersForNation(nationId)) {
+      if (p.id == id) {
+        _allPlayersById[id] = p;
+        return p;
+      }
+    }
+  }
+
+  for (final p in kWorldCupPlayerPool) {
+    if (p.id == id) {
+      _allPlayersById[id] = p;
+      return p;
+    }
+  }
+
+  return WorldCupPlayer(
+    id: id,
+    name: 'Unknown player',
+    nationId: nationId.length == 3 ? nationId : 'unk',
+    position: 'MID',
+    rating2526: kPlayerRatingFloor.toDouble(),
+  );
+}
+
+/// Squad list for UI — always uses the correct national roster (never a wrong fallback).
+List<WorldCupPlayer> squadPlayers(WorldCupSquad squad) {
+  final canonById = {for (final p in playersForNation(squad.nationId)) p.id: p};
+  final seen = <String>{};
+  final out = <WorldCupPlayer>[];
+
+  void add(WorldCupPlayer p) {
+    if (isBannedPlayer(p)) return;
+    if (seen.contains(p.id) || out.length >= kWorldCupSquadSize) return;
+    seen.add(p.id);
+    out.add(p);
+  }
+
+  for (final id in squad.playerIds) {
+    if (isBannedPlayerId(id)) continue;
+    final own = canonById[id];
+    if (own != null) {
+      add(own);
+      continue;
+    }
+    if (!id.startsWith('${squad.nationId}_')) {
+      _ensureAllPlayersCache();
+      final foreign = _allPlayersById[id];
+      if (foreign != null && foreign.nationId != squad.nationId) {
+        add(foreign);
+      }
+    }
+  }
+
+  for (final p in playersForNation(squad.nationId)) {
+    if (out.length >= kWorldCupSquadSize) break;
+    add(p);
+  }
+
+  return out;
+}
+
+WorldCupPlayer playerFromSquad(WorldCupSquad squad, String playerId) {
+  for (final p in squadPlayers(squad)) {
+    if (p.id == playerId) return p;
+  }
+  return playerById(playerId);
+}
+
+bool squadLooksCorrupt(WorldCupSquad squad) {
+  if (squad.playerIds.isEmpty) return true;
+  if (squad.playerIds.any(isBannedPlayerId)) return true;
+  if (squad.playerIds.toSet().length == 1 && squad.playerIds.length > 1) return true;
+  final ownCount =
+      squad.playerIds.where((id) => id.startsWith('${squad.nationId}_')).length;
+  return ownCount < kWorldCupStartingXi;
+}
 
 /// Full squad: 18 players (11 starting XI + 7 bench).
 WorldCupSquad initialSquadForNation(String nationId) {

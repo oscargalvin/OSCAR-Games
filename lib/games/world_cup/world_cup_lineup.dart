@@ -5,15 +5,14 @@ import 'world_cup_data.dart';
 import 'world_cup_models.dart';
 import 'world_cup_tournament.dart';
 
-List<WorldCupPlayer> startingPlayers(WorldCupSquad squad) =>
-    squad.startingXiIds.map(playerById).toList();
+List<WorldCupPlayer> startingPlayers(WorldCupSquad squad) {
+  final byId = {for (final p in squadPlayers(squad)) p.id: p};
+  return squad.startingXiIds.map((id) => byId[id]).whereType<WorldCupPlayer>().toList();
+}
 
 List<WorldCupPlayer> benchPlayers(WorldCupSquad squad) {
   final xi = squad.startingXiIds.toSet();
-  return squad.playerIds
-      .where((id) => !xi.contains(id))
-      .map(playerById)
-      .toList()
+  return squadPlayers(squad).where((p) => !xi.contains(p.id)).toList()
     ..sort((a, b) => b.rating2526.compareTo(a.rating2526));
 }
 

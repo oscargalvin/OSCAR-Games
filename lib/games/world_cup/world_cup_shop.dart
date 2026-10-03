@@ -55,16 +55,11 @@ bool _userQualifiedForKnockout(WorldCupRun run) {
 
 List<WorldCupPlayer> pickablePlayersForNation(String nationId) {
   final squad = initialSquadForNation(nationId);
-  return squad.playerIds
-      .map(playerById)
-      .where((p) => p.rating2526 <= kWorldCupMaxPickRating)
-      .toList()
-    ..sort((a, b) => b.rating2526.compareTo(a.rating2526));
+  return pickablePlayersFromSquad(squad);
 }
 
 List<WorldCupPlayer> pickablePlayersFromSquad(WorldCupSquad squad) {
-  return squad.playerIds
-      .map(playerById)
+  return squadPlayers(squad)
       .where((p) => p.rating2526 <= kWorldCupMaxPickRating)
       .toList()
     ..sort((a, b) => b.rating2526.compareTo(a.rating2526));
