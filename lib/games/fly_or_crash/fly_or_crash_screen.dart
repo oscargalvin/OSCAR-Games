@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import '../../services/save_service.dart';
 
 part 'cartoon_flight.dart';
+part 'world_data.dart';
+part 'world_map.dart';
 
 // ---------------------------------------------------------------------------
 // Fly or Crash
@@ -118,6 +120,8 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
     ..sort((a, b) => _distanceKm(_home, a).compareTo(_distanceKm(_home, b)));
   Destination? _selected;
   bool _cartoon = false;
+  String _mapHint =
+      'Zoom in to see countries and cities. Tap a city, or tap anywhere on land!';
 
   void _takeOff() {
     final dest = _selected;
@@ -202,21 +206,42 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: AspectRatio(
-                aspectRatio: 2.1,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: _sea,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: _ink, width: 2.5),
-                    boxShadow: const [
-                      BoxShadow(color: _ink, offset: Offset(0, 5)),
-                    ],
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: CustomPaint(
-                    painter: _MapPainter(selected: selected),
-                  ),
+              child: Container(
+                height: (MediaQuery.of(context).size.height * 0.38)
+                    .clamp(200.0, 380.0)
+                    .toDouble(),
+                decoration: BoxDecoration(
+                  color: _mapSea,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: _ink, width: 2.5),
+                  boxShadow: const [
+                    BoxShadow(color: _ink, offset: Offset(0, 5)),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _WorldMap(
+                  selected: selected,
+                  onPick: (d) => setState(() {
+                    _selected = d;
+                    _mapHint = d.country == 'Your pin'
+                        ? 'Pin dropped in ${d.city}! Press take off when you\'re ready.'
+                        : '${d.city}, ${d.country}. Great choice!';
+                  }),
+                  onSea: () => setState(() {
+                    _mapHint = 'That\'s the sea! Planes can\'t land on water. '
+                        'Tap on the green land.';
+                  }),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
+              child: Text(
+                _mapHint,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.9),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
