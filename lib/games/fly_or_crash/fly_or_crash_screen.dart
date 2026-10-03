@@ -10,6 +10,10 @@ import '../../services/save_service.dart';
 part 'cartoon_flight.dart';
 part 'world_data.dart';
 part 'world_map.dart';
+part 'role_attendant.dart';
+part 'role_passenger.dart';
+
+enum _Role { pilot, attendant, passenger }
 
 // ---------------------------------------------------------------------------
 // Fly or Crash
@@ -120,6 +124,7 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
     ..sort((a, b) => _distanceKm(_home, a).compareTo(_distanceKm(_home, b)));
   Destination? _selected;
   bool _cartoon = false;
+  _Role _role = _Role.pilot;
   String _mapHint =
       'Zoom in to see countries and cities. Tap a city, or tap anywhere on land!';
 
@@ -128,9 +133,18 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
     if (dest == null) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _cartoon
-            ? CartoonFlightScreen(destination: dest)
-            : FlightScreen(destination: dest),
+        builder: (_) {
+          switch (_role) {
+            case _Role.attendant:
+              return AttendantScreen(destination: dest);
+            case _Role.passenger:
+              return PassengerScreen(destination: dest);
+            case _Role.pilot:
+              return _cartoon
+                  ? CartoonFlightScreen(destination: dest)
+                  : FlightScreen(destination: dest);
+          }
+        },
       ),
     );
   }
@@ -178,6 +192,43 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
                 ),
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _ModeChoice(
+                      label: 'Pilot',
+                      detail: 'Fly the plane',
+                      icon: Icons.flight_rounded,
+                      selected: _role == _Role.pilot,
+                      onTap: () => setState(() => _role = _Role.pilot),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ModeChoice(
+                      label: 'Attendant',
+                      detail: 'Serve food',
+                      icon: Icons.room_service_rounded,
+                      selected: _role == _Role.attendant,
+                      onTap: () => setState(() => _role = _Role.attendant),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ModeChoice(
+                      label: 'Passenger',
+                      detail: 'Travel and explore',
+                      icon: Icons.person_rounded,
+                      selected: _role == _Role.passenger,
+                      onTap: () => setState(() => _role = _Role.passenger),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_role == _Role.pilot)
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
               child: Row(
@@ -269,7 +320,11 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
               child: _ChunkyButton(
                 label: selected == null
                     ? 'Pick a place to fly to'
-                    : 'Take off for ${selected.city}',
+                    : _role == _Role.passenger
+                        ? 'Go to the airport'
+                        : _role == _Role.attendant
+                            ? 'Start work: flight to ${selected.city}'
+                            : 'Take off for ${selected.city}',
                 color: selected == null ? Colors.white54 : _sun,
                 onPressed: selected == null ? null : _takeOff,
               ),
@@ -2390,6 +2445,714 @@ List<_Feature> _sceneryFor(String city, math.Random r) {
   return f;
 }
 
+// ---- landmark drawing (shared by the cockpit and the walking scenes) -------
+
+Color _hazed(Color c, double haze) =>
+    Color.lerp(c, const Color(0xFFB9C6D2), haze * 0.75)!;
+
+void _drawLandmark(
+    Canvas canvas, _Feature f, Offset b, double k, double haze) {
+  final w = f.w * k;
+  final h = f.h * k;
+  if (h < 0.8) return;
+  final col = _hazed(f.color, haze);
+  final fill = Paint()..color = col;
+  final shade = Paint()..color = _hazed(Color.lerp(f.color, Colors.black, 0.3)!, haze);
+  final light = Paint()..color = _hazed(Color.lerp(f.color, Colors.white, 0.3)!, haze);
+
+  switch (f.kind) {
+    case _Lm.box:
+      final rect = Rect.fromLTWH(b.dx - w / 2, b.dy - h, w, h);
+      canvas.drawRect(rect, fill);
+      canvas.drawRect(
+          Rect.fromLTWH(rect.right - w * 0.28, rect.top, w * 0.28, h), shade);
+      if (w > 10 && h > 18) {
+        final win = Paint()
+          ..color = _hazed(
+              _hash(f.seed) > 0.5
+                  ? const Color(0xFFFFE7A3)
+                  : const Color(0xFFCFE3F2),
+              haze);
+        final rows = math.min(14, (h / 7).floor());
+        final cols = math.min(5, (w * 0.72 / 6).floor());
+        for (var rI = 0; rI < rows; rI++) {
+          for (var cI = 0; cI < cols; cI++) {
+            if (_hash(f.seed + rI * 13 + cI * 7) < 0.35) continue;
+            canvas.drawRect(
+              Rect.fromLTWH(
+                rect.left + w * 0.08 + cI * (w * 0.64 / math.max(1, cols)),
+                rect.top + h * 0.05 + rI * (h * 0.9 / rows),
+                math.max(1.0, w * 0.06),
+                math.max(1.0, h * 0.9 / rows * 0.45),
+              ),
+              win,
+            );
+          }
+        }
+      }
+      break;
+
+    case _Lm.empire:
+      final tiers = [
+        [1.0, 0.0, 0.55],
+        [0.72, 0.55, 0.72],
+        [0.5, 0.72, 0.84],
+        [0.3, 0.84, 0.9],
+      ];
+      for (final t in tiers) {
+        final tw = w * t[0];
+        canvas.drawRect(
+          Rect.fromLTRB(b.dx - tw / 2, b.dy - h * t[2], b.dx + tw / 2,
+              b.dy - h * t[1]),
+          fill,
+        );
+        canvas.drawRect(
+          Rect.fromLTRB(b.dx + tw * 0.2, b.dy - h * t[2], b.dx + tw / 2,
+              b.dy - h * t[1]),
+          shade,
+        );
+      }
+      canvas.drawLine(Offset(b.dx, b.dy - h * 0.9), Offset(b.dx, b.dy - h),
+          shade..strokeWidth = math.max(1.0, w * 0.06));
+      break;
+
+    case _Lm.liberty:
+      final ped = Path()
+        ..moveTo(b.dx - w * 0.5, b.dy)
+        ..lineTo(b.dx + w * 0.5, b.dy)
+        ..lineTo(b.dx + w * 0.32, b.dy - h * 0.45)
+        ..lineTo(b.dx - w * 0.32, b.dy - h * 0.45)
+        ..close();
+      canvas.drawPath(ped, Paint()..color = _hazed(const Color(0xFFB9AE98), haze));
+      final body = Path()
+        ..moveTo(b.dx - w * 0.22, b.dy - h * 0.45)
+        ..lineTo(b.dx + w * 0.22, b.dy - h * 0.45)
+        ..lineTo(b.dx + w * 0.1, b.dy - h * 0.82)
+        ..lineTo(b.dx - w * 0.1, b.dy - h * 0.82)
+        ..close();
+      canvas.drawPath(body, fill);
+      canvas.drawCircle(Offset(b.dx, b.dy - h * 0.85), w * 0.09, fill);
+      final arm = Paint()
+        ..color = col
+        ..strokeWidth = math.max(1.0, w * 0.08)
+        ..strokeCap = StrokeCap.round;
+      canvas.drawLine(Offset(b.dx + w * 0.1, b.dy - h * 0.78),
+          Offset(b.dx + w * 0.2, b.dy - h * 0.98), arm);
+      canvas.drawCircle(Offset(b.dx + w * 0.2, b.dy - h), w * 0.08,
+          Paint()..color = const Color(0xFFFFC93C));
+      break;
+
+    case _Lm.eiffel:
+    case _Lm.tokyoTower:
+      final tower = Path()
+        ..fillType = PathFillType.evenOdd
+        ..moveTo(b.dx - w / 2, b.dy)
+        ..quadraticBezierTo(
+            b.dx - w * 0.12, b.dy - h * 0.35, b.dx - w * 0.05, b.dy - h * 0.8)
+        ..lineTo(b.dx, b.dy - h)
+        ..lineTo(b.dx + w * 0.05, b.dy - h * 0.8)
+        ..quadraticBezierTo(
+            b.dx + w * 0.12, b.dy - h * 0.35, b.dx + w / 2, b.dy)
+        ..close()
+        ..addOval(Rect.fromCenter(
+            center: Offset(b.dx, b.dy),
+            width: w * 0.5,
+            height: h * 0.3));
+      canvas.drawPath(tower, fill);
+      final lattice = Paint()
+        ..color = _hazed(Color.lerp(f.color, Colors.black, 0.4)!, haze)
+        ..strokeWidth = math.max(0.6, w * 0.015);
+      for (var i = 1; i < 6; i++) {
+        final y = b.dy - h * i / 7;
+        final half = w * 0.5 * (1 - i / 7) * 0.9;
+        canvas.drawLine(
+            Offset(b.dx - half, y), Offset(b.dx + half, y), lattice);
+      }
+      // Viewing platforms.
+      for (final level in [0.28, 0.55]) {
+        final half = w * 0.5 * (1 - level) * 0.75;
+        canvas.drawRect(
+          Rect.fromLTRB(b.dx - half, b.dy - h * level - h * 0.02,
+              b.dx + half, b.dy - h * level + h * 0.01),
+          f.kind == _Lm.tokyoTower
+              ? (Paint()..color = _hazed(Colors.white, haze))
+              : shade,
+        );
+      }
+      break;
+
+    case _Lm.colosseum:
+      final colBody = Rect.fromLTWH(b.dx - w / 2, b.dy - h, w, h);
+      final outline = Path()
+        ..moveTo(colBody.left, colBody.bottom)
+        ..lineTo(colBody.left, colBody.top + h * 0.25)
+        ..lineTo(colBody.left + w * 0.3, colBody.top)
+        ..lineTo(colBody.right, colBody.top)
+        ..lineTo(colBody.right, colBody.bottom)
+        ..close();
+      canvas.drawPath(outline, fill);
+      final arch = Paint()..color = _hazed(const Color(0xFF6E5A3E), haze);
+      for (var row = 0; row < 3; row++) {
+        final y = colBody.bottom - h * (0.12 + row * 0.3);
+        for (var i = 0; i < 9; i++) {
+          final x = colBody.left + w * (0.06 + i * 0.105);
+          if (row == 2 && x < colBody.left + w * 0.35) continue;
+          canvas.drawRRect(
+            RRect.fromRectAndCorners(
+              Rect.fromLTWH(x, y - h * 0.18, w * 0.06, h * 0.18),
+              topLeft: Radius.circular(w * 0.03),
+              topRight: Radius.circular(w * 0.03),
+            ),
+            arch,
+          );
+        }
+      }
+      break;
+
+    case _Lm.pyramid:
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w / 2, b.dy)
+          ..lineTo(b.dx - w * 0.08, b.dy - h)
+          ..lineTo(b.dx + w * 0.12, b.dy)
+          ..close(),
+        light,
+      );
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx + w * 0.12, b.dy)
+          ..lineTo(b.dx - w * 0.08, b.dy - h)
+          ..lineTo(b.dx + w / 2, b.dy)
+          ..close(),
+        shade,
+      );
+      break;
+
+    case _Lm.burj:
+      final steps = [1.0, 0.8, 0.62, 0.46, 0.32, 0.2, 0.1];
+      for (var i = 0; i < steps.length; i++) {
+        final tw = w * steps[i];
+        final top = h * (0.12 + i * 0.11);
+        final bottom = i == 0 ? 0.0 : h * (0.12 + (i - 1) * 0.11);
+        canvas.drawRect(
+          Rect.fromLTRB(b.dx - tw / 2, b.dy - top, b.dx + tw / 2, b.dy - bottom),
+          fill,
+        );
+        canvas.drawRect(
+          Rect.fromLTRB(b.dx, b.dy - top, b.dx + tw / 2, b.dy - bottom),
+          light,
+        );
+      }
+      canvas.drawLine(Offset(b.dx, b.dy - h * 0.78), Offset(b.dx, b.dy - h),
+          light..strokeWidth = math.max(1.0, w * 0.04));
+      break;
+
+    case _Lm.sail:
+      final sail = Path()
+        ..moveTo(b.dx - w * 0.4, b.dy)
+        ..lineTo(b.dx - w * 0.4, b.dy - h)
+        ..quadraticBezierTo(b.dx + w * 0.7, b.dy - h * 0.55, b.dx + w * 0.3, b.dy)
+        ..close();
+      canvas.drawPath(sail, fill);
+      canvas.drawLine(Offset(b.dx - w * 0.4, b.dy), Offset(b.dx - w * 0.4, b.dy - h * 1.06),
+          shade..strokeWidth = math.max(1.0, w * 0.06));
+      break;
+
+    case _Lm.church:
+      // Stepped wings rising up to a tall pointed tower.
+      for (var i = 0; i < 4; i++) {
+        final half = w * (0.5 - i * 0.1);
+        final top = h * (0.25 + i * 0.12);
+        canvas.drawRect(
+            Rect.fromLTRB(b.dx - half, b.dy - top, b.dx + half, b.dy), fill);
+      }
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w * 0.1, b.dy - h * 0.6)
+          ..lineTo(b.dx, b.dy - h)
+          ..lineTo(b.dx + w * 0.1, b.dy - h * 0.6)
+          ..close(),
+        fill,
+      );
+      canvas.drawRect(
+          Rect.fromLTRB(b.dx, b.dy - h * 0.6, b.dx + w * 0.1, b.dy), shade);
+      break;
+
+    case _Lm.opera:
+      canvas.drawRect(
+        Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.18, w, h * 0.18),
+        Paint()..color = _hazed(const Color(0xFFC9A98A), haze),
+      );
+      for (var i = 0; i < 4; i++) {
+        final sx = b.dx - w * 0.42 + i * w * 0.24;
+        final sh = h * (0.55 + i * 0.15);
+        final shell = Path()
+          ..moveTo(sx, b.dy - h * 0.18)
+          ..quadraticBezierTo(sx + w * 0.02, b.dy - sh, sx + w * 0.2, b.dy - sh)
+          ..quadraticBezierTo(sx + w * 0.14, b.dy - h * 0.4, sx + w * 0.24,
+              b.dy - h * 0.18)
+          ..close();
+        canvas.drawPath(shell, fill);
+        canvas.drawPath(
+          shell,
+          Paint()
+            ..color = _hazed(const Color(0xFFBFC3C7), haze)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = math.max(0.6, w * 0.008),
+        );
+      }
+      break;
+
+    case _Lm.bridge:
+      final steel = Paint()
+        ..color = col
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.0, w * 0.02);
+      final deckY = b.dy - h * 0.4;
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w * 0.42, deckY + h * 0.2)
+          ..quadraticBezierTo(b.dx, b.dy - h * 1.35, b.dx + w * 0.42, deckY + h * 0.2),
+        steel,
+      );
+      canvas.drawLine(Offset(b.dx - w / 2, deckY), Offset(b.dx + w / 2, deckY),
+          steel..strokeWidth = math.max(1.5, w * 0.025));
+      for (final side in [-1.0, 1.0]) {
+        canvas.drawRect(
+          Rect.fromLTWH(b.dx + side * w * 0.45 - w * 0.03, b.dy - h * 0.7,
+              w * 0.06, h * 0.7),
+          Paint()..color = _hazed(const Color(0xFFB8AC94), haze),
+        );
+      }
+      for (var i = -6; i <= 6; i++) {
+        final x = b.dx + i * w * 0.06;
+        final t = x - b.dx;
+        final archY = deckY + h * 0.2 -
+            (1 - (t / (w * 0.42)) * (t / (w * 0.42))) * (h * 0.875);
+        canvas.drawLine(Offset(x, archY), Offset(x, deckY),
+            Paint()
+              ..color = col
+              ..strokeWidth = math.max(0.5, w * 0.006));
+      }
+      break;
+
+    case _Lm.tableMountain:
+      final m = Path()
+        ..moveTo(b.dx - w / 2, b.dy)
+        ..lineTo(b.dx - w * 0.3, b.dy - h * 0.92)
+        ..quadraticBezierTo(b.dx - w * 0.27, b.dy - h, b.dx - w * 0.22, b.dy - h)
+        ..lineTo(b.dx + w * 0.24, b.dy - h)
+        ..quadraticBezierTo(b.dx + w * 0.29, b.dy - h, b.dx + w * 0.32, b.dy - h * 0.9)
+        ..lineTo(b.dx + w / 2, b.dy)
+        ..close();
+      canvas.drawPath(m, fill);
+      // The "tablecloth" cloud that pours over the top.
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(b.dx, b.dy - h * 0.98), width: w * 0.5, height: h * 0.12),
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.85)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, math.max(1.0, h * 0.04)),
+      );
+      break;
+
+    case _Lm.sugarloaf:
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w / 2, b.dy)
+          ..quadraticBezierTo(b.dx - w * 0.45, b.dy - h * 1.15, b.dx + w * 0.05, b.dy - h)
+          ..quadraticBezierTo(b.dx + w * 0.45, b.dy - h * 0.8, b.dx + w / 2, b.dy)
+          ..close(),
+        fill,
+      );
+      break;
+
+    case _Lm.christ:
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w / 2, b.dy)
+          ..quadraticBezierTo(b.dx - w * 0.1, b.dy - h * 1.05, b.dx, b.dy - h * 0.93)
+          ..quadraticBezierTo(b.dx + w * 0.15, b.dy - h * 0.85, b.dx + w / 2, b.dy)
+          ..close(),
+        fill,
+      );
+      final white = Paint()
+        ..color = _hazed(const Color(0xFFF2F2EE), haze)
+        ..strokeWidth = math.max(1.0, h * 0.02)
+        ..strokeCap = StrokeCap.round;
+      final top = Offset(b.dx, b.dy - h * 0.93);
+      canvas.drawLine(top, top.translate(0, -h * 0.12), white);
+      canvas.drawLine(top.translate(-h * 0.05, -h * 0.09),
+          top.translate(h * 0.05, -h * 0.09), white);
+      canvas.drawCircle(top.translate(0, -h * 0.13), h * 0.012, white);
+      break;
+
+    case _Lm.palm:
+      final trunk = Paint()
+        ..color = _hazed(const Color(0xFF7A5A3A), haze)
+        ..strokeWidth = math.max(1.0, w * 0.08)
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+      final topP = Offset(b.dx + w * 0.15, b.dy - h);
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx, b.dy)
+          ..quadraticBezierTo(b.dx - w * 0.1, b.dy - h * 0.5, topP.dx, topP.dy),
+        trunk,
+      );
+      final leaf = Paint()
+        ..color = col
+        ..strokeWidth = math.max(1.0, w * 0.1)
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+      for (var i = 0; i < 6; i++) {
+        final a = -math.pi + i * math.pi / 5;
+        final end = topP + Offset(math.cos(a), math.sin(a) * 0.5 + 0.35) * w * 1.1;
+        canvas.drawPath(
+          Path()
+            ..moveTo(topP.dx, topP.dy)
+            ..quadraticBezierTo(
+                (topP.dx + end.dx) / 2, topP.dy - w * 0.25, end.dx, end.dy),
+          leaf,
+        );
+      }
+      break;
+
+    case _Lm.dome:
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.45, w, h * 0.45), fill);
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx + w * 0.2, b.dy - h * 0.45, w * 0.3, h * 0.45), shade);
+      canvas.drawArc(
+        Rect.fromCenter(
+            center: Offset(b.dx, b.dy - h * 0.45), width: w * 0.62, height: h * 0.8),
+        math.pi,
+        math.pi,
+        true,
+        light,
+      );
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w * 0.04, b.dy - h, w * 0.08, h * 0.17), light);
+      break;
+
+    case _Lm.hills:
+      final hills = Path()..moveTo(b.dx - w / 2, b.dy);
+      for (var i = 0; i <= 8; i++) {
+        final x = b.dx - w / 2 + w * i / 8;
+        final y = b.dy - h * (0.45 + 0.55 * _hash(f.seed + i));
+        hills.quadraticBezierTo(x - w / 16, y - h * 0.15, x, y);
+      }
+      hills
+        ..lineTo(b.dx + w / 2, b.dy)
+        ..close();
+      canvas.drawPath(hills, fill);
+      break;
+
+    case _Lm.needle:
+      // Tall thin tower with a round pod, like a TV tower.
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w * 0.12, b.dy - h * 0.92, w * 0.24, h * 0.92),
+          fill);
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx, b.dy - h * 0.92, w * 0.12, h * 0.92), shade);
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(b.dx, b.dy - h * 0.68), width: w, height: w * 0.8),
+        light,
+      );
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w * 0.5, b.dy - h * 0.66, w, w * 0.12), shade);
+      canvas.drawLine(Offset(b.dx, b.dy - h * 0.92), Offset(b.dx, b.dy - h),
+          shade..strokeWidth = math.max(1.0, w * 0.05));
+      break;
+
+    case _Lm.gabled:
+      final house = Path()
+        ..moveTo(b.dx - w / 2, b.dy)
+        ..lineTo(b.dx - w / 2, b.dy - h * 0.78)
+        ..lineTo(b.dx, b.dy - h)
+        ..lineTo(b.dx + w / 2, b.dy - h * 0.78)
+        ..lineTo(b.dx + w / 2, b.dy)
+        ..close();
+      canvas.drawPath(house, fill);
+      if (w > 6) {
+        final win = Paint()..color = _hazed(const Color(0xFFF4F1E8), haze);
+        for (var rI = 0; rI < 3; rI++) {
+          for (var cI = 0; cI < 2; cI++) {
+            canvas.drawRect(
+              Rect.fromLTWH(b.dx - w * 0.32 + cI * w * 0.38,
+                  b.dy - h * (0.22 + rI * 0.2), w * 0.24, h * 0.1),
+              win,
+            );
+          }
+        }
+      }
+      break;
+
+    case _Lm.temple:
+      // Columns with a triangle roof, sitting on top of a hill.
+      final baseY = b.dy - h * 1.15;
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w / 2, baseY, w, h * 0.12), fill);
+      for (var i = 0; i < 8; i++) {
+        final x = b.dx - w * 0.45 + i * w * 0.9 / 7;
+        canvas.drawRect(
+            Rect.fromLTWH(x - w * 0.025, baseY - h * 0.6, w * 0.05, h * 0.6),
+            light);
+      }
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w / 2, baseY - h * 0.72, w, h * 0.12), fill);
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w / 2, baseY - h * 0.72)
+          ..lineTo(b.dx, baseY - h * 0.95)
+          ..lineTo(b.dx + w / 2, baseY - h * 0.72)
+          ..close(),
+        fill,
+      );
+      break;
+
+    case _Lm.mosque:
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w * 0.4, b.dy - h * 0.35, w * 0.8, h * 0.35),
+          fill);
+      canvas.drawArc(
+        Rect.fromCenter(
+            center: Offset(b.dx, b.dy - h * 0.35),
+            width: w * 0.55,
+            height: h * 0.6),
+        math.pi,
+        math.pi,
+        true,
+        light,
+      );
+      for (final sx in [-0.3, 0.3]) {
+        canvas.drawArc(
+          Rect.fromCenter(
+              center: Offset(b.dx + w * sx, b.dy - h * 0.35),
+              width: w * 0.22,
+              height: h * 0.24),
+          math.pi,
+          math.pi,
+          true,
+          light,
+        );
+      }
+      for (final mx in [-0.5, -0.42, 0.42, 0.5]) {
+        canvas.drawRect(
+            Rect.fromLTWH(b.dx + w * mx - w * 0.015, b.dy - h * 0.92,
+                w * 0.03, h * 0.92),
+            light);
+        canvas.drawPath(
+          Path()
+            ..moveTo(b.dx + w * mx - w * 0.02, b.dy - h * 0.92)
+            ..lineTo(b.dx + w * mx, b.dy - h)
+            ..lineTo(b.dx + w * mx + w * 0.02, b.dy - h * 0.92)
+            ..close(),
+          shade,
+        );
+      }
+      break;
+
+    case _Lm.onion:
+      const domeColours = [
+        Color(0xFF2F9E6E),
+        Color(0xFFE3B341),
+        Color(0xFF3B6FD1),
+        Color(0xFFD2473A),
+        Color(0xFF7B4FB8),
+      ];
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.4, w, h * 0.4), fill);
+      for (var i = 0; i < 5; i++) {
+        final x = b.dx - w * 0.4 + i * w * 0.2;
+        final tall = i == 2 ? 1.0 : 0.72 + (i % 2) * 0.1;
+        final towerTop = b.dy - h * 0.4 - h * 0.3 * tall;
+        canvas.drawRect(
+            Rect.fromLTRB(x - w * 0.05, towerTop, x + w * 0.05, b.dy - h * 0.4),
+            light);
+        final dw = w * (i == 2 ? 0.16 : 0.12);
+        final onion = Path()
+          ..moveTo(x - dw / 2, towerTop)
+          ..cubicTo(x - dw, towerTop - dw * 0.6, x - dw * 0.1,
+              towerTop - dw * 1.1, x, towerTop - dw * 1.5)
+          ..cubicTo(x + dw * 0.1, towerTop - dw * 1.1, x + dw,
+              towerTop - dw * 0.6, x + dw / 2, towerTop)
+          ..close();
+        canvas.drawPath(
+            onion, Paint()..color = _hazed(domeColours[i], haze));
+      }
+      break;
+
+    case _Lm.suspension:
+      // A long red bridge with two tall towers and sweeping cables.
+      final red = Paint()..color = col;
+      final susDeckY = b.dy - h * 0.35;
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w / 2, susDeckY, w, math.max(1.5, h * 0.04)), red);
+      final towers = [b.dx - w * 0.28, b.dx + w * 0.28];
+      for (final tx in towers) {
+        canvas.drawRect(
+            Rect.fromLTWH(tx - w * 0.015, b.dy - h, w * 0.03, h), red);
+      }
+      final cable = Paint()
+        ..color = col
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(0.8, w * 0.004);
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w / 2, susDeckY)
+          ..quadraticBezierTo(b.dx - w * 0.39, susDeckY - h * 0.1, towers[0], b.dy - h)
+          ..quadraticBezierTo(b.dx, susDeckY + h * 0.4, towers[1], b.dy - h)
+          ..quadraticBezierTo(b.dx + w * 0.39, susDeckY - h * 0.1, b.dx + w / 2, susDeckY),
+        cable,
+      );
+      break;
+
+    case _Lm.obelisk:
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w / 2, b.dy)
+          ..lineTo(b.dx - w * 0.32, b.dy - h * 0.92)
+          ..lineTo(b.dx, b.dy - h)
+          ..lineTo(b.dx + w * 0.32, b.dy - h * 0.92)
+          ..lineTo(b.dx + w / 2, b.dy)
+          ..close(),
+        fill,
+      );
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx, b.dy)
+          ..lineTo(b.dx, b.dy - h)
+          ..lineTo(b.dx + w * 0.32, b.dy - h * 0.92)
+          ..lineTo(b.dx + w / 2, b.dy)
+          ..close(),
+        shade,
+      );
+      break;
+
+    case _Lm.acacia:
+      canvas.drawLine(
+        Offset(b.dx, b.dy),
+        Offset(b.dx + w * 0.05, b.dy - h * 0.75),
+        Paint()
+          ..color = _hazed(const Color(0xFF5A4632), haze)
+          ..strokeWidth = math.max(1.0, w * 0.05),
+      );
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(b.dx + w * 0.05, b.dy - h * 0.82),
+            width: w,
+            height: h * 0.3),
+        fill,
+      );
+      break;
+
+    case _Lm.minaret:
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.82, w, h * 0.82), fill);
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx + w * 0.15, b.dy - h * 0.82, w * 0.35, h * 0.82),
+          shade);
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w * 0.28, b.dy - h * 0.95, w * 0.56, h * 0.13),
+          fill);
+      canvas.drawCircle(Offset(b.dx, b.dy - h * 0.98), w * 0.08,
+          Paint()..color = _hazed(const Color(0xFFE3B341), haze));
+      break;
+
+    case _Lm.pagoda:
+      for (var i = 0; i < 5; i++) {
+        final level = i / 5;
+        final lw = w * (1 - level * 0.6);
+        final y = b.dy - h * (0.08 + level * 0.82);
+        canvas.drawRect(
+            Rect.fromLTWH(b.dx - lw * 0.3, y - h * 0.12, lw * 0.6, h * 0.12),
+            shade);
+        final roof = Path()
+          ..moveTo(b.dx - lw / 2, y - h * 0.1)
+          ..quadraticBezierTo(b.dx - lw * 0.3, y - h * 0.13, b.dx, y - h * 0.18)
+          ..quadraticBezierTo(b.dx + lw * 0.3, y - h * 0.13, b.dx + lw / 2, y - h * 0.1)
+          ..lineTo(b.dx + lw * 0.35, y - h * 0.12)
+          ..lineTo(b.dx - lw * 0.35, y - h * 0.12)
+          ..close();
+        canvas.drawPath(roof, fill);
+      }
+      canvas.drawLine(Offset(b.dx, b.dy - h * 0.9), Offset(b.dx, b.dy - h),
+          fill..strokeWidth = math.max(1.0, w * 0.03));
+      break;
+
+    case _Lm.marinaBay:
+      // Three towers holding up a long "ship" on top.
+      for (var i = 0; i < 3; i++) {
+        final x = b.dx - w * 0.3 + i * w * 0.3;
+        canvas.drawRect(
+            Rect.fromLTWH(x - w * 0.07, b.dy - h * 0.86, w * 0.14, h * 0.86),
+            fill);
+        canvas.drawRect(
+            Rect.fromLTWH(x + w * 0.01, b.dy - h * 0.86, w * 0.06, h * 0.86),
+            shade);
+      }
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx - w * 0.48, b.dy - h * 0.9)
+          ..lineTo(b.dx + w * 0.5, b.dy - h * 0.92)
+          ..lineTo(b.dx + w * 0.42, b.dy - h)
+          ..lineTo(b.dx - w * 0.42, b.dy - h * 0.97)
+          ..close(),
+        light,
+      );
+      break;
+
+    case _Lm.stupa:
+      // Pointed golden temple spire.
+      canvas.drawRect(
+          Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.2, w, h * 0.2), shade);
+      final bell = Path()
+        ..moveTo(b.dx - w * 0.4, b.dy - h * 0.2)
+        ..quadraticBezierTo(b.dx - w * 0.38, b.dy - h * 0.5, b.dx - w * 0.08,
+            b.dy - h * 0.6)
+        ..lineTo(b.dx, b.dy - h)
+        ..lineTo(b.dx + w * 0.08, b.dy - h * 0.6)
+        ..quadraticBezierTo(
+            b.dx + w * 0.38, b.dy - h * 0.5, b.dx + w * 0.4, b.dy - h * 0.2)
+        ..close();
+      canvas.drawPath(bell, fill);
+      canvas.drawPath(
+        Path()
+          ..moveTo(b.dx, b.dy - h * 0.2)
+          ..lineTo(b.dx, b.dy - h)
+          ..lineTo(b.dx + w * 0.08, b.dy - h * 0.6)
+          ..quadraticBezierTo(
+              b.dx + w * 0.38, b.dy - h * 0.5, b.dx + w * 0.4, b.dy - h * 0.2)
+          ..close(),
+        light,
+      );
+      break;
+
+    case _Lm.snowPeak:
+      final peak = Path()
+        ..moveTo(b.dx - w / 2, b.dy)
+        ..lineTo(b.dx - w * 0.06, b.dy - h)
+        ..lineTo(b.dx + w * 0.06, b.dy - h * 0.98)
+        ..lineTo(b.dx + w / 2, b.dy)
+        ..close();
+      canvas.drawPath(peak, fill);
+      final snow = Path()
+        ..moveTo(b.dx - w * 0.06, b.dy - h)
+        ..lineTo(b.dx - w * 0.2, b.dy - h * 0.6)
+        ..lineTo(b.dx - w * 0.1, b.dy - h * 0.66)
+        ..lineTo(b.dx, b.dy - h * 0.58)
+        ..lineTo(b.dx + w * 0.09, b.dy - h * 0.67)
+        ..lineTo(b.dx + w * 0.2, b.dy - h * 0.6)
+        ..lineTo(b.dx + w * 0.06, b.dy - h * 0.98)
+        ..close();
+      canvas.drawPath(snow, Paint()..color = _hazed(Colors.white, haze * 0.6));
+      break;
+  }
+}
+
+
 // ---- drawing the cockpit ----------------------------------------------------
 
 class _CockpitPainter extends CustomPainter {
@@ -3388,717 +4151,12 @@ class _CockpitPainter extends CustomPainter {
         final base = _project(wx, wy, 0);
         final k = _focal / fwd; // pixels per unit at this distance
         final haze = (fwd / 75).clamp(0.0, 1.0).toDouble();
-        _drawFeature(canvas0!, feat, base, k, haze);
+        _drawLandmark(canvas0!, feat, base, k, haze);
       }));
     }
   }
 
   Canvas? canvas0;
-
-  Color _hazed(Color c, double haze) =>
-      Color.lerp(c, const Color(0xFFB9C6D2), haze * 0.75)!;
-
-  void _drawFeature(
-      Canvas canvas, _Feature f, Offset b, double k, double haze) {
-    final w = f.w * k;
-    final h = f.h * k;
-    if (h < 0.8) return;
-    final col = _hazed(f.color, haze);
-    final fill = Paint()..color = col;
-    final shade = Paint()..color = _hazed(Color.lerp(f.color, Colors.black, 0.3)!, haze);
-    final light = Paint()..color = _hazed(Color.lerp(f.color, Colors.white, 0.3)!, haze);
-
-    switch (f.kind) {
-      case _Lm.box:
-        final rect = Rect.fromLTWH(b.dx - w / 2, b.dy - h, w, h);
-        canvas.drawRect(rect, fill);
-        canvas.drawRect(
-            Rect.fromLTWH(rect.right - w * 0.28, rect.top, w * 0.28, h), shade);
-        if (w > 10 && h > 18) {
-          final win = Paint()
-            ..color = _hazed(
-                _hash(f.seed) > 0.5
-                    ? const Color(0xFFFFE7A3)
-                    : const Color(0xFFCFE3F2),
-                haze);
-          final rows = math.min(14, (h / 7).floor());
-          final cols = math.min(5, (w * 0.72 / 6).floor());
-          for (var rI = 0; rI < rows; rI++) {
-            for (var cI = 0; cI < cols; cI++) {
-              if (_hash(f.seed + rI * 13 + cI * 7) < 0.35) continue;
-              canvas.drawRect(
-                Rect.fromLTWH(
-                  rect.left + w * 0.08 + cI * (w * 0.64 / math.max(1, cols)),
-                  rect.top + h * 0.05 + rI * (h * 0.9 / rows),
-                  math.max(1.0, w * 0.06),
-                  math.max(1.0, h * 0.9 / rows * 0.45),
-                ),
-                win,
-              );
-            }
-          }
-        }
-        break;
-
-      case _Lm.empire:
-        final tiers = [
-          [1.0, 0.0, 0.55],
-          [0.72, 0.55, 0.72],
-          [0.5, 0.72, 0.84],
-          [0.3, 0.84, 0.9],
-        ];
-        for (final t in tiers) {
-          final tw = w * t[0];
-          canvas.drawRect(
-            Rect.fromLTRB(b.dx - tw / 2, b.dy - h * t[2], b.dx + tw / 2,
-                b.dy - h * t[1]),
-            fill,
-          );
-          canvas.drawRect(
-            Rect.fromLTRB(b.dx + tw * 0.2, b.dy - h * t[2], b.dx + tw / 2,
-                b.dy - h * t[1]),
-            shade,
-          );
-        }
-        canvas.drawLine(Offset(b.dx, b.dy - h * 0.9), Offset(b.dx, b.dy - h),
-            shade..strokeWidth = math.max(1.0, w * 0.06));
-        break;
-
-      case _Lm.liberty:
-        final ped = Path()
-          ..moveTo(b.dx - w * 0.5, b.dy)
-          ..lineTo(b.dx + w * 0.5, b.dy)
-          ..lineTo(b.dx + w * 0.32, b.dy - h * 0.45)
-          ..lineTo(b.dx - w * 0.32, b.dy - h * 0.45)
-          ..close();
-        canvas.drawPath(ped, Paint()..color = _hazed(const Color(0xFFB9AE98), haze));
-        final body = Path()
-          ..moveTo(b.dx - w * 0.22, b.dy - h * 0.45)
-          ..lineTo(b.dx + w * 0.22, b.dy - h * 0.45)
-          ..lineTo(b.dx + w * 0.1, b.dy - h * 0.82)
-          ..lineTo(b.dx - w * 0.1, b.dy - h * 0.82)
-          ..close();
-        canvas.drawPath(body, fill);
-        canvas.drawCircle(Offset(b.dx, b.dy - h * 0.85), w * 0.09, fill);
-        final arm = Paint()
-          ..color = col
-          ..strokeWidth = math.max(1.0, w * 0.08)
-          ..strokeCap = StrokeCap.round;
-        canvas.drawLine(Offset(b.dx + w * 0.1, b.dy - h * 0.78),
-            Offset(b.dx + w * 0.2, b.dy - h * 0.98), arm);
-        canvas.drawCircle(Offset(b.dx + w * 0.2, b.dy - h), w * 0.08,
-            Paint()..color = const Color(0xFFFFC93C));
-        break;
-
-      case _Lm.eiffel:
-      case _Lm.tokyoTower:
-        final tower = Path()
-          ..fillType = PathFillType.evenOdd
-          ..moveTo(b.dx - w / 2, b.dy)
-          ..quadraticBezierTo(
-              b.dx - w * 0.12, b.dy - h * 0.35, b.dx - w * 0.05, b.dy - h * 0.8)
-          ..lineTo(b.dx, b.dy - h)
-          ..lineTo(b.dx + w * 0.05, b.dy - h * 0.8)
-          ..quadraticBezierTo(
-              b.dx + w * 0.12, b.dy - h * 0.35, b.dx + w / 2, b.dy)
-          ..close()
-          ..addOval(Rect.fromCenter(
-              center: Offset(b.dx, b.dy),
-              width: w * 0.5,
-              height: h * 0.3));
-        canvas.drawPath(tower, fill);
-        final lattice = Paint()
-          ..color = _hazed(Color.lerp(f.color, Colors.black, 0.4)!, haze)
-          ..strokeWidth = math.max(0.6, w * 0.015);
-        for (var i = 1; i < 6; i++) {
-          final y = b.dy - h * i / 7;
-          final half = w * 0.5 * (1 - i / 7) * 0.9;
-          canvas.drawLine(
-              Offset(b.dx - half, y), Offset(b.dx + half, y), lattice);
-        }
-        // Viewing platforms.
-        for (final level in [0.28, 0.55]) {
-          final half = w * 0.5 * (1 - level) * 0.75;
-          canvas.drawRect(
-            Rect.fromLTRB(b.dx - half, b.dy - h * level - h * 0.02,
-                b.dx + half, b.dy - h * level + h * 0.01),
-            f.kind == _Lm.tokyoTower
-                ? (Paint()..color = _hazed(Colors.white, haze))
-                : shade,
-          );
-        }
-        break;
-
-      case _Lm.colosseum:
-        final colBody = Rect.fromLTWH(b.dx - w / 2, b.dy - h, w, h);
-        final outline = Path()
-          ..moveTo(colBody.left, colBody.bottom)
-          ..lineTo(colBody.left, colBody.top + h * 0.25)
-          ..lineTo(colBody.left + w * 0.3, colBody.top)
-          ..lineTo(colBody.right, colBody.top)
-          ..lineTo(colBody.right, colBody.bottom)
-          ..close();
-        canvas.drawPath(outline, fill);
-        final arch = Paint()..color = _hazed(const Color(0xFF6E5A3E), haze);
-        for (var row = 0; row < 3; row++) {
-          final y = colBody.bottom - h * (0.12 + row * 0.3);
-          for (var i = 0; i < 9; i++) {
-            final x = colBody.left + w * (0.06 + i * 0.105);
-            if (row == 2 && x < colBody.left + w * 0.35) continue;
-            canvas.drawRRect(
-              RRect.fromRectAndCorners(
-                Rect.fromLTWH(x, y - h * 0.18, w * 0.06, h * 0.18),
-                topLeft: Radius.circular(w * 0.03),
-                topRight: Radius.circular(w * 0.03),
-              ),
-              arch,
-            );
-          }
-        }
-        break;
-
-      case _Lm.pyramid:
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w / 2, b.dy)
-            ..lineTo(b.dx - w * 0.08, b.dy - h)
-            ..lineTo(b.dx + w * 0.12, b.dy)
-            ..close(),
-          light,
-        );
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx + w * 0.12, b.dy)
-            ..lineTo(b.dx - w * 0.08, b.dy - h)
-            ..lineTo(b.dx + w / 2, b.dy)
-            ..close(),
-          shade,
-        );
-        break;
-
-      case _Lm.burj:
-        final steps = [1.0, 0.8, 0.62, 0.46, 0.32, 0.2, 0.1];
-        for (var i = 0; i < steps.length; i++) {
-          final tw = w * steps[i];
-          final top = h * (0.12 + i * 0.11);
-          final bottom = i == 0 ? 0.0 : h * (0.12 + (i - 1) * 0.11);
-          canvas.drawRect(
-            Rect.fromLTRB(b.dx - tw / 2, b.dy - top, b.dx + tw / 2, b.dy - bottom),
-            fill,
-          );
-          canvas.drawRect(
-            Rect.fromLTRB(b.dx, b.dy - top, b.dx + tw / 2, b.dy - bottom),
-            light,
-          );
-        }
-        canvas.drawLine(Offset(b.dx, b.dy - h * 0.78), Offset(b.dx, b.dy - h),
-            light..strokeWidth = math.max(1.0, w * 0.04));
-        break;
-
-      case _Lm.sail:
-        final sail = Path()
-          ..moveTo(b.dx - w * 0.4, b.dy)
-          ..lineTo(b.dx - w * 0.4, b.dy - h)
-          ..quadraticBezierTo(b.dx + w * 0.7, b.dy - h * 0.55, b.dx + w * 0.3, b.dy)
-          ..close();
-        canvas.drawPath(sail, fill);
-        canvas.drawLine(Offset(b.dx - w * 0.4, b.dy), Offset(b.dx - w * 0.4, b.dy - h * 1.06),
-            shade..strokeWidth = math.max(1.0, w * 0.06));
-        break;
-
-      case _Lm.church:
-        // Stepped wings rising up to a tall pointed tower.
-        for (var i = 0; i < 4; i++) {
-          final half = w * (0.5 - i * 0.1);
-          final top = h * (0.25 + i * 0.12);
-          canvas.drawRect(
-              Rect.fromLTRB(b.dx - half, b.dy - top, b.dx + half, b.dy), fill);
-        }
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w * 0.1, b.dy - h * 0.6)
-            ..lineTo(b.dx, b.dy - h)
-            ..lineTo(b.dx + w * 0.1, b.dy - h * 0.6)
-            ..close(),
-          fill,
-        );
-        canvas.drawRect(
-            Rect.fromLTRB(b.dx, b.dy - h * 0.6, b.dx + w * 0.1, b.dy), shade);
-        break;
-
-      case _Lm.opera:
-        canvas.drawRect(
-          Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.18, w, h * 0.18),
-          Paint()..color = _hazed(const Color(0xFFC9A98A), haze),
-        );
-        for (var i = 0; i < 4; i++) {
-          final sx = b.dx - w * 0.42 + i * w * 0.24;
-          final sh = h * (0.55 + i * 0.15);
-          final shell = Path()
-            ..moveTo(sx, b.dy - h * 0.18)
-            ..quadraticBezierTo(sx + w * 0.02, b.dy - sh, sx + w * 0.2, b.dy - sh)
-            ..quadraticBezierTo(sx + w * 0.14, b.dy - h * 0.4, sx + w * 0.24,
-                b.dy - h * 0.18)
-            ..close();
-          canvas.drawPath(shell, fill);
-          canvas.drawPath(
-            shell,
-            Paint()
-              ..color = _hazed(const Color(0xFFBFC3C7), haze)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = math.max(0.6, w * 0.008),
-          );
-        }
-        break;
-
-      case _Lm.bridge:
-        final steel = Paint()
-          ..color = col
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = math.max(1.0, w * 0.02);
-        final deckY = b.dy - h * 0.4;
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w * 0.42, deckY + h * 0.2)
-            ..quadraticBezierTo(b.dx, b.dy - h * 1.35, b.dx + w * 0.42, deckY + h * 0.2),
-          steel,
-        );
-        canvas.drawLine(Offset(b.dx - w / 2, deckY), Offset(b.dx + w / 2, deckY),
-            steel..strokeWidth = math.max(1.5, w * 0.025));
-        for (final side in [-1.0, 1.0]) {
-          canvas.drawRect(
-            Rect.fromLTWH(b.dx + side * w * 0.45 - w * 0.03, b.dy - h * 0.7,
-                w * 0.06, h * 0.7),
-            Paint()..color = _hazed(const Color(0xFFB8AC94), haze),
-          );
-        }
-        for (var i = -6; i <= 6; i++) {
-          final x = b.dx + i * w * 0.06;
-          final t = x - b.dx;
-          final archY = deckY + h * 0.2 -
-              (1 - (t / (w * 0.42)) * (t / (w * 0.42))) * (h * 0.875);
-          canvas.drawLine(Offset(x, archY), Offset(x, deckY),
-              Paint()
-                ..color = col
-                ..strokeWidth = math.max(0.5, w * 0.006));
-        }
-        break;
-
-      case _Lm.tableMountain:
-        final m = Path()
-          ..moveTo(b.dx - w / 2, b.dy)
-          ..lineTo(b.dx - w * 0.3, b.dy - h * 0.92)
-          ..quadraticBezierTo(b.dx - w * 0.27, b.dy - h, b.dx - w * 0.22, b.dy - h)
-          ..lineTo(b.dx + w * 0.24, b.dy - h)
-          ..quadraticBezierTo(b.dx + w * 0.29, b.dy - h, b.dx + w * 0.32, b.dy - h * 0.9)
-          ..lineTo(b.dx + w / 2, b.dy)
-          ..close();
-        canvas.drawPath(m, fill);
-        // The "tablecloth" cloud that pours over the top.
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(b.dx, b.dy - h * 0.98), width: w * 0.5, height: h * 0.12),
-          Paint()
-            ..color = Colors.white.withValues(alpha: 0.85)
-            ..maskFilter = MaskFilter.blur(BlurStyle.normal, math.max(1.0, h * 0.04)),
-        );
-        break;
-
-      case _Lm.sugarloaf:
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w / 2, b.dy)
-            ..quadraticBezierTo(b.dx - w * 0.45, b.dy - h * 1.15, b.dx + w * 0.05, b.dy - h)
-            ..quadraticBezierTo(b.dx + w * 0.45, b.dy - h * 0.8, b.dx + w / 2, b.dy)
-            ..close(),
-          fill,
-        );
-        break;
-
-      case _Lm.christ:
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w / 2, b.dy)
-            ..quadraticBezierTo(b.dx - w * 0.1, b.dy - h * 1.05, b.dx, b.dy - h * 0.93)
-            ..quadraticBezierTo(b.dx + w * 0.15, b.dy - h * 0.85, b.dx + w / 2, b.dy)
-            ..close(),
-          fill,
-        );
-        final white = Paint()
-          ..color = _hazed(const Color(0xFFF2F2EE), haze)
-          ..strokeWidth = math.max(1.0, h * 0.02)
-          ..strokeCap = StrokeCap.round;
-        final top = Offset(b.dx, b.dy - h * 0.93);
-        canvas.drawLine(top, top.translate(0, -h * 0.12), white);
-        canvas.drawLine(top.translate(-h * 0.05, -h * 0.09),
-            top.translate(h * 0.05, -h * 0.09), white);
-        canvas.drawCircle(top.translate(0, -h * 0.13), h * 0.012, white);
-        break;
-
-      case _Lm.palm:
-        final trunk = Paint()
-          ..color = _hazed(const Color(0xFF7A5A3A), haze)
-          ..strokeWidth = math.max(1.0, w * 0.08)
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round;
-        final topP = Offset(b.dx + w * 0.15, b.dy - h);
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx, b.dy)
-            ..quadraticBezierTo(b.dx - w * 0.1, b.dy - h * 0.5, topP.dx, topP.dy),
-          trunk,
-        );
-        final leaf = Paint()
-          ..color = col
-          ..strokeWidth = math.max(1.0, w * 0.1)
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round;
-        for (var i = 0; i < 6; i++) {
-          final a = -math.pi + i * math.pi / 5;
-          final end = topP + Offset(math.cos(a), math.sin(a) * 0.5 + 0.35) * w * 1.1;
-          canvas.drawPath(
-            Path()
-              ..moveTo(topP.dx, topP.dy)
-              ..quadraticBezierTo(
-                  (topP.dx + end.dx) / 2, topP.dy - w * 0.25, end.dx, end.dy),
-            leaf,
-          );
-        }
-        break;
-
-      case _Lm.dome:
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.45, w, h * 0.45), fill);
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx + w * 0.2, b.dy - h * 0.45, w * 0.3, h * 0.45), shade);
-        canvas.drawArc(
-          Rect.fromCenter(
-              center: Offset(b.dx, b.dy - h * 0.45), width: w * 0.62, height: h * 0.8),
-          math.pi,
-          math.pi,
-          true,
-          light,
-        );
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w * 0.04, b.dy - h, w * 0.08, h * 0.17), light);
-        break;
-
-      case _Lm.hills:
-        final hills = Path()..moveTo(b.dx - w / 2, b.dy);
-        for (var i = 0; i <= 8; i++) {
-          final x = b.dx - w / 2 + w * i / 8;
-          final y = b.dy - h * (0.45 + 0.55 * _hash(f.seed + i));
-          hills.quadraticBezierTo(x - w / 16, y - h * 0.15, x, y);
-        }
-        hills
-          ..lineTo(b.dx + w / 2, b.dy)
-          ..close();
-        canvas.drawPath(hills, fill);
-        break;
-
-      case _Lm.needle:
-        // Tall thin tower with a round pod, like a TV tower.
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w * 0.12, b.dy - h * 0.92, w * 0.24, h * 0.92),
-            fill);
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx, b.dy - h * 0.92, w * 0.12, h * 0.92), shade);
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(b.dx, b.dy - h * 0.68), width: w, height: w * 0.8),
-          light,
-        );
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w * 0.5, b.dy - h * 0.66, w, w * 0.12), shade);
-        canvas.drawLine(Offset(b.dx, b.dy - h * 0.92), Offset(b.dx, b.dy - h),
-            shade..strokeWidth = math.max(1.0, w * 0.05));
-        break;
-
-      case _Lm.gabled:
-        final house = Path()
-          ..moveTo(b.dx - w / 2, b.dy)
-          ..lineTo(b.dx - w / 2, b.dy - h * 0.78)
-          ..lineTo(b.dx, b.dy - h)
-          ..lineTo(b.dx + w / 2, b.dy - h * 0.78)
-          ..lineTo(b.dx + w / 2, b.dy)
-          ..close();
-        canvas.drawPath(house, fill);
-        if (w > 6) {
-          final win = Paint()..color = _hazed(const Color(0xFFF4F1E8), haze);
-          for (var rI = 0; rI < 3; rI++) {
-            for (var cI = 0; cI < 2; cI++) {
-              canvas.drawRect(
-                Rect.fromLTWH(b.dx - w * 0.32 + cI * w * 0.38,
-                    b.dy - h * (0.22 + rI * 0.2), w * 0.24, h * 0.1),
-                win,
-              );
-            }
-          }
-        }
-        break;
-
-      case _Lm.temple:
-        // Columns with a triangle roof, sitting on top of a hill.
-        final baseY = b.dy - h * 1.15;
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w / 2, baseY, w, h * 0.12), fill);
-        for (var i = 0; i < 8; i++) {
-          final x = b.dx - w * 0.45 + i * w * 0.9 / 7;
-          canvas.drawRect(
-              Rect.fromLTWH(x - w * 0.025, baseY - h * 0.6, w * 0.05, h * 0.6),
-              light);
-        }
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w / 2, baseY - h * 0.72, w, h * 0.12), fill);
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w / 2, baseY - h * 0.72)
-            ..lineTo(b.dx, baseY - h * 0.95)
-            ..lineTo(b.dx + w / 2, baseY - h * 0.72)
-            ..close(),
-          fill,
-        );
-        break;
-
-      case _Lm.mosque:
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w * 0.4, b.dy - h * 0.35, w * 0.8, h * 0.35),
-            fill);
-        canvas.drawArc(
-          Rect.fromCenter(
-              center: Offset(b.dx, b.dy - h * 0.35),
-              width: w * 0.55,
-              height: h * 0.6),
-          math.pi,
-          math.pi,
-          true,
-          light,
-        );
-        for (final sx in [-0.3, 0.3]) {
-          canvas.drawArc(
-            Rect.fromCenter(
-                center: Offset(b.dx + w * sx, b.dy - h * 0.35),
-                width: w * 0.22,
-                height: h * 0.24),
-            math.pi,
-            math.pi,
-            true,
-            light,
-          );
-        }
-        for (final mx in [-0.5, -0.42, 0.42, 0.5]) {
-          canvas.drawRect(
-              Rect.fromLTWH(b.dx + w * mx - w * 0.015, b.dy - h * 0.92,
-                  w * 0.03, h * 0.92),
-              light);
-          canvas.drawPath(
-            Path()
-              ..moveTo(b.dx + w * mx - w * 0.02, b.dy - h * 0.92)
-              ..lineTo(b.dx + w * mx, b.dy - h)
-              ..lineTo(b.dx + w * mx + w * 0.02, b.dy - h * 0.92)
-              ..close(),
-            shade,
-          );
-        }
-        break;
-
-      case _Lm.onion:
-        const domeColours = [
-          Color(0xFF2F9E6E),
-          Color(0xFFE3B341),
-          Color(0xFF3B6FD1),
-          Color(0xFFD2473A),
-          Color(0xFF7B4FB8),
-        ];
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.4, w, h * 0.4), fill);
-        for (var i = 0; i < 5; i++) {
-          final x = b.dx - w * 0.4 + i * w * 0.2;
-          final tall = i == 2 ? 1.0 : 0.72 + (i % 2) * 0.1;
-          final towerTop = b.dy - h * 0.4 - h * 0.3 * tall;
-          canvas.drawRect(
-              Rect.fromLTRB(x - w * 0.05, towerTop, x + w * 0.05, b.dy - h * 0.4),
-              light);
-          final dw = w * (i == 2 ? 0.16 : 0.12);
-          final onion = Path()
-            ..moveTo(x - dw / 2, towerTop)
-            ..cubicTo(x - dw, towerTop - dw * 0.6, x - dw * 0.1,
-                towerTop - dw * 1.1, x, towerTop - dw * 1.5)
-            ..cubicTo(x + dw * 0.1, towerTop - dw * 1.1, x + dw,
-                towerTop - dw * 0.6, x + dw / 2, towerTop)
-            ..close();
-          canvas.drawPath(
-              onion, Paint()..color = _hazed(domeColours[i], haze));
-        }
-        break;
-
-      case _Lm.suspension:
-        // A long red bridge with two tall towers and sweeping cables.
-        final red = Paint()..color = col;
-        final susDeckY = b.dy - h * 0.35;
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w / 2, susDeckY, w, math.max(1.5, h * 0.04)), red);
-        final towers = [b.dx - w * 0.28, b.dx + w * 0.28];
-        for (final tx in towers) {
-          canvas.drawRect(
-              Rect.fromLTWH(tx - w * 0.015, b.dy - h, w * 0.03, h), red);
-        }
-        final cable = Paint()
-          ..color = col
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = math.max(0.8, w * 0.004);
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w / 2, susDeckY)
-            ..quadraticBezierTo(b.dx - w * 0.39, susDeckY - h * 0.1, towers[0], b.dy - h)
-            ..quadraticBezierTo(b.dx, susDeckY + h * 0.4, towers[1], b.dy - h)
-            ..quadraticBezierTo(b.dx + w * 0.39, susDeckY - h * 0.1, b.dx + w / 2, susDeckY),
-          cable,
-        );
-        break;
-
-      case _Lm.obelisk:
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w / 2, b.dy)
-            ..lineTo(b.dx - w * 0.32, b.dy - h * 0.92)
-            ..lineTo(b.dx, b.dy - h)
-            ..lineTo(b.dx + w * 0.32, b.dy - h * 0.92)
-            ..lineTo(b.dx + w / 2, b.dy)
-            ..close(),
-          fill,
-        );
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx, b.dy)
-            ..lineTo(b.dx, b.dy - h)
-            ..lineTo(b.dx + w * 0.32, b.dy - h * 0.92)
-            ..lineTo(b.dx + w / 2, b.dy)
-            ..close(),
-          shade,
-        );
-        break;
-
-      case _Lm.acacia:
-        canvas.drawLine(
-          Offset(b.dx, b.dy),
-          Offset(b.dx + w * 0.05, b.dy - h * 0.75),
-          Paint()
-            ..color = _hazed(const Color(0xFF5A4632), haze)
-            ..strokeWidth = math.max(1.0, w * 0.05),
-        );
-        canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(b.dx + w * 0.05, b.dy - h * 0.82),
-              width: w,
-              height: h * 0.3),
-          fill,
-        );
-        break;
-
-      case _Lm.minaret:
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.82, w, h * 0.82), fill);
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx + w * 0.15, b.dy - h * 0.82, w * 0.35, h * 0.82),
-            shade);
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w * 0.28, b.dy - h * 0.95, w * 0.56, h * 0.13),
-            fill);
-        canvas.drawCircle(Offset(b.dx, b.dy - h * 0.98), w * 0.08,
-            Paint()..color = _hazed(const Color(0xFFE3B341), haze));
-        break;
-
-      case _Lm.pagoda:
-        for (var i = 0; i < 5; i++) {
-          final level = i / 5;
-          final lw = w * (1 - level * 0.6);
-          final y = b.dy - h * (0.08 + level * 0.82);
-          canvas.drawRect(
-              Rect.fromLTWH(b.dx - lw * 0.3, y - h * 0.12, lw * 0.6, h * 0.12),
-              shade);
-          final roof = Path()
-            ..moveTo(b.dx - lw / 2, y - h * 0.1)
-            ..quadraticBezierTo(b.dx - lw * 0.3, y - h * 0.13, b.dx, y - h * 0.18)
-            ..quadraticBezierTo(b.dx + lw * 0.3, y - h * 0.13, b.dx + lw / 2, y - h * 0.1)
-            ..lineTo(b.dx + lw * 0.35, y - h * 0.12)
-            ..lineTo(b.dx - lw * 0.35, y - h * 0.12)
-            ..close();
-          canvas.drawPath(roof, fill);
-        }
-        canvas.drawLine(Offset(b.dx, b.dy - h * 0.9), Offset(b.dx, b.dy - h),
-            fill..strokeWidth = math.max(1.0, w * 0.03));
-        break;
-
-      case _Lm.marinaBay:
-        // Three towers holding up a long "ship" on top.
-        for (var i = 0; i < 3; i++) {
-          final x = b.dx - w * 0.3 + i * w * 0.3;
-          canvas.drawRect(
-              Rect.fromLTWH(x - w * 0.07, b.dy - h * 0.86, w * 0.14, h * 0.86),
-              fill);
-          canvas.drawRect(
-              Rect.fromLTWH(x + w * 0.01, b.dy - h * 0.86, w * 0.06, h * 0.86),
-              shade);
-        }
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx - w * 0.48, b.dy - h * 0.9)
-            ..lineTo(b.dx + w * 0.5, b.dy - h * 0.92)
-            ..lineTo(b.dx + w * 0.42, b.dy - h)
-            ..lineTo(b.dx - w * 0.42, b.dy - h * 0.97)
-            ..close(),
-          light,
-        );
-        break;
-
-      case _Lm.stupa:
-        // Pointed golden temple spire.
-        canvas.drawRect(
-            Rect.fromLTWH(b.dx - w / 2, b.dy - h * 0.2, w, h * 0.2), shade);
-        final bell = Path()
-          ..moveTo(b.dx - w * 0.4, b.dy - h * 0.2)
-          ..quadraticBezierTo(b.dx - w * 0.38, b.dy - h * 0.5, b.dx - w * 0.08,
-              b.dy - h * 0.6)
-          ..lineTo(b.dx, b.dy - h)
-          ..lineTo(b.dx + w * 0.08, b.dy - h * 0.6)
-          ..quadraticBezierTo(
-              b.dx + w * 0.38, b.dy - h * 0.5, b.dx + w * 0.4, b.dy - h * 0.2)
-          ..close();
-        canvas.drawPath(bell, fill);
-        canvas.drawPath(
-          Path()
-            ..moveTo(b.dx, b.dy - h * 0.2)
-            ..lineTo(b.dx, b.dy - h)
-            ..lineTo(b.dx + w * 0.08, b.dy - h * 0.6)
-            ..quadraticBezierTo(
-                b.dx + w * 0.38, b.dy - h * 0.5, b.dx + w * 0.4, b.dy - h * 0.2)
-            ..close(),
-          light,
-        );
-        break;
-
-      case _Lm.snowPeak:
-        final peak = Path()
-          ..moveTo(b.dx - w / 2, b.dy)
-          ..lineTo(b.dx - w * 0.06, b.dy - h)
-          ..lineTo(b.dx + w * 0.06, b.dy - h * 0.98)
-          ..lineTo(b.dx + w / 2, b.dy)
-          ..close();
-        canvas.drawPath(peak, fill);
-        final snow = Path()
-          ..moveTo(b.dx - w * 0.06, b.dy - h)
-          ..lineTo(b.dx - w * 0.2, b.dy - h * 0.6)
-          ..lineTo(b.dx - w * 0.1, b.dy - h * 0.66)
-          ..lineTo(b.dx, b.dy - h * 0.58)
-          ..lineTo(b.dx + w * 0.09, b.dy - h * 0.67)
-          ..lineTo(b.dx + w * 0.2, b.dy - h * 0.6)
-          ..lineTo(b.dx + w * 0.06, b.dy - h * 0.98)
-          ..close();
-        canvas.drawPath(snow, Paint()..color = _hazed(Colors.white, haze * 0.6));
-        break;
-    }
-  }
 
   // ---- text ----------------------------------------------------------------
 
