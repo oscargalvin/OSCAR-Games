@@ -11,9 +11,8 @@ part 'cartoon_flight.dart';
 part 'world_data.dart';
 part 'world_map.dart';
 part 'role_attendant.dart';
-part 'role_passenger.dart';
 
-enum _Role { pilot, attendant, passenger }
+enum _Role { pilot, attendant }
 
 // ---------------------------------------------------------------------------
 // Fly or Crash
@@ -137,8 +136,6 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
           switch (_role) {
             case _Role.attendant:
               return AttendantScreen(destination: dest);
-            case _Role.passenger:
-              return PassengerScreen(destination: dest);
             case _Role.pilot:
               return _cartoon
                   ? CartoonFlightScreen(destination: dest)
@@ -217,16 +214,6 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
                           icon: Icons.room_service_rounded,
                           selected: _role == _Role.attendant,
                           onTap: () => setState(() => _role = _Role.attendant),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _ModeChoice(
-                          label: 'Passenger',
-                          detail: 'Travel and explore',
-                          icon: Icons.person_rounded,
-                          selected: _role == _Role.passenger,
-                          onTap: () => setState(() => _role = _Role.passenger),
                         ),
                       ),
                     ],
@@ -319,9 +306,7 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
               child: _ChunkyButton(
                 label: selected == null
                     ? 'Pick a place to fly to'
-                    : _role == _Role.passenger
-                        ? 'Go to the airport'
-                        : _role == _Role.attendant
+                    : _role == _Role.attendant
                             ? 'Start work: flight to ${selected.city}'
                             : 'Take off for ${selected.city}',
                 color: selected == null ? Colors.white54 : _sun,

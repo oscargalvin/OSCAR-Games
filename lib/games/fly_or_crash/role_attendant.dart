@@ -402,7 +402,7 @@ class _AttendantScreenState extends State<AttendantScreen>
                     size: 18, color: on ? _ink : Colors.white54),
                 const SizedBox(width: 4),
                 Text(
-                  on ? 'SEATBELTS ON' : 'Seatbelts off',
+                  on ? 'BELTS ON' : 'Belts off',
                   style: TextStyle(
                     color: on ? _ink : Colors.white70,
                     fontSize: 12,
@@ -428,6 +428,7 @@ class _AttendantScreenState extends State<AttendantScreen>
                   ),
                   const SizedBox(width: 6),
                   Expanded(
+                    flex: 2,
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(5),
                       child: LinearProgressIndicator(
@@ -443,12 +444,16 @@ class _AttendantScreenState extends State<AttendantScreen>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    '${(_progress * 100).round()}% to ${widget.destination.city}',
-                    style: const TextStyle(
-                      color: _ink,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
+                  Flexible(
+                    child: Text(
+                      '${(_progress * 100).round()}% to ${widget.destination.city}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _ink,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ],
