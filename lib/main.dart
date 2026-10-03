@@ -35,25 +35,13 @@ class OscarGamesApp extends StatelessWidget {
       theme: AppTheme.darkTheme,
       builder: (context, child) {
         return Container(
-          color: const Color(0xFF050A14),
+          color: const Color(0xFF15172A),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: maxAppWidth),
               child: Container(
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   color: AppTheme.primaryDark,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.accent.withValues(alpha: 0.08),
-                      blurRadius: 40,
-                      spreadRadius: 2,
-                    ),
-                    const BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 60,
-                      spreadRadius: 10,
-                    ),
-                  ],
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: child,

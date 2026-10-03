@@ -1,199 +1,168 @@
 import 'package:flutter/material.dart';
 import '../models/game_info.dart';
-import '../theme/app_theme.dart';
 
+/// Ink colour used for outlines, hard shadows and text on the bright tiles.
+const Color kInk = Color(0xFF15172A);
+
+/// A flat, chunky game tile: solid colour, thick ink outline and a hard
+/// offset shadow. Pressing it pushes the tile down onto its shadow.
 class GameCard extends StatefulWidget {
   final GameInfo game;
   final int? highScore;
   final VoidCallback onTap;
+  final Color? tileColor;
 
   const GameCard({
     super.key,
     required this.game,
     this.highScore,
     required this.onTap,
+    this.tileColor,
   });
 
   @override
   State<GameCard> createState() => _GameCardState();
 }
 
-class _GameCardState extends State<GameCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
+class _GameCardState extends State<GameCard> {
+  static const double _lift = 6;
   bool _isPressed = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 150),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
+  String get _players {
+    final g = widget.game;
+    if (g.maxPlayers > g.minPlayers) return '${g.minPlayers}–${g.maxPlayers} players';
+    return g.minPlayers == 1 ? '1 player' : '${g.minPlayers} players';
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _scaleAnimation,
-      builder: (context, child) {
-        return Transform.scale(
-          scale: _scaleAnimation.value,
-          child: child,
-        );
-      },
+    final color = widget.tileColor ?? widget.game.color;
+    final offset = _isPressed ? 1.0 : _lift;
+
+    return Semantics(
+      button: true,
+      label: 'Play ${widget.game.title}',
       child: GestureDetector(
-        onTapDown: (_) {
-          setState(() => _isPressed = true);
-          _controller.forward();
-        },
+        onTapDown: (_) => setState(() => _isPressed = true),
         onTapUp: (_) {
           setState(() => _isPressed = false);
-          _controller.reverse();
           widget.onTap();
         },
-        onTapCancel: () {
-          setState(() => _isPressed = false);
-          _controller.reverse();
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                widget.game.color.withValues(alpha: 0.3),
-                widget.game.secondaryColor.withValues(alpha: 0.15),
+        onTapCancel: () => setState(() => _isPressed = false),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 90),
+            curve: Curves.easeOut,
+            margin: EdgeInsets.only(top: _lift - offset, bottom: offset),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: kInk, width: 2.5),
+              boxShadow: [
+                BoxShadow(
+                  color: kInk,
+                  offset: Offset(0, offset),
+                  blurRadius: 0,
+                ),
               ],
             ),
-            border: Border.all(
-              color: _isPressed
-                  ? widget.game.color
-                  : widget.game.color.withValues(alpha: 0.3),
-              width: 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: widget.game.color
-                    .withValues(alpha: _isPressed ? 0.3 : 0.1),
-                blurRadius: _isPressed ? 20 : 10,
-                spreadRadius: _isPressed ? 2 : 0,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(widget.game.icon, color: kInk, size: 40),
+                      const Spacer(),
+                      if (widget.highScore != null)
+                        _BestSticker(score: widget.highScore!),
+                    ],
+                  ),
+                  const Spacer(),
+                  Text(
+                    widget.game.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kInk,
+                      fontSize: 19,
+                      height: 1.05,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.game.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: kInk.withValues(alpha: 0.75),
+                      fontSize: 12.5,
+                      height: 1.25,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(height: 2, color: kInk.withValues(alpha: 0.18)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Text(
+                        widget.game.difficulty,
+                        style: const TextStyle(
+                          color: kInk,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        _players,
+                        style: TextStyle(
+                          color: kInk.withValues(alpha: 0.75),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: widget.game.color.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Icon(
-                        widget.game.icon,
-                        color: widget.game.color,
-                        size: 28,
-                      ),
-                    ),
-                    if (widget.highScore != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppTheme.success.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.emoji_events,
-                              color: AppTheme.warning,
-                              size: 14,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${widget.highScore}',
-                              style: const TextStyle(
-                                color: AppTheme.success,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-                const Spacer(),
-                Text(
-                  widget.game.title,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.game.subtitle,
-                  style: TextStyle(
-                    color: AppTheme.textSecondary.withValues(alpha: 0.8),
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    _buildTag(widget.game.difficulty, widget.game.color),
-                    const SizedBox(width: 8),
-                    _buildTag(
-                      '${widget.game.minPlayers}P',
-                      AppTheme.textSecondary,
-                    ),
-                  ],
-                ),
-              ],
             ),
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildTag(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
+/// Small white "sticker" showing the player's best for that game.
+class _BestSticker extends StatelessWidget {
+  final int score;
+  const _BestSticker({required this.score});
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: 0.06,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: kInk, width: 2),
+        ),
+        child: Text(
+          'Best $score',
+          style: const TextStyle(
+            color: kInk,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ),
     );

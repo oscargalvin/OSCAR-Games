@@ -9,8 +9,12 @@ import '../games/snake/snake_screen.dart';
 import '../games/reaction/reaction_screen.dart';
 import '../games/target_shooter/world_select_screen.dart';
 import '../games/boat_fishing/boat_fishing_screen.dart';
-import '../games/world_cup/world_cup_screen.dart';
+// Archived: World Cup is hidden from the home screen but its code is kept in
+// lib/games/world_cup/. To bring it back, un-comment this import and the
+// World Cup entry in the games list below.
+// import '../games/world_cup/world_cup_screen.dart';
 import '../games/board_game/board_game_screen.dart';
+import '../games/fly_or_crash/fly_or_crash_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,12 +23,22 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _titleController;
-  late Animation<double> _titleAnimation;
+class _HomeScreenState extends State<HomeScreen> {
 
   late final List<GameInfo> games = [
+    GameInfo(
+      id: 'fly_or_crash',
+      title: 'Fly or Crash',
+      subtitle: 'Fly anywhere in the world',
+      description:
+          'Pick a city, fly there from London, dodge storms and other planes, '
+          'handle emergencies and land safely. Keep your passengers okay!',
+      icon: Icons.flight_rounded,
+      color: AppTheme.blue,
+      secondaryColor: AppTheme.accent,
+      screenBuilder: () => const FlyOrCrashScreen(),
+      difficulty: 'Medium',
+    ),
     GameInfo(
       id: 'board_game',
       title: 'Lucky Board Game',
@@ -40,19 +54,20 @@ class _HomeScreenState extends State<HomeScreen>
       maxPlayers: 5,
       difficulty: 'Easy',
     ),
-    GameInfo(
-      id: 'world_cup',
-      title: 'World Cup',
-      subtitle: '2026 World Cup · 48 nations',
-      description:
-          'The 48 nations that qualified for the 2026 FIFA World Cup — '
-          'Groups A–L, group stage through the Final. Play or quick-play matches.',
-      icon: Icons.sports_soccer_rounded,
-      color: AppTheme.success,
-      secondaryColor: AppTheme.warning,
-      screenBuilder: () => const WorldCupScreen(),
-      difficulty: 'Medium',
-    ),
+    // ARCHIVED (World Cup) — un-comment to show it again.
+    // GameInfo(
+    //   id: 'world_cup',
+    //   title: 'World Cup',
+    //   subtitle: '2026 World Cup · 48 nations',
+    //   description:
+    //       'The 48 nations that qualified for the 2026 FIFA World Cup — '
+    //       'Groups A–L, group stage through the Final. Play or quick-play matches.',
+    //   icon: Icons.sports_soccer_rounded,
+    //   color: AppTheme.success,
+    //   secondaryColor: AppTheme.warning,
+    //   screenBuilder: () => const WorldCupScreen(),
+    //   difficulty: 'Medium',
+    // ),
     GameInfo(
       id: 'boat_fishing',
       title: 'Lucky Fish',
@@ -124,25 +139,20 @@ class _HomeScreenState extends State<HomeScreen>
     ),
   ];
 
-  @override
-  void initState() {
-    super.initState();
-    _titleController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
-      vsync: this,
-    );
-    _titleAnimation = CurvedAnimation(
-      parent: _titleController,
-      curve: Curves.elasticOut,
-    );
-    _titleController.forward();
-  }
+  // Hand-picked tile colours so neighbouring games never clash.
+  static const Map<String, Color> _tileColors = {
+    'fly_or_crash': Color(0xFFFFFFFF), // boarding-pass white
+    'board_game': Color(0xFFFFC93C), // sunflower
+    'world_cup': Color(0xFF3DDC84), // pitch green
+    'boat_fishing': Color(0xFF6FD3F7), // sea
+    'tic_tac_toe': Color(0xFFFF8FC7), // bubblegum
+    'memory_match': Color(0xFFB79BFF), // lilac
+    'snake': Color(0xFFC6EF4F), // lime
+    'reaction': Color(0xFFFF9F43), // tangerine
+    'target_shooter': Color(0xFFFF6B5B), // tomato
+  };
 
-  @override
-  void dispose() {
-    _titleController.dispose();
-    super.dispose();
-  }
+  static const Color _background = Color(0xFF2A3FD4); // cobalt
 
   int? _getHighScore(String gameId) {
     final save = SaveService.instance;
@@ -163,6 +173,9 @@ class _HomeScreenState extends State<HomeScreen>
       case 'boat_fishing':
         final c = save.fishCoins;
         return c > 0 ? c : null;
+      case 'fly_or_crash':
+        final l = save.getHighScore('fly_or_crash');
+        return l > 0 ? l : null;
       case 'world_cup':
         final w = save.worldCupWins;
         return w > 0 ? w : null;
@@ -177,21 +190,9 @@ class _HomeScreenState extends State<HomeScreen>
         pageBuilder: (context, animation, secondaryAnimation) =>
             game.screenBuilder(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.05),
-                end: Offset.zero,
-              ).animate(CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOut,
-              )),
-              child: child,
-            ),
-          );
+          return FadeTransition(opacity: animation, child: child);
         },
-        transitionDuration: const Duration(milliseconds: 400),
+        transitionDuration: const Duration(milliseconds: 200),
       ),
     ).then((_) => setState(() {}));
   }
@@ -199,32 +200,30 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: AppTheme.gradientBackground,
-        child: SafeArea(
-          child: CustomScrollView(
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              SliverToBoxAdapter(child: _buildHeader()),
-              SliverPadding(
-                padding: const EdgeInsets.all(16),
-                sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 14,
-                    mainAxisSpacing: 14,
-                    childAspectRatio: 0.82,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) => _buildGameCard(index),
-                    childCount: games.length,
-                  ),
+      backgroundColor: _background,
+      body: SafeArea(
+        child: CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader()),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 14,
+                  mainAxisSpacing: 14,
+                  childAspectRatio: 0.8,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildGameCard(index),
+                  childCount: games.length,
                 ),
               ),
-              SliverToBoxAdapter(child: _buildComingSoon()),
-              const SliverToBoxAdapter(child: SizedBox(height: 40)),
-            ],
-          ),
+            ),
+            SliverToBoxAdapter(child: _buildComingSoon()),
+            const SliverToBoxAdapter(child: SizedBox(height: 40)),
+          ],
         ),
       ),
     );
@@ -232,113 +231,74 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(22, 28, 22, 18),
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          ScaleTransition(
-            scale: _titleAnimation,
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        AppTheme.accent.withValues(alpha: 0.3),
-                        AppTheme.purple.withValues(alpha: 0.2),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppTheme.accent.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.sports_esports_rounded,
-                    color: AppTheme.accent,
-                    size: 32,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Oscar Galvin's",
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              const FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Game Center',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 46,
+                    height: 1.0,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1.6,
                   ),
                 ),
-                const SizedBox(width: 16),
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'OSCAR',
-                      style: TextStyle(
-                        color: AppTheme.accent,
-                        fontSize: 32,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 4,
-                      ),
-                    ),
-                    Text(
-                      'GAME CENTER',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 6,
-                      ),
-                    ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Tap a game to play.',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          Positioned(
+            right: 0,
+            top: 0,
+            child: Transform.rotate(
+              angle: 0.12,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFC93C),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kInk, width: 2.5),
+                  boxShadow: const [
+                    BoxShadow(color: kInk, offset: Offset(0, 4)),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  AppTheme.accent.withValues(alpha: 0.08),
-                  AppTheme.purple.withValues(alpha: 0.05),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: AppTheme.accent.withValues(alpha: 0.15),
+                child: Text(
+                  '${games.length} games',
+                  style: const TextStyle(
+                    color: kInk,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
               ),
             ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.local_fire_department_rounded,
-                  color: AppTheme.warning.withValues(alpha: 0.8),
-                  size: 20,
-                ),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'Pick a game and start playing!',
-                    style: TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${games.length} Games',
-                    style: const TextStyle(
-                      color: AppTheme.accent,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
-          const SizedBox(height: 16),
         ],
       ),
     );
@@ -348,6 +308,7 @@ class _HomeScreenState extends State<HomeScreen>
     final game = games[index];
     return GameCard(
       game: game,
+      tileColor: _tileColors[game.id],
       highScore: _getHighScore(game.id),
       onTap: () => _openGame(game),
     );
@@ -355,38 +316,45 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildComingSoon() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(18, 22, 18, 0),
       child: Container(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
         decoration: BoxDecoration(
-          color: AppTheme.surface.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: AppTheme.textSecondary.withValues(alpha: 0.1),
+            color: Colors.white.withValues(alpha: 0.35),
+            width: 2,
           ),
         ),
-        child: Column(
+        child: Row(
           children: [
             Icon(
-              Icons.rocket_launch_rounded,
-              color: AppTheme.textSecondary.withValues(alpha: 0.4),
-              size: 40,
+              Icons.construction_rounded,
+              color: Colors.white.withValues(alpha: 0.8),
+              size: 28,
             ),
-            const SizedBox(height: 12),
-            Text(
-              'More Games Coming Soon',
-              style: TextStyle(
-                color: AppTheme.textSecondary.withValues(alpha: 0.6),
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Puzzle, Quiz, Racing & more!',
-              style: TextStyle(
-                color: AppTheme.textSecondary.withValues(alpha: 0.4),
-                fontSize: 13,
+            const SizedBox(width: 14),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'More games on the way',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Puzzles, quizzes and racing are next.',
+                    style: TextStyle(
+                      color: Color(0xCCFFFFFF),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
