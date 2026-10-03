@@ -172,8 +172,9 @@ class _PassengerScreenState extends State<PassengerScreen>
   final List<_Npc> _npcs = [];
 
   // Trip details.
+  late Destination _dest;
   late final String _seat;
-  late final List<_Feature> _scenery;
+  late List<_Feature> _scenery;
   final List<_Feature> _landmarks = [];
   int _seen = 0;
   int _day = 1;
@@ -196,21 +197,13 @@ class _PassengerScreenState extends State<PassengerScreen>
   @override
   void initState() {
     super.initState();
+    _dest = widget.destination;
     _seat = '${12 + _rand.nextInt(20)}${'ACDF'[_rand.nextInt(4)]}';
-    _scenery = _sceneryFor(widget.destination.city, _rand);
-    final seenKinds = <_Lm>{};
-    for (final f in _scenery) {
-      final key = '${widget.destination.city}|${f.kind.name}';
-      if (_landmarkInfo.containsKey(key) && seenKinds.add(f.kind)) {
-        _landmarks.add(f);
-      }
-    }
-    final km = _distanceKm(_home, widget.destination);
-    _flightSeconds = (35 + km / 600).clamp(35.0, 60.0).toDouble();
+    _setDestination(_dest);
     _bumpStart = 0.35 + _rand.nextDouble() * 0.3;
     _enterStage(_Stage.departAirport);
-    _say('Welcome to London Airport! Find the Check-in desk. Walk with the '
-        'arrow keys, or tap where you want to go.', 5);
+    _say('You\'re outside London Airport. Walk inside with the arrow keys, '
+        'or tap where you want to go!', 5);
     _ticker = createTicker(_tick)..start();
   }
 
@@ -221,7 +214,100 @@ class _PassengerScreenState extends State<PassengerScreen>
     super.dispose();
   }
 
-  String get _city => widget.destination.city;
+  String get _city => _dest.city;
+
+  void _setDestination(Destination d) {
+    _dest = d;
+    _scenery = _sceneryFor(d.city, _rand);
+    _landmarks.clear();
+    final seenKinds = <_Lm>{};
+    for (final f in _scenery) {
+      final key = '${d.city}|${f.kind.name}';
+      if (_landmarkInfo.containsKey(key) && seenKinds.add(f.kind)) {
+        _landmarks.add(f);
+      }
+    }
+    final km = _distanceKm(_home, d);
+    _flightSeconds = (35 + km / 600).clamp(35.0, 60.0).toDouble();
+  }
+
+  Future<void> _chooseFlight() async {
+    final options = <Destination>[
+      if (!_destinations.contains(_dest)) _dest,
+      ..._destinations,
+    ];
+    final picked = await showModalBottomSheet<Destination>(
+      context: context,
+      backgroundColor: const Color(0xFF111318),
+      isScrollControlled: true,
+      builder: (context) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'DEPARTURES - pick any flight',
+                style: TextStyle(
+                  color: Color(0xFFFFC93C),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: options.length,
+                itemBuilder: (context, i) {
+                  final d = options[i];
+                  final mins = 10 + (i * 17) % 50;
+                  final hour = 9 + (i * 7) % 12;
+                  final gate = 3 + (i * 5) % 40;
+                  final isNow = identical(d, _dest);
+                  return ListTile(
+                    onTap: () => Navigator.of(context).pop(d),
+                    leading: Text(
+                      '$hour:${mins.toString().padLeft(2, '0')}',
+                      style: const TextStyle(
+                        color: Color(0xFFFFC93C),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    title: Text(
+                      d.city.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '${d.country}   Gate $gate',
+                      style: const TextStyle(color: Colors.white60),
+                    ),
+                    trailing: Text(
+                      isNow ? 'YOUR FLIGHT' : 'ON TIME',
+                      style: TextStyle(
+                        color: isNow ? const Color(0xFF3DDC84) : Colors.white70,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+    setState(() {
+      _setDestination(picked);
+      _say('Great choice! You\'re flying to ${picked.city}. Now go and check in.', 4);
+    });
+    _focus.requestFocus();
+  }
 
   void _say(String text, [double seconds = 4]) {
     _message = text;
@@ -236,20 +322,26 @@ class _PassengerScreenState extends State<PassengerScreen>
     switch (stage) {
       case _Stage.departAirport:
         _spots = [
-          _Spot('checkin', 340, 'Check-in', 'Check in',
+          _Spot('doors', 470, 'LONDON AIRPORT', 'Walk into the airport',
+              Icons.exit_to_app_rounded),
+          _Spot('departures', 800, 'Departures', 'Choose your flight',
+              Icons.list_alt_rounded),
+          _Spot('checkin', 1160, 'Check-in', 'Check in',
               Icons.confirmation_number_rounded),
-          _Spot('security', 760, 'Security', 'Walk through the scanner',
+          _Spot('security', 1600, 'Security', 'Walk through the scanner',
               Icons.security_rounded,
               barrier: true),
-          _Spot('cafe', 1100, 'Café', 'Buy a snack', Icons.local_cafe_rounded),
-          _Spot('gate', 1460, 'Gate 12', 'Show your boarding pass',
+          _Spot('shop', 1960, 'Duty free', 'Look round the shops',
+              Icons.shopping_bag_rounded),
+          _Spot('cafe', 2280, 'Café', 'Buy a snack', Icons.local_cafe_rounded),
+          _Spot('gate', 2660, 'Gate 12', 'Show your boarding pass',
               Icons.qr_code_rounded,
               barrier: true),
-          _Spot('board', 1800, 'To the plane', 'Walk onto the plane',
+          _Spot('board', 3060, 'To the plane', 'Walk onto the plane',
               Icons.flight_takeoff_rounded),
         ];
-        _sceneW = 1980;
-        _addNpcs(7);
+        _sceneW = 3260;
+        _addNpcs(12);
         break;
       case _Stage.flight:
         _spots = [];
@@ -448,6 +540,17 @@ class _PassengerScreenState extends State<PassengerScreen>
     }
     setState(() {
       switch (s.id) {
+        case 'doors':
+          _say('Whoosh! The doors slide open. Look for the big Departures '
+              'board to see all the flights.', 4);
+          break;
+        case 'departures':
+          Future.microtask(_chooseFlight);
+          break;
+        case 'shop':
+          _say('Sweets, teddy bears, toy planes and giant chocolate bars! You '
+              'buy a little toy plane to remember the trip.', 5);
+          break;
         case 'checkin':
           s.done = true;
           _say('Here\'s your boarding pass: seat $_seat, Gate 12. Your '
@@ -480,7 +583,7 @@ class _PassengerScreenState extends State<PassengerScreen>
           break;
         case 'passport':
           s.done = true;
-          _say('Stamp! "Welcome to ${widget.destination.country == 'Your pin' ? _city : widget.destination.country}! Enjoy your stay."', 4);
+          _say('Stamp! "Welcome to ${_dest.country == 'Your pin' ? _city : _dest.country}! Enjoy your stay."', 4);
           break;
         case 'bags':
           s.done = true;
@@ -1041,12 +1144,128 @@ class _WalkPainter extends CustomPainter {
       canvas.drawLine(Offset(x, _floorY - 10), Offset(x - 50, _h), tile);
     }
 
+    // Your own plane, parked right outside the gate.
+    final gate = s._spot('board');
+    if (gate != null) {
+      final gx = _sx(gate.x + 260);
+      if (gx > -200 && gx < _w + 900) {
+        canvas.save();
+        canvas.clipRect(Rect.fromLTRB(0, winTop, _w, winBottom));
+        _bigPlane(canvas, Offset(gx, winBottom - _h * 0.03), _h * 0.13, 0);
+        canvas.restore();
+      }
+    }
+
+    // Plants, benches and bins dotted along the hall.
+    for (var wx = 300.0; wx < s._sceneW; wx += 330) {
+      var nearSpot = false;
+      for (final sp in s._spots) {
+        if ((sp.x - wx).abs() < 170) nearSpot = true;
+      }
+      if (nearSpot) continue;
+      final x = _sx(wx);
+      if (x < -80 || x > _w + 80) continue;
+      if ((wx ~/ 330).isEven) {
+        _plant(canvas, Offset(x, _floorY - 4));
+      } else {
+        _bench(canvas, Offset(x, _floorY - 4));
+      }
+    }
+
     for (final spot in s._spots) {
       final x = _sx(spot.x);
-      if (x < -260 || x > _w + 260) continue;
+      if (x < -320 || x > _w + 320) continue;
       _airportThing(canvas, spot, x);
-      _hangingSign(canvas, spot.sign, x, _h * 0.1, spot.done);
+      if (spot.id != 'doors') {
+        _hangingSign(canvas, spot.sign, x, _h * 0.1, spot.done);
+      }
     }
+
+    if (s._stage == _Stage.departAirport) _paintOutside(canvas);
+  }
+
+  /// The street outside the terminal, where you start.
+  void _paintOutside(Canvas canvas) {
+    final edge = _sx(520);
+    if (edge < 0) return;
+    final left = _sx(-600);
+    canvas.drawRect(
+      Rect.fromLTRB(left, 0, edge, _floorY),
+      Paint()
+        ..shader = ui.Gradient.linear(Offset.zero, Offset(0, _floorY),
+            [const Color(0xFF4A8BD3), const Color(0xFFD5E6F3)]),
+    );
+    // Clouds.
+    for (var i = 0; i < 4; i++) {
+      final c = Offset(_sx(-300 + i * 220.0, 0.6), _h * (0.12 + (i % 2) * 0.08));
+      final puff = Paint()
+        ..color = Colors.white.withValues(alpha: 0.9)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      canvas.drawCircle(c, 26, puff);
+      canvas.drawCircle(c.translate(28, 6), 20, puff);
+      canvas.drawCircle(c.translate(-26, 8), 18, puff);
+    }
+    // Pavement and road.
+    canvas.drawRect(Rect.fromLTRB(left, _floorY - 10, edge, _h),
+        Paint()..color = const Color(0xFFBDB8AF));
+    canvas.drawRect(Rect.fromLTRB(left, _floorY + _h * 0.08, edge, _h),
+        Paint()..color = const Color(0xFF3D4047));
+    for (var wx = -600.0; wx < 520; wx += 90) {
+      canvas.drawRect(Rect.fromLTWH(_sx(wx), _floorY + _h * 0.14, 45, 4),
+          Paint()..color = Colors.white.withValues(alpha: 0.8));
+    }
+    _car(canvas, Offset(_sx(120), _floorY + _h * 0.12), 99, taxi: true);
+    _car(canvas, Offset(_sx(-160), _floorY + _h * 0.12), 3);
+
+    // The front of the terminal building: a big glass wall.
+    final face = Rect.fromLTRB(_sx(300), _h * 0.08, edge, _floorY - 10);
+    canvas.drawRect(face, Paint()..color = const Color(0xFF8FB8D8));
+    final frame = Paint()..color = const Color(0xFF5F6670);
+    for (var x = face.left; x < face.right; x += 44) {
+      canvas.drawRect(Rect.fromLTWH(x, face.top, 5, face.height), frame);
+    }
+    for (var y = face.top; y < face.bottom; y += 60) {
+      canvas.drawRect(Rect.fromLTWH(face.left, y, face.width, 4), frame);
+    }
+    canvas.drawRect(Rect.fromLTRB(face.left - 20, face.top - 26, edge + 400, face.top + 6),
+        Paint()..color = const Color(0xFFE9ECEF));
+    _textAt(canvas, 'LONDON AIRPORT', Offset(_sx(410), face.top - 10), 18, _cobalt);
+    // Sliding doors.
+    final door = Rect.fromLTWH(_sx(430), _floorY - _h * 0.3, 80, _h * 0.3 - 10);
+    canvas.drawRect(door, Paint()..color = const Color(0xFFCFE8F7));
+    canvas.drawRect(Rect.fromLTWH(door.center.dx - 2, door.top, 4, door.height), frame);
+    canvas.drawRect(Rect.fromLTWH(door.left, door.top - 14, door.width, 12),
+        Paint()..color = _sun);
+    _textAt(canvas, 'ENTRANCE', Offset(door.center.dx, door.top - 8), 9, _ink);
+  }
+
+  void _plant(Canvas canvas, Offset base) {
+    canvas.drawRect(Rect.fromCenter(center: base.translate(0, -14), width: 34, height: 28),
+        Paint()..color = const Color(0xFF8A6A4A));
+    final leaf = Paint()..color = const Color(0xFF3F8F4A);
+    for (var i = 0; i < 6; i++) {
+      final a = -math.pi / 2 + (i - 2.5) * 0.35;
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: base.translate(math.cos(a) * 22, -28 + math.sin(a) * 26),
+            width: 16,
+            height: 34),
+        leaf,
+      );
+    }
+  }
+
+  void _bench(Canvas canvas, Offset base) {
+    final seat = Paint()..color = const Color(0xFF4A5568);
+    for (var i = 0; i < 4; i++) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(base.dx - 70 + i * 36, base.dy - 44, 32, 30), const Radius.circular(5)),
+        seat,
+      );
+    }
+    canvas.drawRect(Rect.fromLTWH(base.dx - 72, base.dy - 16, 146, 6),
+        Paint()..color = const Color(0xFF9CA3AD));
   }
 
   void _airportThing(Canvas canvas, _Spot spot, double x) {
@@ -1071,14 +1290,108 @@ class _WalkPainter extends CustomPainter {
         canvas.drawRRect(RRect.fromRectAndRadius(desk, const Radius.circular(6)),
             Paint()..color = spot.id == 'passport' ? const Color(0xFF4A5568) : const Color(0xFF2F5DA8));
         if (spot.id == 'gate') {
-          for (var i = 0; i < 4; i++) {
-            final seat = Rect.fromLTWH(x + 120 + i * 34, _floorY - 40, 30, 22);
-            canvas.drawRRect(RRect.fromRectAndRadius(seat, const Radius.circular(4)),
-                Paint()..color = const Color(0xFF34407A));
+          // People waiting to board.
+          for (var row = 0; row < 2; row++) {
+            for (var i = 0; i < 6; i++) {
+              final sx = x + 110 + i * 34 + row * 16.0;
+              final sy = _floorY - 30 - row * 26.0;
+              final look = i * 37 + row * 11;
+              if (look % 3 != 0) {
+                canvas.drawCircle(Offset(sx + 15, sy - 30), 8,
+                    Paint()..color = _skinTones[look % _skinTones.length]);
+                canvas.drawRRect(
+                  RRect.fromRectAndRadius(
+                      Rect.fromLTWH(sx + 6, sy - 22, 18, 20), const Radius.circular(5)),
+                  Paint()..color = _clothes[look % _clothes.length],
+                );
+              }
+              canvas.drawRRect(
+                RRect.fromRectAndRadius(
+                    Rect.fromLTWH(sx, sy - 10, 30, 22), const Radius.circular(4)),
+                Paint()..color = const Color(0xFF34407A),
+              );
+            }
           }
         }
+        if (spot.id == 'checkin') {
+          // More desks and a queue.
+          for (final dx in [-230.0, 230.0]) {
+            final d2 = Rect.fromLTWH(x + dx - 70, _floorY - _h * 0.12, 140, _h * 0.12);
+            canvas.drawRRect(RRect.fromRectAndRadius(d2, const Radius.circular(6)),
+                Paint()..color = const Color(0xFF2F5DA8));
+            canvas.drawRect(Rect.fromLTWH(d2.left, d2.top, d2.width, 7), steel);
+          }
+          canvas.drawRect(Rect.fromLTWH(x - 110, _floorY - _h * 0.3, 220, 30),
+              Paint()..color = _cobalt);
+          _textAt(canvas, 'OSCAR AIR', Offset(x, _floorY - _h * 0.3 + 15), 14, Colors.white);
+        }
+        break;
+      case 'doors':
+        break;
+      case 'departures':
+        final board = Rect.fromLTWH(x - 150, _h * 0.17, 300, _h * 0.3);
+        canvas.drawRect(board.inflate(6), Paint()..color = const Color(0xFF5F6670));
+        canvas.drawRect(board, Paint()..color = const Color(0xFF0B0C0E));
+        final names = <String>[
+          s._city,
+          ..._destinations.where((d) => d.city != s._city).take(6).map((d) => d.city),
+        ];
+        final rowH = board.height / 8;
+        _boardText(canvas, 'DEPARTURES', Offset(board.left + 10, board.top + 4),
+            rowH * 0.6, _sun);
+        for (var i = 0; i < names.length; i++) {
+          final y = board.top + rowH * (i + 1.2);
+          final mine = i == 0;
+          _boardText(canvas, '${9 + i}:${(i * 13 + 5) % 60}'.padRight(6),
+              Offset(board.left + 10, y), rowH * 0.5, _sun);
+          _boardText(canvas, names[i].toUpperCase(), Offset(board.left + 70, y),
+              rowH * 0.5, Colors.white);
+          final blink = (s._time * 2).floor().isEven;
+          _boardText(
+            canvas,
+            mine ? (blink ? 'GATE 12' : 'BOARDING') : 'ON TIME',
+            Offset(board.right - 80, y),
+            rowH * 0.5,
+            mine ? const Color(0xFF3DDC84) : Colors.white60,
+          );
+        }
+        break;
+      case 'shop':
+        final shopRect = Rect.fromLTWH(x - 140, _floorY - _h * 0.36, 280, _h * 0.36);
+        canvas.drawRect(shopRect, Paint()..color = const Color(0xFFF7F3EA));
+        for (var shelf = 0; shelf < 4; shelf++) {
+          final y = shopRect.top + 30 + shelf * (shopRect.height - 40) / 4;
+          canvas.drawRect(Rect.fromLTWH(shopRect.left + 10, y + 26, shopRect.width - 20, 4),
+              Paint()..color = const Color(0xFF9C8A70));
+          for (var k = 0; k < 9; k++) {
+            canvas.drawRect(
+              Rect.fromLTWH(shopRect.left + 14 + k * 29, y + 4, 22, 22),
+              Paint()..color = _clothes[(k + shelf * 3) % _clothes.length],
+            );
+          }
+        }
+        canvas.drawRect(Rect.fromLTWH(shopRect.left, shopRect.top - 30, shopRect.width, 30),
+            Paint()..color = _ink);
+        _textAt(canvas, 'DUTY FREE', Offset(x, shopRect.top - 15), 15, _sun);
         break;
       case 'security':
+        // Trays waiting for your bags.
+        for (var t = 0; t < 4; t++) {
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromLTWH(x - 220 + t * 34, _floorY - 66 - t * 6, 30, 8),
+                const Radius.circular(2)),
+            Paint()..color = const Color(0xFF7C838E),
+          );
+        }
+        // Queue barriers.
+        for (var q = 0; q < 4; q++) {
+          final px = x - 300 + q * 36.0;
+          canvas.drawRect(Rect.fromLTWH(px, _floorY - 50, 4, 50),
+              Paint()..color = const Color(0xFF9CA3AD));
+        }
+        canvas.drawRect(Rect.fromLTWH(x - 298, _floorY - 46, 112, 4),
+            Paint()..color = const Color(0xFF2F5DA8));
         final arch = Path()
           ..addRect(Rect.fromLTWH(x - 50, _floorY - _h * 0.3, 14, _h * 0.3))
           ..addRect(Rect.fromLTWH(x + 36, _floorY - _h * 0.3, 14, _h * 0.3))
@@ -1145,6 +1458,18 @@ class _WalkPainter extends CustomPainter {
         canvas.drawRect(Rect.fromLTWH(door.center.dx - 2, door.top, 4, door.height), dark);
         break;
     }
+  }
+
+  void _boardText(Canvas canvas, String text, Offset at, double size, Color color) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+            color: color, fontSize: size, fontWeight: FontWeight.w800, letterSpacing: 1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, at);
   }
 
   void _hangingSign(Canvas canvas, String text, double x, double y, bool done) {

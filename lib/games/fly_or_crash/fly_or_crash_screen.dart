@@ -192,127 +192,126 @@ class _FlyOrCrashScreenState extends State<FlyOrCrashScreen> {
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _ModeChoice(
-                      label: 'Pilot',
-                      detail: 'Fly the plane',
-                      icon: Icons.flight_rounded,
-                      selected: _role == _Role.pilot,
-                      onTap: () => setState(() => _role = _Role.pilot),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _ModeChoice(
-                      label: 'Attendant',
-                      detail: 'Serve food',
-                      icon: Icons.room_service_rounded,
-                      selected: _role == _Role.attendant,
-                      onTap: () => setState(() => _role = _Role.attendant),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _ModeChoice(
-                      label: 'Passenger',
-                      detail: 'Travel and explore',
-                      icon: Icons.person_rounded,
-                      selected: _role == _Role.passenger,
-                      onTap: () => setState(() => _role = _Role.passenger),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (_role == _Role.pilot)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _ModeChoice(
-                      label: 'Realistic',
-                      detail: 'Fly from the cockpit',
-                      icon: Icons.airplanemode_active_rounded,
-                      selected: !_cartoon,
-                      onTap: () => setState(() => _cartoon = false),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _ModeChoice(
-                      label: 'Cartoon',
-                      detail: 'Bright and side-on',
-                      icon: Icons.emoji_emotions_rounded,
-                      selected: _cartoon,
-                      onTap: () => setState(() => _cartoon = true),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: Container(
-                height: (MediaQuery.of(context).size.height * 0.38)
-                    .clamp(200.0, 380.0)
-                    .toDouble(),
-                decoration: BoxDecoration(
-                  color: _mapSea,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: _ink, width: 2.5),
-                  boxShadow: const [
-                    BoxShadow(color: _ink, offset: Offset(0, 5)),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: _WorldMap(
-                  selected: selected,
-                  onPick: (d) => setState(() {
-                    _selected = d;
-                    _mapHint = d.country == 'Your pin'
-                        ? 'Pin dropped in ${d.city}! Press take off when you\'re ready.'
-                        : '${d.city}, ${d.country}. Great choice!';
-                  }),
-                  onSea: () => setState(() {
-                    _mapHint = 'That\'s the sea! Planes can\'t land on water. '
-                        'Tap on the green land.';
-                  }),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
-              child: Text(
-                _mapHint,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.9),
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
             Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 16),
-                itemCount: _sorted.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, i) {
-                  final d = _sorted[i];
-                  final km = _distanceKm(_home, d);
-                  final isSelected = identical(d, selected);
-                  return _DestinationTile(
-                    destination: d,
-                    km: km,
-                    selected: isSelected,
-                    onTap: () => setState(() => _selected = d),
-                  );
-                },
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 12),
+                children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _ModeChoice(
+                          label: 'Pilot',
+                          detail: 'Fly the plane',
+                          icon: Icons.flight_rounded,
+                          selected: _role == _Role.pilot,
+                          onTap: () => setState(() => _role = _Role.pilot),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _ModeChoice(
+                          label: 'Attendant',
+                          detail: 'Serve food',
+                          icon: Icons.room_service_rounded,
+                          selected: _role == _Role.attendant,
+                          onTap: () => setState(() => _role = _Role.attendant),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _ModeChoice(
+                          label: 'Passenger',
+                          detail: 'Travel and explore',
+                          icon: Icons.person_rounded,
+                          selected: _role == _Role.passenger,
+                          onTap: () => setState(() => _role = _Role.passenger),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_role == _Role.pilot)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _ModeChoice(
+                          label: 'Realistic',
+                          detail: 'Fly from the cockpit',
+                          icon: Icons.airplanemode_active_rounded,
+                          selected: !_cartoon,
+                          onTap: () => setState(() => _cartoon = false),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _ModeChoice(
+                          label: 'Cartoon',
+                          detail: 'Bright and side-on',
+                          icon: Icons.emoji_emotions_rounded,
+                          selected: _cartoon,
+                          onTap: () => setState(() => _cartoon = true),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  child: Container(
+                    height: (MediaQuery.of(context).size.height * 0.38)
+                        .clamp(200.0, 380.0)
+                        .toDouble(),
+                    decoration: BoxDecoration(
+                      color: _mapSea,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: _ink, width: 2.5),
+                      boxShadow: const [
+                        BoxShadow(color: _ink, offset: Offset(0, 5)),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: _WorldMap(
+                      selected: selected,
+                      onPick: (d) => setState(() {
+                        _selected = d;
+                        _mapHint = d.country == 'Your pin'
+                            ? 'Pin dropped in ${d.city}! Press take off when you\'re ready.'
+                            : '${d.city}, ${d.country}. Great choice!';
+                      }),
+                      onSea: () => setState(() {
+                        _mapHint = 'That\'s the sea! Planes can\'t land on water. '
+                            'Tap on the green land.';
+                      }),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
+                  child: Text(
+                    _mapHint,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                  const SizedBox(height: 16),
+                  for (final d in _sorted)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+                      child: _DestinationTile(
+                        destination: d,
+                        km: _distanceKm(_home, d),
+                        selected: identical(d, selected),
+                        onTap: () => setState(() => _selected = d),
+                      ),
+                    ),
+                ],
               ),
             ),
             Padding(
