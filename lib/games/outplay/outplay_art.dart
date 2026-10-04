@@ -26,6 +26,11 @@ void paintWeapon(Canvas canvas, WeaponLook look, Color color, double size) {
     canvas.drawRRect(rr, ink);
   }
 
+  void path(Path p, Paint fill) {
+    canvas.drawPath(p, fill);
+    canvas.drawPath(p, ink);
+  }
+
   switch (look) {
     case WeaponLook.rifle:
       box(-46, -4, 30, 12, dark); // stock
@@ -34,42 +39,79 @@ void paintWeapon(Canvas canvas, WeaponLook look, Color color, double size) {
       box(-6, 6, 10, 18, dark); // mag
       box(-26, 6, 8, 12, dark); // grip
       break;
-    case WeaponLook.pistol:
-      box(-24, -10, 46, 14, body);
-      box(-20, 2, 12, 22, dark);
+    case WeaponLook.laser:
+      box(-36, -10, 50, 20, body, 10);
+      box(10, -6, 26, 12, dark, 6);
+      canvas.drawCircle(
+        Offset(40 * s, 0),
+        6 * s,
+        Paint()..color = const Color(0xFFFFFFFF),
+      );
+      canvas.drawCircle(Offset(40 * s, 0), 6 * s, ink);
+      for (var i = 0; i < 3; i++) {
+        box(-28.0 + i * 12, -15, 6, 6, dark, 3); // fins
+      }
+      box(-24, 8, 10, 16, dark, 4);
       break;
-    case WeaponLook.smg:
-      box(-30, -9, 44, 16, body);
-      box(12, -5, 22, 7, dark, 2);
-      box(-6, 6, 9, 24, dark);
-      box(-26, 6, 9, 13, dark);
+    case WeaponLook.confetti:
+      final cone = Path()
+        ..moveTo(-30 * s, -6 * s)
+        ..lineTo(36 * s, -20 * s)
+        ..lineTo(36 * s, 20 * s)
+        ..lineTo(-30 * s, 6 * s)
+        ..close();
+      path(cone, body);
+      for (var i = 0; i < 4; i++) {
+        canvas.drawLine(
+          Offset((-14 + i * 14) * s, -12 * s + i * s),
+          Offset((-8 + i * 14) * s, 12 * s - i * s),
+          ink,
+        );
+      }
+      box(-40, -5, 12, 22, dark, 4);
       break;
-    case WeaponLook.shotgun:
-      box(-50, -5, 26, 13, dark);
-      box(-26, -9, 30, 15, body);
-      box(2, -8, 48, 7, dark, 2);
-      box(4, 0, 34, 7, body, 2); // pump
+    case WeaponLook.snowball:
+      box(-44, -12, 70, 24, body, 12);
+      box(20, -14, 18, 28, dark, 6);
+      canvas.drawCircle(
+        Offset(-14 * s, -16 * s),
+        10 * s,
+        Paint()..color = Colors.white,
+      );
+      canvas.drawCircle(Offset(-14 * s, -16 * s), 10 * s, ink);
+      box(-30, 10, 10, 16, dark, 4);
       break;
-    case WeaponLook.revolver:
-      box(-12, -9, 40, 9, dark, 2);
-      final c = Offset(-10 * s, -2 * s);
-      canvas.drawCircle(c, 10 * s, body);
-      canvas.drawCircle(c, 10 * s, ink);
-      box(-28, -2, 12, 24, Paint()..color = const Color(0xFF8D6E63), 5);
+    case WeaponLook.zapper:
+      box(-34, -9, 40, 18, body, 6);
+      for (var i = 0; i < 2; i++) {
+        box(4, -12.0 + i * 16, 26, 7, dark, 3); // prongs
+      }
+      final bolt = Path()
+        ..moveTo(32 * s, -8 * s)
+        ..lineTo(44 * s, -2 * s)
+        ..lineTo(38 * s, 0)
+        ..lineTo(50 * s, 8 * s)
+        ..lineTo(36 * s, 3 * s)
+        ..lineTo(42 * s, 1 * s)
+        ..close();
+      path(bolt, Paint()..color = const Color(0xFFFFEB3B));
+      box(-28, 8, 10, 16, dark, 4);
       break;
-    case WeaponLook.burst:
-      box(-48, -5, 26, 13, dark);
-      box(-24, -11, 48, 18, body);
-      box(22, -5, 24, 7, dark, 2);
-      box(-20, -18, 26, 7, dark, 2); // sight
-      box(-4, 7, 10, 16, dark);
-      break;
-    case WeaponLook.sniper:
-      box(-52, -4, 26, 12, dark);
-      box(-28, -7, 40, 13, body);
-      box(10, -4, 46, 5, dark, 2);
-      box(-20, -20, 30, 9, dark, 4); // scope
-      box(-22, 6, 8, 14, dark);
+    case WeaponLook.bubble:
+      box(-40, -8, 50, 16, body, 8);
+      box(8, -12, 10, 24, dark, 4);
+      canvas.drawCircle(
+        Offset(34 * s, 0),
+        16 * s,
+        Paint()..color = const Color(0x88E1F5FE),
+      );
+      canvas.drawCircle(Offset(34 * s, 0), 16 * s, ink);
+      canvas.drawCircle(
+        Offset(28 * s, -6 * s),
+        4 * s,
+        Paint()..color = Colors.white,
+      );
+      box(-30, 8, 10, 16, dark, 4);
       break;
     case WeaponLook.flamer:
       box(
@@ -82,24 +124,6 @@ void paintWeapon(Canvas canvas, WeaponLook look, Color color, double size) {
       ); // tank
       box(-16, -7, 40, 13, body);
       box(22, -9, 14, 17, dark, 4);
-      break;
-    case WeaponLook.minigun:
-      box(-34, -14, 30, 28, body, 6);
-      for (var i = -1; i <= 1; i++) {
-        box(-4, -3 + i * 7.0 - 2, 52, 5, dark, 2);
-      }
-      box(-28, 12, 12, 12, dark);
-      break;
-    case WeaponLook.rocket:
-      box(-46, -9, 84, 18, body, 8);
-      final tip = Path()
-        ..moveTo(38 * s, -9 * s)
-        ..lineTo(52 * s, 0)
-        ..lineTo(38 * s, 9 * s)
-        ..close();
-      canvas.drawPath(tip, dark);
-      canvas.drawPath(tip, ink);
-      box(-12, 8, 9, 14, dark);
       break;
     case WeaponLook.fist:
       final r = RRect.fromRectAndRadius(
@@ -125,8 +149,40 @@ void paintWeapon(Canvas canvas, WeaponLook look, Color color, double size) {
         ..quadraticBezierTo(42 * s, -2 * s, 46 * s, 2 * s)
         ..lineTo(-5 * s, 6 * s)
         ..close();
-      canvas.drawPath(blade, body);
-      canvas.drawPath(blade, ink);
+      path(blade, body);
+      break;
+    case WeaponLook.pan:
+      box(-48, -5, 44, 10, Paint()..color = const Color(0xFF5D4037), 4);
+      final c = Offset(18 * s, 0);
+      canvas.drawCircle(c, 26 * s, dark);
+      canvas.drawCircle(c, 26 * s, ink);
+      canvas.drawCircle(c, 19 * s, body);
+      break;
+    case WeaponLook.slapper:
+      box(
+        -50,
+        -14,
+        34,
+        28,
+        Paint()..color = const Color(0xFF78909C),
+        6,
+      ); // motor
+      canvas.drawCircle(
+        Offset(-33 * s, 0),
+        7 * s,
+        Paint()..color = const Color(0xFFFFEB3B),
+      );
+      canvas.drawCircle(Offset(-33 * s, 0), 7 * s, ink);
+      box(-18, -4, 30, 8, dark, 3); // arm
+      final hand = RRect.fromRectAndRadius(
+        Rect.fromLTWH(10 * s, -22 * s, 30 * s, 44 * s),
+        Radius.circular(12 * s),
+      );
+      canvas.drawRRect(hand, body);
+      canvas.drawRRect(hand, ink);
+      for (var i = 0; i < 4; i++) {
+        box(36, -20.0 + i * 11, 14, 8, body, 4); // fingers
+      }
       break;
     case WeaponLook.scythe:
       box(-50, -4, 96, 8, Paint()..color = const Color(0xFF6D4C41), 4);
@@ -135,8 +191,7 @@ void paintWeapon(Canvas canvas, WeaponLook look, Color color, double size) {
         ..quadraticBezierTo(30 * s, -44 * s, -18 * s, -40 * s)
         ..quadraticBezierTo(14 * s, -30 * s, 30 * s, -4 * s)
         ..close();
-      canvas.drawPath(blade, body);
-      canvas.drawPath(blade, ink);
+      path(blade, body);
       break;
   }
 }

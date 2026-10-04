@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../services/sound_service.dart';
 import 'outplay_art.dart';
 import 'outplay_data.dart';
-import 'outplay_match.dart';
+import 'outplay_game.dart';
 
 const Color _bg = Color(0xFF1B2138);
 const Color _card = Color(0xFF262E4F);
@@ -35,7 +35,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
     SoundService.instance.play(GameSound.tap);
     await Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const OutplayMatchScreen()));
+    ).push(MaterialPageRoute(builder: (_) => const OutplayGameScreen()));
     if (mounted) setState(() {});
   }
 
@@ -293,10 +293,10 @@ class _OutplayScreenState extends State<OutplayScreen> {
           borderRadius: BorderRadius.circular(14),
         ),
         child: const Text(
-          'How to play: drag on the left side to move. Tap the right side to '
-          'shoot at the enemy, or drag there to aim. Tap your weapons at the '
-          'bottom to switch. Win rounds to earn coins, then buy and upgrade '
-          'weapons in the Guns and Melee tabs.',
+          'How to play: drag on the left side to walk. Drag on the right side '
+          'to look around. Hold FIRE to shoot (slide your thumb on it to aim), '
+          'tap JUMP to jump, and tap your weapons at the bottom to switch. '
+          'In the Duel Zone, walk onto a glowing pad to start a game.',
           style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
         ),
       ),
@@ -605,7 +605,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
     final owned = _save.ownedGuns.contains(g.id);
     final level = _save.levelOf(g.id);
     final dmg = g.damage * levelDamageMul(level) * g.pellets;
-    final perSec = 1 / (g.fireInterval * levelSpeedMul(level)) * g.burst;
+    final perSec = 1 / (g.fireInterval * levelSpeedMul(level));
     final actions = <Widget>[];
     if (!owned) {
       actions.add(_coinButton(g.price, () => _buyGun(g), label: 'Buy'));
@@ -633,6 +633,15 @@ class _OutplayScreenState extends State<OutplayScreen> {
       stats: [
         _stat('Damage', dmg.round().toString()),
         _stat('Shots/sec', perSec.toStringAsFixed(1)),
+        if (g.custom)
+          const Text(
+            '★ Outplay original',
+            style: TextStyle(
+              color: Color(0xFFFFC93C),
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         _stat('Ammo', '${g.mag}'),
       ],
       actions: actions,
@@ -665,7 +674,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
       level: level,
       stats: [
         _stat('Damage', (m.damage * levelDamageMul(level)).round().toString()),
-        _stat('Reach', m.reach < 45 ? 'Short' : 'Long'),
+        _stat('Reach', m.reach < 1.4 ? 'Short' : 'Long'),
         _stat('Speed', m.moveMul >= 1.2 ? 'Fast' : 'Normal'),
       ],
       actions: actions,

@@ -3,6 +3,7 @@
 // Skipped by default; run with: flutter test --run-skipped -t slow
 @Tags(['slow'])
 library;
+
 import 'dart:io';
 import 'dart:math';
 
@@ -19,7 +20,7 @@ import 'package:oscar_games/games/board_game/board_game_screen.dart';
 import 'package:oscar_games/games/boat_fishing/boat_fishing_screen.dart';
 import 'package:oscar_games/games/fly_or_crash/fly_or_crash_screen.dart';
 import 'package:oscar_games/games/memory_match/memory_match_screen.dart';
-import 'package:oscar_games/games/outplay/outplay_match.dart';
+import 'package:oscar_games/games/outplay/outplay_game.dart';
 import 'package:oscar_games/games/outplay/outplay_screen.dart';
 import 'package:oscar_games/games/reaction/reaction_screen.dart';
 import 'package:oscar_games/games/snake/snake_screen.dart';
@@ -39,7 +40,14 @@ final _screens = <String, Widget Function()>{
   'cartoon_flight': () => const CartoonFlightScreen(destination: _paris),
   'attendant': () => const AttendantScreen(destination: _paris),
   'outplay': () => const OutplayScreen(),
-  'outplay_match': () => const OutplayMatchScreen(),
+  'outplay_zone': () => const OutplayGameScreen(),
+  'outplay_duel': () =>
+      const OutplayGameScreen(mode: OutplayMode.duel, mapId: 'volcano'),
+  'outplay_ffa': () => const OutplayGameScreen(
+    mode: OutplayMode.freeForAll,
+    mapId: 'runway',
+    bots: 9,
+  ),
   'board_game': () => const BoardGameScreen(),
   'boat_fishing': () => const BoatFishingScreen(),
   'tic_tac_toe': () => const TicTacToeScreen(),
@@ -50,23 +58,23 @@ final _screens = <String, Widget Function()>{
   'target_shop': () =>
       ShopScreen(playerData: PlayerData.fromSave(), onUpdate: () {}),
   'target_game': () => TargetGameScreen(
-        world: GameWorld.worlds.first,
-        playerData: PlayerData.fromSave(),
-        onComplete: () {},
-      ),
+    world: GameWorld.worlds.first,
+    playerData: PlayerData.fromSave(),
+    onComplete: () {},
+  ),
 };
 
 /// Tests render text with a blocky placeholder font that is much wider than
 /// real text, so load the Roboto that the web build falls back to.
 Future<void> _loadRealFonts() async {
-  final root = Platform.environment['FLUTTER_ROOT'] ??
+  final root =
+      Platform.environment['FLUTTER_ROOT'] ??
       File(Platform.resolvedExecutable).parent.parent.parent.parent.parent.path;
   final dir = Directory('$root/bin/cache/artifacts/material_fonts');
   if (!dir.existsSync()) return;
-  final roboto = dir
-      .listSync()
-      .whereType<File>()
-      .where((f) => RegExp(r'Roboto-[A-Za-z]+\.ttf$').hasMatch(f.path));
+  final roboto = dir.listSync().whereType<File>().where(
+    (f) => RegExp(r'Roboto-[A-Za-z]+\.ttf$').hasMatch(f.path),
+  );
   for (final family in ['Roboto', 'Inter']) {
     final loader = FontLoader(family);
     for (final f in roboto) {
@@ -75,11 +83,15 @@ Future<void> _loadRealFonts() async {
     await loader.load();
   }
   final icons = FontLoader('MaterialIcons')
-    ..addFont(Future.value(ByteData.sublistView(
-        File('${dir.path}/MaterialIcons-Regular.otf').readAsBytesSync())));
+    ..addFont(
+      Future.value(
+        ByteData.sublistView(
+          File('${dir.path}/MaterialIcons-Regular.otf').readAsBytesSync(),
+        ),
+      ),
+    );
   await icons.load();
 }
-
 
 void main() {
   setUpAll(_loadRealFonts);
@@ -89,46 +101,63 @@ void main() {
     await SaveService.instance.init();
   });
 
-  for (final size in [const Size(320, 568), const Size(360, 640), const Size(375, 667), const Size(640, 360)]) {
+  for (final size in [
+    const Size(320, 568),
+    const Size(360, 640),
+    const Size(375, 667),
+    const Size(640, 360),
+  ]) {
     for (final screen in _screens.entries) {
-      testWidgets('play through ${screen.key} ${size.width.toInt()}x${size.height.toInt()}', (tester) async {
-        tester.view.physicalSize = size * 3;
-        tester.view.devicePixelRatio = 3;
-        addTearDown(tester.view.reset);
-        final problems = <String>{};
-        final oldHandler = FlutterError.onError;
-        FlutterError.onError = (details) {
-          final msg = details.exceptionAsString().split('\n').first;
-          final where = RegExp(r'lib/[\w/]+\.dart:\d+')
-              .firstMatch(details.toString())
-              ?.group(0);
-          problems.add('$msg at $where');
-        };
-        await tester.pumpWidget(MaterialApp(
-          theme: AppTheme.darkTheme,
-          builder: (context, child) => OscarGamesApp.frame(child),
-          home: screen.value(),
-        ));
-        final rnd = Random(size.width.toInt() + screen.key.length);
-        for (var i = 0; i < 250; i++) {
-          final p = Offset(rnd.nextDouble() * size.width,
-              60 + rnd.nextDouble() * (size.height - 60));
-          try {
-            await tester.tapAt(p);
-            if (rnd.nextInt(5) == 0) {
-              await tester.dragFrom(p, Offset(rnd.nextDouble() * 200 - 100,
-                  rnd.nextDouble() * 200 - 100));
+      testWidgets(
+        'play through ${screen.key} ${size.width.toInt()}x${size.height.toInt()}',
+        (tester) async {
+          tester.view.physicalSize = size * 3;
+          tester.view.devicePixelRatio = 3;
+          addTearDown(tester.view.reset);
+          final problems = <String>{};
+          final oldHandler = FlutterError.onError;
+          FlutterError.onError = (details) {
+            final msg = details.exceptionAsString().split('\n').first;
+            final where = RegExp(
+              r'lib/[\w/]+\.dart:\d+',
+            ).firstMatch(details.toString())?.group(0);
+            problems.add('$msg at $where');
+          };
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: AppTheme.darkTheme,
+              builder: (context, child) => OscarGamesApp.frame(child),
+              home: screen.value(),
+            ),
+          );
+          final rnd = Random(size.width.toInt() + screen.key.length);
+          for (var i = 0; i < 250; i++) {
+            final p = Offset(
+              rnd.nextDouble() * size.width,
+              60 + rnd.nextDouble() * (size.height - 60),
+            );
+            try {
+              await tester.tapAt(p);
+              if (rnd.nextInt(5) == 0) {
+                await tester.dragFrom(
+                  p,
+                  Offset(
+                    rnd.nextDouble() * 200 - 100,
+                    rnd.nextDouble() * 200 - 100,
+                  ),
+                );
+              }
+              await tester.pump(const Duration(milliseconds: 250));
+            } catch (e) {
+              problems.add('threw: ${e.toString().split('\n').first}');
             }
-            await tester.pump(const Duration(milliseconds: 250));
-          } catch (e) {
-            problems.add('threw: ${e.toString().split('\n').first}');
           }
-        }
-        FlutterError.onError = oldHandler;
-        await tester.pumpWidget(const SizedBox());
-        await tester.pump(const Duration(seconds: 10));
-        expect(problems, isEmpty, reason: problems.join('\n'));
-      });
+          FlutterError.onError = oldHandler;
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(seconds: 10));
+          expect(problems, isEmpty, reason: problems.join('\n'));
+        },
+      );
     }
   }
 }

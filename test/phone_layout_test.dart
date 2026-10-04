@@ -13,7 +13,7 @@ import 'package:oscar_games/games/board_game/board_game_screen.dart';
 import 'package:oscar_games/games/boat_fishing/boat_fishing_screen.dart';
 import 'package:oscar_games/games/fly_or_crash/fly_or_crash_screen.dart';
 import 'package:oscar_games/games/memory_match/memory_match_screen.dart';
-import 'package:oscar_games/games/outplay/outplay_match.dart';
+import 'package:oscar_games/games/outplay/outplay_game.dart';
 import 'package:oscar_games/games/outplay/outplay_screen.dart';
 import 'package:oscar_games/games/reaction/reaction_screen.dart';
 import 'package:oscar_games/games/snake/snake_screen.dart';
@@ -43,7 +43,14 @@ final _screens = <String, Widget Function()>{
   'cartoon_flight': () => const CartoonFlightScreen(destination: _paris),
   'attendant': () => const AttendantScreen(destination: _paris),
   'outplay': () => const OutplayScreen(),
-  'outplay_match': () => const OutplayMatchScreen(),
+  'outplay_zone': () => const OutplayGameScreen(),
+  'outplay_duel': () =>
+      const OutplayGameScreen(mode: OutplayMode.duel, mapId: 'volcano'),
+  'outplay_ffa': () => const OutplayGameScreen(
+    mode: OutplayMode.freeForAll,
+    mapId: 'runway',
+    bots: 9,
+  ),
   'board_game': () => const BoardGameScreen(),
   'boat_fishing': () => const BoatFishingScreen(),
   'tic_tac_toe': () => const TicTacToeScreen(),
@@ -54,23 +61,23 @@ final _screens = <String, Widget Function()>{
   'target_shop': () =>
       ShopScreen(playerData: PlayerData.fromSave(), onUpdate: () {}),
   'target_game': () => TargetGameScreen(
-        world: GameWorld.worlds.first,
-        playerData: PlayerData.fromSave(),
-        onComplete: () {},
-      ),
+    world: GameWorld.worlds.first,
+    playerData: PlayerData.fromSave(),
+    onComplete: () {},
+  ),
 };
 
 /// Tests render text with a blocky placeholder font that is much wider than
 /// real text, so load the Roboto that the web build falls back to.
 Future<void> _loadRealFonts() async {
-  final root = Platform.environment['FLUTTER_ROOT'] ??
+  final root =
+      Platform.environment['FLUTTER_ROOT'] ??
       File(Platform.resolvedExecutable).parent.parent.parent.parent.parent.path;
   final dir = Directory('$root/bin/cache/artifacts/material_fonts');
   if (!dir.existsSync()) return;
-  final roboto = dir
-      .listSync()
-      .whereType<File>()
-      .where((f) => RegExp(r'Roboto-[A-Za-z]+\.ttf$').hasMatch(f.path));
+  final roboto = dir.listSync().whereType<File>().where(
+    (f) => RegExp(r'Roboto-[A-Za-z]+\.ttf$').hasMatch(f.path),
+  );
   for (final family in ['Roboto', 'Inter']) {
     final loader = FontLoader(family);
     for (final f in roboto) {
@@ -79,8 +86,13 @@ Future<void> _loadRealFonts() async {
     await loader.load();
   }
   final icons = FontLoader('MaterialIcons')
-    ..addFont(Future.value(ByteData.sublistView(
-        File('${dir.path}/MaterialIcons-Regular.otf').readAsBytesSync())));
+    ..addFont(
+      Future.value(
+        ByteData.sublistView(
+          File('${dir.path}/MaterialIcons-Regular.otf').readAsBytesSync(),
+        ),
+      ),
+    );
   await icons.load();
 }
 
@@ -104,9 +116,9 @@ void main() {
         FlutterError.onError = (details) {
           final msg = details.exceptionAsString();
           if (msg.contains('overflowed')) {
-            final where = RegExp(r'lib/[\w/]+\.dart:\d+')
-                .firstMatch(details.toString())
-                ?.group(0);
+            final where = RegExp(
+              r'lib/[\w/]+\.dart:\d+',
+            ).firstMatch(details.toString())?.group(0);
             overflows.add('${msg.split('\n').first} at $where');
           } else {
             oldHandler?.call(details);
@@ -114,11 +126,13 @@ void main() {
         };
         addTearDown(() => FlutterError.onError = oldHandler);
 
-        await tester.pumpWidget(MaterialApp(
-          theme: AppTheme.darkTheme,
-          builder: (context, child) => OscarGamesApp.frame(child),
-          home: screen.value(),
-        ));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            builder: (context, child) => OscarGamesApp.frame(child),
+            home: screen.value(),
+          ),
+        );
         for (var i = 0; i < 40; i++) {
           await tester.pump(const Duration(milliseconds: 100));
         }
