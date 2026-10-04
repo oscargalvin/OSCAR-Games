@@ -3544,6 +3544,25 @@ class _ViewPainter extends CustomPainter {
       billboard(ghosts[i], bob, 0.75, 0.6, (c, r, scale) => _drawGhost(c, r));
     }
     for (final b in s._balls) {
+      if (b.gun.look == WeaponLook.rpgMini) {
+        // A little rocket with a fiery tail.
+        billboard(b.pos, 0.36, 0.16, 0.16, (c, r, scale) {
+          c.drawCircle(
+            r.center,
+            r.width * 0.9,
+            Paint()
+              ..color = const Color(0x99FFAB00)
+              ..maskFilter = MaskFilter.blur(BlurStyle.normal, r.width * 0.3),
+          );
+          c.drawOval(r, Paint()..color = const Color(0xFF455A64));
+          c.drawCircle(
+            r.center,
+            r.width * 0.28,
+            Paint()..color = const Color(0xFFFF6D00),
+          );
+        });
+        continue;
+      }
       final size = b.gun.look == WeaponLook.bubble ? 0.42 : 0.24;
       billboard(b.pos, 0.38, size, size, (c, r, scale) {
         c.drawOval(r, Paint()..color = b.gun.shotColor.withValues(alpha: 0.85));

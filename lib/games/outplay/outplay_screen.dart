@@ -380,80 +380,166 @@ class _OutplayScreenState extends State<OutplayScreen> {
     ];
   }
 
-  Widget _skinCard(String weapon) {
+  Widget _skinChip(String weapon, Skin? skin, {VoidCallback? changed}) {
     final l = _lookOf(weapon);
     final on = _save.skinOn(weapon);
-    Widget chip(Skin? skin) {
-      final owns = skin == null || _save.ownsSkin(weapon, skin.id);
-      final wearing = on?.id == skin?.id;
-      final colour = skin == null
-          ? Colors.white54
-          : kRarityColours[skin.rarity]!;
-      return GestureDetector(
-        onTap: () {
-          if (owns) {
-            _equipSkin(weapon, skin);
-          } else {
-            _buySkin(weapon, skin);
-          }
-        },
-        child: Container(
-          width: 74,
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          decoration: BoxDecoration(
-            color: wearing ? colour.withValues(alpha: 0.25) : _bg,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: wearing ? colour : colour.withValues(alpha: 0.35),
-              width: wearing ? 2 : 1,
-            ),
-          ),
-          child: Column(
-            children: [
-              WeaponIcon(look: l.look, color: l.color, size: 58, skin: skin),
-              Text(
-                skin?.name ?? 'Normal',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colour,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              if (!owns)
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.monetization_on_rounded,
-                        color: _gold,
-                        size: 12,
-                      ),
-                      Text(
-                        ' ${skin.price}',
-                        style: const TextStyle(
-                          color: _gold,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              else
-                Text(
-                  wearing ? 'Wearing' : 'Owned',
-                  style: const TextStyle(color: Colors.white54, fontSize: 10),
-                ),
-            ],
+    final owns = skin == null || _save.ownsSkin(weapon, skin.id);
+    final wearing = on?.id == skin?.id;
+    final colour = skin == null ? Colors.white54 : kRarityColours[skin.rarity]!;
+    return GestureDetector(
+      onTap: () {
+        if (owns) {
+          _equipSkin(weapon, skin);
+        } else {
+          _buySkin(weapon, skin);
+        }
+        changed?.call();
+      },
+      child: Container(
+        width: 74,
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        decoration: BoxDecoration(
+          color: wearing ? colour.withValues(alpha: 0.25) : _bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: wearing ? colour : colour.withValues(alpha: 0.35),
+            width: wearing ? 2 : 1,
           ),
         ),
-      );
-    }
+        child: Column(
+          children: [
+            WeaponIcon(look: l.look, color: l.color, size: 58, skin: skin),
+            Text(
+              skin?.name ?? 'Normal',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colour,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (!owns)
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.monetization_on_rounded,
+                      color: _gold,
+                      size: 12,
+                    ),
+                    Text(
+                      ' ${skin.price}',
+                      style: const TextStyle(
+                        color: _gold,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Text(
+                wearing ? 'Wearing' : 'Owned',
+                style: const TextStyle(color: Colors.white54, fontSize: 10),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
+  List<Skin?> _skinOrder(String weapon) => [
+    null,
+    // Skins you own come first so you can see them.
+    ...kSkins.where((k) => _save.ownsSkin(weapon, k.id)),
+    ...kSkins.where((k) => !_save.ownsSkin(weapon, k.id)),
+  ];
+
+  /// The little skin button's pop-up: switch skins for one weapon.
+  Future<void> _pickSkin(String weapon) async {
+    SoundService.instance.play(GameSound.tap);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _card,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheet) => StatefulBuilder(
+        builder: (sheet, setSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${weaponName(weapon)} skins',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Tap a skin to wear it, or buy a new one.',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final sk in _skinOrder(weapon))
+                      _skinChip(weapon, sk, changed: () => setSheet(() {})),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(sheet).pop(),
+                    child: const Text('Done'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// The small round skin button in the corner of a weapon card.
+  Widget _skinButton(String weapon) {
+    final on = _save.skinOn(weapon);
+    final colour = on == null ? _cyan : kRarityColours[on.rarity]!;
+    return Material(
+      color: _bg,
+      shape: CircleBorder(side: BorderSide(color: colour, width: 2)),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => _pickSkin(weapon),
+        child: Padding(
+          padding: const EdgeInsets.all(7),
+          child: Icon(
+            Icons.brush_rounded,
+            color: colour,
+            size: 18,
+            semanticLabel: 'Skins',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _skinCard(String weapon) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
@@ -477,15 +563,10 @@ class _OutplayScreenState extends State<OutplayScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                for (final sk in <Skin?>[
-                  null,
-                  // Skins you own come first so you can see them.
-                  ...kSkins.where((k) => _save.ownsSkin(weapon, k.id)),
-                  ...kSkins.where((k) => !_save.ownsSkin(weapon, k.id)),
-                ])
+                for (final sk in _skinOrder(weapon))
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
-                    child: chip(sk),
+                    child: _skinChip(weapon, sk),
                   ),
               ],
             ),
@@ -586,6 +667,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
         'Level ${_save.levelOf(primary.id)}',
         () => _pickGun(0),
         skin: _save.skinOn(primary.id),
+        weaponId: primary.id,
       ),
       if (_save.secondSlot)
         secondary == null
@@ -605,6 +687,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
                 'Level ${_save.levelOf(secondary.id)}',
                 () => _pickGun(1),
                 skin: _save.skinOn(secondary.id),
+                weaponId: secondary.id,
               )
       else
         _lockedSlotCard(),
@@ -616,6 +699,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
         'Level ${_save.levelOf(melee.id)}',
         () => setState(() => _tab = 2),
         skin: _save.skinOn(melee.id),
+        weaponId: melee.id,
       ),
       const SizedBox(height: 12),
       Container(
@@ -643,6 +727,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
     String detail,
     VoidCallback onTap, {
     Skin? skin,
+    String? weaponId,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -695,6 +780,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
                 ],
               ),
             ),
+            if (weaponId != null) _skinButton(weaponId),
             const Icon(Icons.chevron_right_rounded, color: Colors.white38),
           ],
         ),
@@ -872,6 +958,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
   }
 
   Widget _itemCard({
+    required String id,
     required WeaponLook look,
     required Color color,
     required String name,
@@ -881,7 +968,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
     required int level,
     required List<Widget> actions,
   }) {
-    return Container(
+    final card = Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -897,7 +984,12 @@ class _OutplayScreenState extends State<OutplayScreen> {
         children: [
           Row(
             children: [
-              WeaponIcon(look: look, color: color, size: 72),
+              WeaponIcon(
+                look: look,
+                color: color,
+                size: 72,
+                skin: _save.skinOn(id),
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -928,14 +1020,25 @@ class _OutplayScreenState extends State<OutplayScreen> {
           const SizedBox(height: 8),
           Wrap(spacing: 12, runSpacing: 2, children: stats),
           const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [if (owned) _levelDots(level), ...actions],
+          Padding(
+            // Leave room for the skin button in the corner.
+            padding: const EdgeInsets.only(right: 44),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [if (owned) _levelDots(level), ...actions],
+            ),
           ),
         ],
       ),
+    );
+    // Skin button in the bottom corner.
+    return Stack(
+      children: [
+        card,
+        Positioned(right: 10, bottom: 20, child: _skinButton(id)),
+      ],
     );
   }
 
@@ -962,6 +1065,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
       }
     }
     return _itemCard(
+      id: g.id,
       look: g.look,
       color: g.color,
       name: g.name,
@@ -1004,6 +1108,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
       );
     }
     return _itemCard(
+      id: m.id,
       look: m.look,
       color: m.color,
       name: m.name,

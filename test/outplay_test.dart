@@ -445,6 +445,37 @@ void main() {
     expect(save.equippedSkins[won[0]], won[1]);
   });
 
+  testWidgets('the skin button on a weapon card switches its skin', (
+    tester,
+  ) async {
+    await _phone(tester);
+    final save = OutplaySave.instance
+      ..coins = 0
+      ..skins = {'assault_rifle:galaxy'}
+      ..equippedSkins = {};
+    await save.save();
+    await tester.pumpWidget(const MaterialApp(home: OutplayScreen()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Guns'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.brush_rounded).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Assault Rifle skins'), findsOneWidget);
+    await tester.tap(find.text('Galaxy'));
+    await tester.pumpAndSettle();
+    expect(save.equippedSkins['assault_rifle'], 'galaxy');
+    expect(find.text('Wearing'), findsOneWidget);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+  });
+
+  test('the RPG Mini fires rockets as fast as a minigun', () {
+    final rpg = gunById('rpg_mini');
+    expect(rpg.kind, ShotKind.ball);
+    expect(rpg.splash, greaterThan(0));
+    expect(rpg.fireInterval, lessThan(0.1));
+  });
+
   test('avatars survive saving and loading', () async {
     final save = OutplaySave.instance;
     save.name = 'Oscar';

@@ -494,6 +494,42 @@ void _paintReal(
       );
       canvas.drawCircle(const Offset(48, -1) * s, 5 * s, outline);
       break;
+    case WeaponLook.rpgMini:
+      // A mini rocket launcher built like a minigun: a spinning cluster of
+      // short tubes, each with a rocket poking out.
+      part(-44, -11, 30, 21, metal, r: 4); // motor housing
+      for (var i = 0; i < 3; i++) {
+        line(
+          Offset(-40.0 + i * 7, -8),
+          Offset(-40.0 + i * 7, 7),
+          _metalDark,
+          1.2,
+        );
+      }
+      part(-36, -19, 20, 5, _metalDark, r: 2); // carry handle
+      part(-34, -15, 3, 5, _metalDark, r: 0.5);
+      part(-22, -15, 3, 5, _metalDark, r: 0.5);
+      grip(-26, 9, polymer);
+      triggerGuard(-19, 9);
+      part(-12, 8, 18, 14, accent, r: 2, shine: 0.4); // rocket box
+      line(const Offset(-10, 15), const Offset(4, 15), _metalDark, 0.8);
+      part(-14, -9, 6, 17, _metalDark, r: 2); // spinning hub
+      for (final y in [-12.0, -4.5, 3.0]) {
+        part(-8, y, 40, 7, metal, r: 3); // launch tubes
+        // Rocket nose: orange warhead with a dark tip.
+        final nose = Path()
+          ..moveTo(32 * s, (y + 0.8) * s)
+          ..lineTo(38 * s, (y + 0.8) * s)
+          ..quadraticBezierTo(44 * s, (y + 3.5) * s, 38 * s, (y + 6.2) * s)
+          ..lineTo(32 * s, (y + 6.2) * s)
+          ..close();
+        canvas.drawPath(nose, shade(nose.getBounds(), const Color(0xFFE65100)));
+        canvas.drawPath(nose, outline);
+      }
+      for (final x in [2.0, 24.0]) {
+        part(x, -13.5, 3, 25, _metalDark, r: 1); // clamps
+      }
+      break;
     case WeaponLook.flamer:
       // A flamethrower: fuel tank underneath, long nozzle, pilot flame.
       part(-46, 4, 36, 14, const Color(0xFFB71C1C), r: 7, shine: 0.45);
