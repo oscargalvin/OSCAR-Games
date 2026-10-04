@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -335,6 +336,191 @@ int meleeUpgradeCost(Melee m, int level) =>
     ((50 + m.price * 0.12) * level / 5).round() * 5;
 
 /// Coins, unlocks, upgrade levels and loadout, saved on the device.
+// ---- Skins ---------------------------------------------------------------
+
+enum Rarity { common, rare, epic, legendary }
+
+const Map<Rarity, String> kRarityNames = {
+  Rarity.common: 'Common',
+  Rarity.rare: 'Rare',
+  Rarity.epic: 'Epic',
+  Rarity.legendary: 'Legendary',
+};
+
+const Map<Rarity, Color> kRarityColours = {
+  Rarity.common: Color(0xFFB0BEC5),
+  Rarity.rare: Color(0xFF42A5F5),
+  Rarity.epic: Color(0xFFAB47BC),
+  Rarity.legendary: Color(0xFFFFC93C),
+};
+
+/// Chance out of 100 of each rarity coming out of a skin box.
+const Map<Rarity, int> kBoxOdds = {
+  Rarity.common: 50,
+  Rarity.rare: 30,
+  Rarity.epic: 15,
+  Rarity.legendary: 5,
+};
+
+const int kSkinBoxPrice = 150;
+
+/// Coins you get back when a box gives you a skin you already have.
+const int kDuplicateRefund = 50;
+
+/// The pattern painted over a skin's colours.
+enum SkinPattern { none, camo, neon, cracks, stars, shine }
+
+/// A paint job for a weapon. Skins only change how it looks.
+class Skin {
+  final String id;
+  final String name;
+  final Rarity rarity;
+  final int price;
+  final Color metal;
+  final Color grip;
+  final Color? accent;
+  final SkinPattern pattern;
+  final List<Color> patternColours;
+
+  const Skin({
+    required this.id,
+    required this.name,
+    required this.rarity,
+    required this.price,
+    required this.metal,
+    required this.grip,
+    this.accent,
+    this.pattern = SkinPattern.none,
+    this.patternColours = const [],
+  });
+}
+
+const List<Skin> kSkins = [
+  Skin(
+    id: 'camo',
+    name: 'Camo',
+    rarity: Rarity.common,
+    price: 100,
+    metal: Color(0xFF5B6B3A),
+    grip: Color(0xFF4A5530),
+    pattern: SkinPattern.camo,
+    patternColours: [Color(0xFF34401F), Color(0xFF8A8550), Color(0xFF25261A)],
+  ),
+  Skin(
+    id: 'arctic',
+    name: 'Arctic',
+    rarity: Rarity.common,
+    price: 100,
+    metal: Color(0xFFDDE6EC),
+    grip: Color(0xFFC3D1DB),
+    pattern: SkinPattern.camo,
+    patternColours: [Color(0xFFFFFFFF), Color(0xFF9FB4C4), Color(0xFF7890A2)],
+  ),
+  Skin(
+    id: 'crimson',
+    name: 'Crimson',
+    rarity: Rarity.rare,
+    price: 250,
+    metal: Color(0xFF9A1C1C),
+    grip: Color(0xFF5E1010),
+    accent: Color(0xFFFF8A80),
+    pattern: SkinPattern.shine,
+  ),
+  Skin(
+    id: 'neon',
+    name: 'Neon',
+    rarity: Rarity.rare,
+    price: 250,
+    metal: Color(0xFF1A1A22),
+    grip: Color(0xFF101014),
+    accent: Color(0xFF00E5FF),
+    pattern: SkinPattern.neon,
+    patternColours: [Color(0xFF00E5FF), Color(0xFFFF4081)],
+  ),
+  Skin(
+    id: 'lava',
+    name: 'Lava',
+    rarity: Rarity.epic,
+    price: 500,
+    metal: Color(0xFF2B1B17),
+    grip: Color(0xFF1E1310),
+    accent: Color(0xFFFF6D00),
+    pattern: SkinPattern.cracks,
+    patternColours: [Color(0xFFFF6D00), Color(0xFFFFD180)],
+  ),
+  Skin(
+    id: 'galaxy',
+    name: 'Galaxy',
+    rarity: Rarity.epic,
+    price: 500,
+    metal: Color(0xFF3A1C7A),
+    grip: Color(0xFF1E0F40),
+    accent: Color(0xFFB388FF),
+    pattern: SkinPattern.stars,
+    patternColours: [Color(0xFFFFFFFF), Color(0xFFB388FF), Color(0xFF80D8FF)],
+  ),
+  Skin(
+    id: 'gold',
+    name: 'Gold',
+    rarity: Rarity.legendary,
+    price: 1000,
+    metal: Color(0xFFD4A017),
+    grip: Color(0xFFA67C00),
+    accent: Color(0xFFFFF59D),
+    pattern: SkinPattern.shine,
+  ),
+  Skin(
+    id: 'diamond',
+    name: 'Diamond',
+    rarity: Rarity.legendary,
+    price: 1000,
+    metal: Color(0xFF8FE3F5),
+    grip: Color(0xFF4FB3CC),
+    accent: Color(0xFFFFFFFF),
+    pattern: SkinPattern.stars,
+    patternColours: [Color(0xFFFFFFFF), Color(0xFFE0F7FA)],
+  ),
+];
+
+Skin? skinById(String? id) {
+  for (final s in kSkins) {
+    if (s.id == id) return s;
+  }
+  return null;
+}
+
+/// Every weapon id (guns and melees), for skins.
+List<String> get kWeaponIds => [
+  for (final g in kGuns) g.id,
+  for (final m in kMelees) m.id,
+];
+
+String weaponName(String id) {
+  for (final g in kGuns) {
+    if (g.id == id) return g.name;
+  }
+  return meleeById(id).name;
+}
+
+/// What a skin box gives you: a skin for one of the weapons.
+({String weapon, Skin skin}) openSkinBox(Random rnd) {
+  var roll = rnd.nextInt(100);
+  var rarity = Rarity.common;
+  for (final e in kBoxOdds.entries) {
+    if (roll < e.value) {
+      rarity = e.key;
+      break;
+    }
+    roll -= e.value;
+  }
+  final pool = kSkins.where((s) => s.rarity == rarity).toList();
+  final ids = kWeaponIds;
+  return (
+    weapon: ids[rnd.nextInt(ids.length)],
+    skin: pool[rnd.nextInt(pool.length)],
+  );
+}
+
 class OutplaySave {
   OutplaySave._();
   static final OutplaySave instance = OutplaySave._();
@@ -353,6 +539,15 @@ class OutplaySave {
   int losses = 0;
   String name = ''; // shown to other players online
   Avatar avatar = const Avatar();
+
+  /// Skins you own, as 'weaponId:skinId'.
+  Set<String> skins = {};
+
+  /// The skin showing on each weapon (weaponId -> skinId).
+  Map<String, String> equippedSkins = {};
+
+  bool ownsSkin(String weapon, String skin) => skins.contains('$weapon:$skin');
+  Skin? skinOn(String weapon) => skinById(equippedSkins[weapon]);
 
   Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -380,6 +575,10 @@ class OutplaySave {
       losses = m['losses'] as int? ?? 0;
       name = m['name'] as String? ?? '';
       avatar = Avatar.fromList(m['avatar']);
+      skins = {...(m['skins'] as List? ?? []).cast<String>()};
+      equippedSkins = (m['skinOn'] as Map? ?? {}).map(
+        (k, v) => MapEntry(k as String, v as String),
+      )..removeWhere((w, sk) => !skins.contains('$w:$sk'));
     } catch (_) {
       // A broken save starts fresh rather than crashing the game.
     }
@@ -402,6 +601,8 @@ class OutplaySave {
         'losses': losses,
         'name': name,
         'avatar': avatar.toList(),
+        'skins': skins.toList(),
+        'skinOn': equippedSkins,
       }),
     );
     await _prefs!.setInt('highscore_outplay', wins);

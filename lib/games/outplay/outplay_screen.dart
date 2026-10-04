@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../services/sound_service.dart';
@@ -23,6 +25,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
   final _save = OutplaySave.instance;
   bool _loaded = false;
   int _tab = 0;
+  final _rnd = Random();
 
   @override
   void initState() {
@@ -182,7 +185,8 @@ class _OutplayScreenState extends State<OutplayScreen> {
                       children: switch (_tab) {
                         0 => _buildLoadout(),
                         1 => [for (final g in kGuns) _gunCard(g)],
-                        _ => [for (final m in kMelees) _meleeCard(m)],
+                        2 => [for (final m in kMelees) _meleeCard(m)],
+                        _ => _buildSkins(),
                       },
                     ),
                   ),
@@ -222,7 +226,271 @@ class _OutplayScreenState extends State<OutplayScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
       child: Row(
-        children: [tab(0, 'Loadout'), tab(1, 'Guns'), tab(2, 'Melee')],
+        children: [
+          tab(0, 'Loadout'),
+          tab(1, 'Guns'),
+          tab(2, 'Melee'),
+          tab(3, 'Skins'),
+        ],
+      ),
+    );
+  }
+
+  // ---- Skins -------------------------------------------------------------
+
+  ({WeaponLook look, Color color}) _lookOf(String id) {
+    for (final g in kGuns) {
+      if (g.id == id) return (look: g.look, color: g.color);
+    }
+    final m = meleeById(id);
+    return (look: m.look, color: m.color);
+  }
+
+  void _equipSkin(String weapon, Skin? skin) {
+    if (skin == null) {
+      _save.equippedSkins.remove(weapon);
+    } else {
+      _save.equippedSkins[weapon] = skin.id;
+    }
+    SoundService.instance.play(GameSound.place);
+    _commit();
+  }
+
+  void _buySkin(String weapon, Skin skin) {
+    if (!_spend(skin.price)) return;
+    _save.skins.add('$weapon:${skin.id}');
+    _save.equippedSkins[weapon] = skin.id;
+    _commit();
+  }
+
+  Future<void> _openBox() async {
+    if (!_spend(kSkinBoxPrice)) return;
+    final prize = openSkinBox(_rnd);
+    final key = '${prize.weapon}:${prize.skin.id}';
+    final duplicate = _save.skins.contains(key);
+    if (duplicate) {
+      _save.coins += kDuplicateRefund;
+    } else {
+      _save.skins.add(key);
+    }
+    _commit();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _SkinBoxDialog(
+        weapon: prize.weapon,
+        skin: prize.skin,
+        duplicate: duplicate,
+        lookOf: _lookOf,
+        onEquip: () => _equipSkin(prize.weapon, prize.skin),
+      ),
+    );
+  }
+
+  List<Widget> _buildSkins() {
+    // Weapons you own first, then everything else.
+    final owned = [
+      ..._save.ownedGuns.where((id) => kGuns.any((g) => g.id == id)),
+      ..._save.ownedMelees,
+    ];
+    return [
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF4A2C82), Color(0xFF26346B)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _gold, width: 2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const SizedBox(width: 64, height: 64, child: SkinBoxPicture()),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Skin Box',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        'A random skin for a random weapon. Already got it? '
+                        'You get $kDuplicateRefund coins back.',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 10,
+              children: [
+                for (final r in Rarity.values)
+                  Text(
+                    '${kRarityNames[r]} ${kBoxOdds[r]}%',
+                    style: TextStyle(
+                      color: kRarityColours[r],
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _openBox,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _gold,
+                  foregroundColor: kOutplayInk,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                icon: const Icon(Icons.monetization_on_rounded),
+                label: const Text(
+                  'OPEN  ·  $kSkinBoxPrice',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Or buy a skin for one of your weapons. Tap a skin you own to wear it.',
+        style: TextStyle(color: Colors.white70, fontSize: 13),
+      ),
+      const SizedBox(height: 8),
+      for (final id in owned) _skinCard(id),
+    ];
+  }
+
+  Widget _skinCard(String weapon) {
+    final l = _lookOf(weapon);
+    final on = _save.skinOn(weapon);
+    Widget chip(Skin? skin) {
+      final owns = skin == null || _save.ownsSkin(weapon, skin.id);
+      final wearing = on?.id == skin?.id;
+      final colour = skin == null
+          ? Colors.white54
+          : kRarityColours[skin.rarity]!;
+      return GestureDetector(
+        onTap: () {
+          if (owns) {
+            _equipSkin(weapon, skin);
+          } else {
+            _buySkin(weapon, skin);
+          }
+        },
+        child: Container(
+          width: 74,
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          decoration: BoxDecoration(
+            color: wearing ? colour.withValues(alpha: 0.25) : _bg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: wearing ? colour : colour.withValues(alpha: 0.35),
+              width: wearing ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              WeaponIcon(look: l.look, color: l.color, size: 58, skin: skin),
+              Text(
+                skin?.name ?? 'Normal',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colour,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              if (!owns)
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.monetization_on_rounded,
+                        color: _gold,
+                        size: 12,
+                      ),
+                      Text(
+                        ' ${skin.price}',
+                        style: const TextStyle(
+                          color: _gold,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Text(
+                  wearing ? 'Wearing' : 'Owned',
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            weaponName(weapon),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final sk in <Skin?>[
+                  null,
+                  // Skins you own come first so you can see them.
+                  ...kSkins.where((k) => _save.ownsSkin(weapon, k.id)),
+                  ...kSkins.where((k) => !_save.ownsSkin(weapon, k.id)),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: chip(sk),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -317,6 +585,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
         primary.color,
         'Level ${_save.levelOf(primary.id)}',
         () => _pickGun(0),
+        skin: _save.skinOn(primary.id),
       ),
       if (_save.secondSlot)
         secondary == null
@@ -335,6 +604,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
                 secondary.color,
                 'Level ${_save.levelOf(secondary.id)}',
                 () => _pickGun(1),
+                skin: _save.skinOn(secondary.id),
               )
       else
         _lockedSlotCard(),
@@ -345,6 +615,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
         melee.color,
         'Level ${_save.levelOf(melee.id)}',
         () => setState(() => _tab = 2),
+        skin: _save.skinOn(melee.id),
       ),
       const SizedBox(height: 12),
       Container(
@@ -370,8 +641,9 @@ class _OutplayScreenState extends State<OutplayScreen> {
     WeaponLook? look,
     Color color,
     String detail,
-    VoidCallback onTap,
-  ) {
+    VoidCallback onTap, {
+    Skin? skin,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -392,7 +664,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
                       color: Colors.white38,
                       size: 32,
                     )
-                  : WeaponIcon(look: look, color: color, size: 76),
+                  : WeaponIcon(look: look, color: color, size: 76, skin: skin),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -499,7 +771,12 @@ class _OutplayScreenState extends State<OutplayScreen> {
             for (final g in owned)
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: WeaponIcon(look: g.look, color: g.color, size: 60),
+                leading: WeaponIcon(
+                  look: g.look,
+                  color: g.color,
+                  size: 60,
+                  skin: _save.skinOn(g.id),
+                ),
                 title: Text(
                   g.name,
                   style: const TextStyle(color: Colors.white),
@@ -764,6 +1041,203 @@ class _OutplayScreenState extends State<OutplayScreen> {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// A treasure-chest style skin box.
+class SkinBoxPicture extends StatelessWidget {
+  const SkinBoxPicture({super.key});
+
+  @override
+  Widget build(BuildContext context) =>
+      const CustomPaint(painter: _SkinBoxPainter());
+}
+
+class _SkinBoxPainter extends CustomPainter {
+  const _SkinBoxPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final ink = Paint()
+      ..color = kOutplayInk
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = max(1.5, w * 0.04);
+    final body = RRect.fromRectAndRadius(
+      Rect.fromLTWH(w * 0.08, h * 0.38, w * 0.84, h * 0.54),
+      Radius.circular(w * 0.06),
+    );
+    final lid = RRect.fromRectAndRadius(
+      Rect.fromLTWH(w * 0.04, h * 0.16, w * 0.92, h * 0.26),
+      Radius.circular(w * 0.08),
+    );
+    canvas.drawRRect(body, Paint()..color = const Color(0xFF7E57C2));
+    canvas.drawRRect(body, ink);
+    canvas.drawRRect(lid, Paint()..color = const Color(0xFF9575CD));
+    canvas.drawRRect(lid, ink);
+    final band = Paint()..color = _gold;
+    canvas.drawRect(
+      Rect.fromLTWH(w * 0.44, h * 0.16, w * 0.12, h * 0.76),
+      band,
+    );
+    final lock = Rect.fromCenter(
+      center: Offset(w * 0.5, h * 0.44),
+      width: w * 0.22,
+      height: h * 0.2,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(lock, Radius.circular(w * 0.04)),
+      band,
+    );
+    final tp = TextPainter(
+      text: TextSpan(
+        text: '?',
+        style: TextStyle(
+          color: kOutplayInk,
+          fontSize: h * 0.18,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, lock.center - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(_SkinBoxPainter old) => false;
+}
+
+/// Opens a skin box: skins flash past, then it lands on your prize.
+class _SkinBoxDialog extends StatefulWidget {
+  final String weapon;
+  final Skin skin;
+  final bool duplicate;
+  final ({WeaponLook look, Color color}) Function(String id) lookOf;
+  final VoidCallback onEquip;
+
+  const _SkinBoxDialog({
+    required this.weapon,
+    required this.skin,
+    required this.duplicate,
+    required this.lookOf,
+    required this.onEquip,
+  });
+
+  @override
+  State<_SkinBoxDialog> createState() => _SkinBoxDialogState();
+}
+
+class _SkinBoxDialogState extends State<_SkinBoxDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  )..forward();
+  final _rnd = Random();
+  String _shownWeapon = '';
+  Skin _shownSkin = kSkins.first;
+  int _lastTick = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    _spin.addListener(() {
+      // Flick through skins, slowing down, then stop on the prize.
+      final t = Curves.easeOutCubic.transform(_spin.value);
+      final tick = (t * 24).floor();
+      if (_spin.isCompleted) {
+        setState(() {});
+      } else if (tick != _lastTick) {
+        _lastTick = tick;
+        final ids = kWeaponIds;
+        setState(() {
+          _shownWeapon = ids[_rnd.nextInt(ids.length)];
+          _shownSkin = kSkins[_rnd.nextInt(kSkins.length)];
+        });
+        SoundService.instance.play(GameSound.tap);
+      }
+    });
+    _spin.addStatusListener((s) {
+      if (s == AnimationStatus.completed) {
+        SoundService.instance.play(GameSound.levelComplete);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final done = _spin.isCompleted;
+    final weapon = done ? widget.weapon : _shownWeapon;
+    final skin = done ? widget.skin : _shownSkin;
+    final l = widget.lookOf(weapon.isEmpty ? widget.weapon : weapon);
+    final colour = kRarityColours[skin.rarity]!;
+    return AlertDialog(
+      backgroundColor: _card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: colour, width: 3),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            done ? kRarityNames[skin.rarity]!.toUpperCase() : 'Opening…',
+            style: TextStyle(
+              color: colour,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          WeaponIcon(look: l.look, color: l.color, size: 200, skin: skin),
+          const SizedBox(height: 10),
+          Text(
+            '${skin.name} ${weaponName(weapon.isEmpty ? widget.weapon : weapon)}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          if (done)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                widget.duplicate
+                    ? 'You already had this one, so you got '
+                          '$kDuplicateRefund coins back.'
+                    : 'New skin! It\'s yours to keep.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+        ],
+      ),
+      actions: done
+          ? [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+              if (!widget.duplicate)
+                ElevatedButton(
+                  onPressed: () {
+                    widget.onEquip();
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('WEAR IT'),
+                ),
+            ]
+          : null,
     );
   }
 }

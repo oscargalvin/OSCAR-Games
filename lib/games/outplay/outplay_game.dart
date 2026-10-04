@@ -72,6 +72,11 @@ class _Person {
   int deaths = 0;
   int team = -1; // 0 or 1 in a team game, -1 when it's everyone for themselves
 
+  /// Skins on their weapons (weapon id -> skin id).
+  final Map<String, String> skins = {};
+  Skin? skinOf(String id) => skinById(skins[id]);
+  String get heldId => gun?.id ?? melee.id;
+
   // Online: someone playing on another phone.
   bool remote = false;
   String netId = '';
@@ -330,6 +335,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       pos: spawns.first,
       angle: -pi / 2,
     );
+    _you.skins.addAll(_save.equippedSkins);
     _people.add(_you);
     if (_online) _you.team = _room.isTeams ? _room.myTeam : -1;
     if (widget.mode == OutplayMode.teams) _you.team = 0;
@@ -354,6 +360,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           pos: spawns[(i + 1) % spawns.length],
           angle: 0,
         );
+        // Some bots show off a skin too.
+        for (final id in [gun.id, bot.melee.id]) {
+          if (_rnd.nextDouble() < 0.35) {
+            bot.skins[id] = kSkins[_rnd.nextInt(kSkins.length)].id;
+          }
+        }
         // In a team game the first bots are on your team.
         if (widget.mode == OutplayMode.teams) {
           bot.team = i < widget.teamSize - 1 ? 0 : 1;
@@ -1164,6 +1176,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         'hp': _you.hp,
         'al': _you.alive,
         'sl': _you.slot,
+        'sk': _you.skins[_you.heldId],
         'sw': _you.swingT > 0,
         'fl': _you.flashT > 0,
         'k': _you.kills,
@@ -1227,6 +1240,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         p.alive = m['al'] == true;
         p.slot = ((m['sl'] as int?) ?? 0).clamp(0, 2);
         if (p.slot == 1 && p.guns[1] == null) p.slot = 0;
+        final sk = m['sk'];
+        if (sk is String && skinById(sk) != null) {
+          p.skins[p.heldId] = sk;
+        } else {
+          p.skins.remove(p.heldId);
+        }
         if (m['sw'] == true && p.swingT <= 0) p.swingT = 0.2;
         if (m['fl'] == true) p.flashT = 0.06;
         p.kills = (m['k'] as int?) ?? p.kills;
@@ -1946,6 +1965,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                   look: gun?.look ?? _you.melee.look,
                   color: gun?.color ?? _you.melee.color,
                   size: 34,
+                  skin: _you.skinOf(gun?.id ?? _you.melee.id),
                 ),
               FittedBox(
                 fit: BoxFit.scaleDown,
@@ -3607,6 +3627,7 @@ class _ViewPainter extends CustomPainter {
         g?.look ?? p.melee.look,
         g?.color ?? p.melee.color,
         w * 0.6,
+        skin: p.skinOf(p.heldId),
       );
       c.restore();
       if (p.flashT > 0) {
@@ -3924,7 +3945,13 @@ class _ViewPainter extends CustomPainter {
     if (gun != null) {
       canvas.translate(_w * 0.6 + bobX, _h * 0.95 + bobY + s._recoil * 14);
       canvas.rotate(-pi / 2 - 0.38 - s._recoil * 0.08);
-      paintWeapon(canvas, gun.look, gun.color, min(_w, _h) * 0.68);
+      paintWeapon(
+        canvas,
+        gun.look,
+        gun.color,
+        min(_w, _h) * 0.68,
+        skin: you.skinOf(gun.id),
+      );
       if (you.flashT > 0 && gun.look != WeaponLook.flamer) {
         canvas.drawCircle(
           Offset(min(_w, _h) * 0.36, 0),
@@ -3945,7 +3972,13 @@ class _ViewPainter extends CustomPainter {
           m.look == WeaponLook.scythe ||
           m.look == WeaponLook.slapper ||
           m.look == WeaponLook.snake;
-      paintWeapon(canvas, m.look, m.color, min(_w, _h) * (big ? 0.55 : 0.36));
+      paintWeapon(
+        canvas,
+        m.look,
+        m.color,
+        min(_w, _h) * (big ? 0.55 : 0.36),
+        skin: you.skinOf(m.id),
+      );
     }
     canvas.restore();
   }

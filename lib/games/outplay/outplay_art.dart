@@ -7,8 +7,127 @@ import 'outplay_data.dart';
 const Color kOutplayInk = Color(0xFF15172A);
 
 /// Draws a weapon pointing right, centred on the origin, about [size] long.
-void paintWeapon(Canvas canvas, WeaponLook look, Color color, double size) {
-  _paintReal(canvas, look, color, size / 100);
+/// A [skin] repaints it (gold, camo, galaxy...).
+void paintWeapon(
+  Canvas canvas,
+  WeaponLook look,
+  Color color,
+  double size, {
+  Skin? skin,
+}) {
+  _paintReal(canvas, look, color, size / 100, skin);
+}
+
+/// Deterministic 0..1 noise, so a skin's pattern doesn't flicker.
+double _hash(int a, int b) {
+  final v = sin(a * 127.1 + b * 311.7) * 43758.5453;
+  return v - v.floorToDouble();
+}
+
+/// Paints a skin's pattern inside [shape].
+void _paintSkinPattern(Canvas canvas, Path shape, Skin skin, double s) {
+  if (skin.pattern == SkinPattern.none) return;
+  final b = shape.getBounds();
+  final cols = skin.patternColours;
+  canvas.save();
+  canvas.clipPath(shape);
+  final cell = 8 * s;
+  int gx(double x) => (x / cell).floor();
+  void eachCell(void Function(int i, int j, Offset o) f) {
+    for (var i = gx(b.left) - 1; i <= gx(b.right); i++) {
+      for (var j = gx(b.top) - 1; j <= gx(b.bottom); j++) {
+        f(i, j, Offset(i * cell, j * cell));
+      }
+    }
+  }
+
+  switch (skin.pattern) {
+    case SkinPattern.camo:
+      eachCell((i, j, o) {
+        final h = _hash(i, j);
+        final c = cols[(h * cols.length).floor() % cols.length];
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: o + Offset(_hash(j, i) * cell, h * cell),
+            width: cell * (0.9 + h),
+            height: cell * (0.6 + _hash(i + 7, j) * 0.6),
+          ),
+          Paint()..color = c.withValues(alpha: 0.85),
+        );
+      });
+      break;
+    case SkinPattern.neon:
+      for (var x = b.left - b.height; x < b.right; x += 12 * s) {
+        final k = ((x / (12 * s)).floor()).abs() % cols.length;
+        final paint = Paint()
+          ..color = cols[k]
+          ..strokeWidth = max(0.8, 1.2 * s)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 0.8 * s);
+        canvas.drawLine(
+          Offset(x, b.bottom),
+          Offset(x + b.height, b.top),
+          paint,
+        );
+      }
+      break;
+    case SkinPattern.cracks:
+      eachCell((i, j, o) {
+        if (_hash(i, j) < 0.45) return;
+        final path = Path()..moveTo(o.dx, o.dy + _hash(i, j + 3) * cell);
+        for (var k = 1; k <= 3; k++) {
+          path.lineTo(o.dx + k * cell / 3, o.dy + _hash(i + k, j) * cell);
+        }
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = cols[0]
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = max(0.7, 1.1 * s)
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, 0.7 * s),
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = cols[1]
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = max(0.4, 0.4 * s),
+        );
+      });
+      break;
+    case SkinPattern.stars:
+      eachCell((i, j, o) {
+        for (var k = 0; k < 2; k++) {
+          final h = _hash(i * 3 + k, j * 5 - k);
+          canvas.drawCircle(
+            o + Offset(_hash(j + k, i) * cell, h * cell),
+            (0.35 + h * 0.6) * s,
+            Paint()..color = cols[(h * 7).floor() % cols.length],
+          );
+        }
+      });
+      break;
+    case SkinPattern.shine:
+    case SkinPattern.none:
+      break;
+  }
+  if (skin.pattern == SkinPattern.shine || skin.rarity == Rarity.legendary) {
+    // A shiny streak across the metal.
+    canvas.drawRect(
+      b,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withValues(alpha: 0),
+            Colors.white.withValues(alpha: 0.5),
+            Colors.white.withValues(alpha: 0),
+          ],
+          stops: const [0.35, 0.5, 0.65],
+        ).createShader(b),
+    );
+  }
+  canvas.restore();
 }
 
 // ---- Realistic weapons ---------------------------------------------------
@@ -23,7 +142,36 @@ const Color _polymer = Color(0xFF23262B);
 const Color _wood = Color(0xFF7B4A2A);
 const Color _woodLight = Color(0xFFA9683C);
 
-void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
+void _paintReal(
+  Canvas canvas,
+  WeaponLook look,
+  Color baseAccent,
+  double s,
+  Skin? skin,
+) {
+  // Weapons whose own colour is the main part get fully repainted.
+  final mainIsAccent =
+      look == WeaponLook.fist ||
+      look == WeaponLook.slapper ||
+      look == WeaponLook.snake;
+  final metal = skin?.metal ?? _metal;
+  final polymer = skin?.grip ?? _polymer;
+  final wood = skin?.grip ?? _wood;
+  final accent = skin == null
+      ? baseAccent
+      : (mainIsAccent ? skin.metal : (skin.accent ?? baseAccent));
+  bool skinned(Color c) =>
+      skin != null &&
+      (c == metal || c == polymer || (mainIsAccent && c == accent));
+  void decorate(Path shape) => _paintSkinPattern(canvas, shape, skin!, s);
+  // Blades and pans: steel normally, the skin's colour when skinned.
+  final steel = skin == null
+      ? const [Color(0xFF9EA7B0), Color(0xFFE4E9EE), Color(0xFF7D8690)]
+      : [
+          Color.lerp(skin.metal, Colors.black, 0.2)!,
+          Color.lerp(skin.metal, Colors.white, 0.55)!,
+          Color.lerp(skin.metal, Colors.black, 0.4)!,
+        ];
   final outline = Paint()
     ..color = const Color(0xFF07080A)
     ..style = PaintingStyle.stroke
@@ -59,12 +207,14 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
     final rect = rr(l, t, w, h);
     final shape = RRect.fromRectAndRadius(rect, Radius.circular(r * s));
     canvas.drawRRect(shape, shade(rect, c, shine: shine));
+    if (skinned(c)) decorate(Path()..addRRect(shape));
     canvas.drawRRect(shape, outline);
   }
 
   void poly(List<Offset> pts, Color c, {double shine = 0.3}) {
     final path = Path()..addPolygon([for (final p in pts) p * s], true);
     canvas.drawPath(path, shade(path.getBounds(), c, shine: shine));
+    if (skinned(c)) decorate(path);
     canvas.drawPath(path, outline);
   }
 
@@ -83,7 +233,7 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
   void rail(double l, double t, double w) {
     part(l, t, w, 3, _metalDark, r: 0.5, shine: 0.2);
     for (var x = l + 1.5; x < l + w - 1; x += 3) {
-      canvas.drawRect(rr(x, t - 1.2, 1.6, 1.4), Paint()..color = _metal);
+      canvas.drawRect(rr(x, t - 1.2, 1.6, 1.4), Paint()..color = metal);
     }
   }
 
@@ -128,9 +278,9 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         const Offset(-32, 5),
         const Offset(-44, 13),
         const Offset(-50, 13),
-      ], _polymer);
-      part(-34, -5, 12, 6, _metal, r: 2); // buffer tube
-      grip(-15, 6, _polymer);
+      ], polymer);
+      part(-34, -5, 12, 6, metal, r: 2); // buffer tube
+      grip(-15, 6, polymer);
       triggerGuard(-8, 6);
       // Curved magazine.
       final mag = Path()
@@ -140,21 +290,21 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         ..lineTo(3 * s, 27 * s)
         ..quadraticBezierTo(0, 17 * s, -2 * s, 6 * s)
         ..close();
-      canvas.drawPath(mag, shade(mag.getBounds(), _polymer));
+      canvas.drawPath(mag, shade(mag.getBounds(), polymer));
       canvas.drawPath(mag, outline);
-      part(-22, -1, 28, 9, _metal); // lower receiver
-      part(-24, -10, 31, 10, _metal); // upper receiver
+      part(-22, -1, 28, 9, metal); // lower receiver
+      part(-24, -10, 31, 10, metal); // upper receiver
       line(const Offset(-14, -5), const Offset(-4, -5), _metalDark, 1.2);
       part(-1, -6, 6, 4, _metalDark, r: 0.6); // ejection port
       rail(-24, -13, 31);
       part(-21, -19, 6, 6, _metalDark, r: 1); // rear sight
       // Handguard with vent holes.
-      part(7, -10, 25, 13, _polymer, r: 2);
+      part(7, -10, 25, 13, polymer, r: 2);
       for (var i = 0; i < 4; i++) {
         part(10.0 + i * 5.5, -6, 3.5, 5, _metalDark, r: 1.2, shine: 0);
       }
       rail(7, -13, 25);
-      part(32, -6, 13, 4, _metal, r: 1); // barrel
+      part(32, -6, 13, 4, metal, r: 1); // barrel
       part(25, -19, 3, 9, _metalDark, r: 0.6); // front sight post
       part(44, -7.5, 7, 7, _metalDark, r: 1); // muzzle brake
       for (var i = 0; i < 2; i++) {
@@ -175,15 +325,15 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         const Offset(-20, -10),
         const Offset(-20, 8),
         const Offset(-44, 12),
-      ], _polymer);
-      grip(-14, 6, _polymer);
+      ], polymer);
+      grip(-14, 6, polymer);
       triggerGuard(-7, 6);
-      part(-22, -10, 44, 17, _metal, r: 4);
+      part(-22, -10, 44, 17, metal, r: 4);
       part(-2, 7, 12, 9, _metalDark, r: 2); // battery cell
       glow(const Offset(4, 11.5), 2.2, accent);
       // Scope.
       part(-14, -20, 26, 7, _metalDark, r: 3);
-      part(10, -21.5, 4, 10, _metal, r: 1.5);
+      part(10, -21.5, 4, 10, metal, r: 1.5);
       glow(const Offset(13.5, -16.5), 1.6, const Color(0xFF80D8FF));
       part(-6, -13, 3, 4, _metalDark, r: 0.5);
       part(4, -13, 3, 4, _metalDark, r: 0.5);
@@ -203,11 +353,11 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         const Offset(-22, 5),
         const Offset(-46, 13),
         const Offset(-50, 12),
-      ], _wood);
+      ], wood);
       line(const Offset(-46, 2), const Offset(-28, -1), _woodLight, 1);
-      grip(-18, 5, _wood);
+      grip(-18, 5, wood);
       triggerGuard(-11, 5);
-      part(-25, -7, 26, 13, _metal, r: 2); // receiver
+      part(-25, -7, 26, 13, metal, r: 2); // receiver
       for (var i = 0; i < 4; i++) {
         final c = [
           const Color(0xFFE53935),
@@ -217,9 +367,9 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         ][i];
         part(-21.0 + i * 5, -4, 3.6, 7, c, r: 1, shine: 0.5); // side shells
       }
-      part(0, -6, 50, 5, _metal, r: 1.5); // barrel
+      part(0, -6, 50, 5, metal, r: 1.5); // barrel
       part(0, -1, 40, 4, _metalDark, r: 1.5); // tube magazine
-      part(10, -2.5, 18, 8, _polymer, r: 2.5); // pump
+      part(10, -2.5, 18, 8, polymer, r: 2.5); // pump
       for (var i = 0; i < 5; i++) {
         line(
           Offset(12.0 + i * 3.4, -1.5),
@@ -238,16 +388,16 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         const Offset(-28, 6),
         const Offset(-46, 12),
         const Offset(-50, 11),
-      ], _polymer);
-      grip(-20, 6, _polymer);
+      ], polymer);
+      grip(-20, 6, polymer);
       triggerGuard(-13, 6);
-      part(-30, -6, 22, 12, _metal, r: 2);
-      part(-10, -13, 46, 22, _metal, r: 4); // the big tube
+      part(-30, -6, 22, 12, metal, r: 2);
+      part(-10, -13, 46, 22, metal, r: 4); // the big tube
       for (final x in [-6.0, 30.0]) {
         part(x, -14.5, 3.5, 25, accent, r: 1, shine: 0.6); // frosty rings
       }
       rail(-6, -16.5, 30);
-      part(4, 9, 14, 6, _polymer, r: 2); // fore grip
+      part(4, 9, 14, 6, polymer, r: 2); // fore grip
       part(36, -11, 6, 18, _metalDark, r: 2);
       // A snowball waiting in the muzzle.
       canvas.drawCircle(
@@ -269,10 +419,10 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         const Offset(-26, -7),
         const Offset(-26, 6),
         const Offset(-44, 12),
-      ], _polymer);
-      grip(-18, 5, _polymer);
+      ], polymer);
+      grip(-18, 5, polymer);
       triggerGuard(-11, 5);
-      part(-28, -9, 32, 15, _metal, r: 3);
+      part(-28, -9, 32, 15, metal, r: 3);
       part(-6, -16, 14, 7, _metalDark, r: 2); // battery pack
       glow(const Offset(5, -12.5), 1.5, accent);
       // Copper coil.
@@ -313,10 +463,10 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         const Offset(-26, -6),
         const Offset(-26, 6),
         const Offset(-44, 12),
-      ], _polymer);
-      grip(-18, 6, _polymer);
+      ], polymer);
+      grip(-18, 6, polymer);
       triggerGuard(-11, 6);
-      part(-28, -8, 40, 15, _metal, r: 3);
+      part(-28, -8, 40, 15, metal, r: 3);
       // Glass tank.
       final tank = RRect.fromRectAndRadius(
         rr(-20, -24, 26, 15),
@@ -336,7 +486,7 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
         const Offset(44, -12),
         const Offset(44, 10),
         const Offset(30, 4),
-      ], _metal);
+      ], metal);
       canvas.drawCircle(
         const Offset(48, -1) * s,
         5 * s,
@@ -360,10 +510,10 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 3.5 * s,
       );
-      grip(-26, -2, _polymer);
+      grip(-26, -2, polymer);
       triggerGuard(-19, -2);
-      part(-30, -10, 36, 10, _metal, r: 2);
-      part(6, -8, 34, 6, _metal, r: 1.5); // nozzle tube
+      part(-30, -10, 36, 10, metal, r: 2);
+      part(6, -8, 34, 6, metal, r: 1.5); // nozzle tube
       part(14, -11, 3, 12, _metalDark, r: 0.8);
       part(26, -11, 3, 12, _metalDark, r: 0.8);
       part(38, -10, 9, 10, _metalDark, r: 2); // nozzle tip
@@ -421,7 +571,7 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
     case WeaponLook.knife:
       // A combat knife: rubber grip, steel guard, sharpened blade.
       part(-40, -5, 4, 10, _metalLight, r: 1.5); // pommel
-      part(-37, -5.5, 28, 11, _polymer, r: 3);
+      part(-37, -5.5, 28, 11, polymer, r: 3);
       for (var i = 0; i < 6; i++) {
         line(
           Offset(-33.0 + i * 4, -4),
@@ -440,12 +590,13 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
       canvas.drawPath(
         blade,
         Paint()
-          ..shader = const LinearGradient(
+          ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF9EA7B0), Color(0xFFE4E9EE), Color(0xFF7D8690)],
+            colors: steel,
           ).createShader(blade.getBounds()),
       );
+      if (skin != null) decorate(blade);
       canvas.drawPath(blade, outline);
       line(
         const Offset(-2, -1),
@@ -473,15 +624,20 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
       );
       final c = const Offset(18, 0) * s;
       final outer = Rect.fromCircle(center: c, radius: 27 * s);
-      canvas.drawOval(outer, shade(outer, const Color(0xFF3A3F45), shine: 0.3));
+      final iron = skin?.metal ?? const Color(0xFF3A3F45);
+      canvas.drawOval(outer, shade(outer, iron, shine: 0.3));
+      if (skin != null) decorate(Path()..addOval(outer));
       canvas.drawOval(outer, outline);
       final inner = Rect.fromCircle(center: c, radius: 21 * s);
       canvas.drawOval(
         inner,
         Paint()
-          ..shader = const RadialGradient(
-            center: Alignment(-0.3, -0.4),
-            colors: [Color(0xFF4A5058), Color(0xFF1C1F23)],
+          ..shader = RadialGradient(
+            center: const Alignment(-0.3, -0.4),
+            colors: [
+              Color.lerp(iron, Colors.white, 0.12)!,
+              Color.lerp(iron, Colors.black, 0.5)!,
+            ],
           ).createShader(inner),
       );
       canvas.drawOval(inner, outline);
@@ -499,7 +655,7 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
       break;
     case WeaponLook.slapper:
       // A motor with bolts, a chrome piston and a big rubber glove.
-      part(-52, -15, 34, 30, _metal, r: 4);
+      part(-52, -15, 34, 30, metal, r: 4);
       for (final p in const [
         Offset(-48, -11),
         Offset(-22, -11),
@@ -537,7 +693,7 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
       break;
     case WeaponLook.scythe:
       // A long wooden handle and a curved steel blade.
-      part(-52, -3.5, 98, 7, _wood, r: 3.5, shine: 0.3);
+      part(-52, -3.5, 98, 7, wood, r: 3.5, shine: 0.3);
       for (var i = 0; i < 6; i++) {
         line(
           Offset(-48.0 + i * 15, -1),
@@ -546,7 +702,7 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
           0.7,
         );
       }
-      part(-22, -3, 4, 14, _wood, r: 2); // hand grip peg
+      part(-22, -3, 4, 14, wood, r: 2); // hand grip peg
       part(38, -6, 8, 12, _metalDark, r: 2); // collar
       final blade = Path()
         ..moveTo(44 * s, -5 * s)
@@ -559,13 +715,16 @@ void _paintReal(Canvas canvas, WeaponLook look, Color accent, double s) {
           ..shader = LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              const Color(0xFFE4E9EE),
-              Color.lerp(const Color(0xFF8E979F), accent, 0.25)!,
-              const Color(0xFF4E565E),
-            ],
+            colors: skin == null
+                ? [
+                    const Color(0xFFE4E9EE),
+                    Color.lerp(const Color(0xFF8E979F), accent, 0.25)!,
+                    const Color(0xFF4E565E),
+                  ]
+                : [steel[1], steel[0], steel[2]],
           ).createShader(blade.getBounds()),
       );
+      if (skin != null) decorate(blade);
       canvas.drawPath(blade, outline);
       final edge = Path()
         ..moveTo(36 * s, -6 * s)
@@ -690,12 +849,14 @@ class WeaponIcon extends StatelessWidget {
   final WeaponLook look;
   final Color color;
   final double size;
+  final Skin? skin;
 
   const WeaponIcon({
     super.key,
     required this.look,
     required this.color,
     this.size = 64,
+    this.skin,
   });
 
   @override
@@ -703,7 +864,7 @@ class WeaponIcon extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size * 0.62,
-      child: CustomPaint(painter: _WeaponIconPainter(look, color)),
+      child: CustomPaint(painter: _WeaponIconPainter(look, color, skin)),
     );
   }
 }
@@ -711,7 +872,8 @@ class WeaponIcon extends StatelessWidget {
 class _WeaponIconPainter extends CustomPainter {
   final WeaponLook look;
   final Color color;
-  _WeaponIconPainter(this.look, this.color);
+  final Skin? skin;
+  _WeaponIconPainter(this.look, this.color, this.skin);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -719,11 +881,11 @@ class _WeaponIconPainter extends CustomPainter {
     canvas.translate(size.width / 2, size.height / 2);
     final rotate = look == WeaponLook.scythe;
     if (rotate) canvas.translate(0, size.height * 0.2);
-    paintWeapon(canvas, look, color, size.width * 0.9);
+    paintWeapon(canvas, look, color, size.width * 0.9, skin: skin);
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(_WeaponIconPainter old) =>
-      old.look != look || old.color != color;
+      old.look != look || old.color != color || old.skin != skin;
 }

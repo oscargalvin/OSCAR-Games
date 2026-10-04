@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +9,7 @@ import 'package:oscar_games/games/outplay/outplay_data.dart';
 import 'package:oscar_games/games/outplay/outplay_game.dart';
 import 'package:oscar_games/games/outplay/outplay_maps.dart';
 import 'package:oscar_games/games/outplay/outplay_net.dart';
+import 'package:oscar_games/games/outplay/outplay_screen.dart';
 
 Future<void> _phone(WidgetTester tester) async {
   tester.view.physicalSize = const Size(375, 667) * 3;
@@ -384,6 +387,62 @@ void main() {
     final ranked = [...kMelees]..sort((a, b) => b.price.compareTo(a.price));
     expect(ranked.map((m) => m.id).take(2), ['scythe', 'sizzler']);
     expect(sizzler.damage, lessThan(meleeById('scythe').damage));
+  });
+
+  test('skin boxes give rare skins less often', () {
+    final rnd = Random(4);
+    final counts = <Rarity, int>{};
+    for (var i = 0; i < 4000; i++) {
+      final prize = openSkinBox(rnd);
+      expect(kWeaponIds, contains(prize.weapon));
+      counts[prize.skin.rarity] = (counts[prize.skin.rarity] ?? 0) + 1;
+    }
+    expect(counts[Rarity.common]!, greaterThan(counts[Rarity.rare]!));
+    expect(counts[Rarity.rare]!, greaterThan(counts[Rarity.epic]!));
+    expect(counts[Rarity.epic]!, greaterThan(counts[Rarity.legendary]!));
+    expect(counts[Rarity.legendary]!, greaterThan(0));
+  });
+
+  test('skins survive saving and loading', () async {
+    final save = OutplaySave.instance;
+    save.skins = {'assault_rifle:gold', 'fist:galaxy'};
+    save.equippedSkins = {'assault_rifle': 'gold', 'knife': 'lava'};
+    await save.save();
+    save.skins = {};
+    save.equippedSkins = {};
+    await save.load();
+    expect(save.ownsSkin('assault_rifle', 'gold'), isTrue);
+    expect(save.skinOn('assault_rifle')?.name, 'Gold');
+    // You can't wear a skin you don't own.
+    expect(save.skinOn('knife'), isNull);
+  });
+
+  testWidgets('opening a skin box costs coins and gives a skin', (
+    tester,
+  ) async {
+    await _phone(tester);
+    final save = OutplaySave.instance
+      ..coins = 400
+      ..skins = {}
+      ..equippedSkins = {};
+    await save.save();
+    await tester.pumpWidget(const MaterialApp(home: OutplayScreen()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skins'));
+    await tester.pumpAndSettle();
+    expect(find.text('Skin Box'), findsOneWidget);
+    await tester.tap(find.textContaining('OPEN'));
+    await tester.pump();
+    expect(find.text('Opening…'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(find.text('Close'), findsOneWidget);
+    expect(save.skins, hasLength(1));
+    expect(save.coins, 400 - kSkinBoxPrice);
+    await tester.tap(find.text('WEAR IT'));
+    await tester.pumpAndSettle();
+    final won = save.skins.single.split(':');
+    expect(save.equippedSkins[won[0]], won[1]);
   });
 
   test('avatars survive saving and loading', () async {
