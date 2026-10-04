@@ -13,14 +13,38 @@
     // for testing; normally the free public one is used.
     const q = new URLSearchParams(location.search);
     const host = q.get('peerhost');
-    if (!host) return { debug: 0 };
+    // Several free "what's my address" helpers, so phones on different
+    // networks (home Wi-Fi, school Wi-Fi, mobile data) can find a way in.
+    const config = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        { urls: 'stun:global.stun.twilio.com:3478' },
+      ],
+    };
+    if (!host) return { debug: 0, config: config };
     return {
       host: host,
       port: Number(q.get('peerport') || 9000),
       path: '/',
       secure: false,
       debug: 0,
+      config: config,
     };
+  }
+
+  // Phones drop their link to the matchmaking server when the screen
+  // sleeps or the network blips. Without this, a room maker's code stops
+  // working ("no room with that code") even though the game is still open.
+  function keepAlive(p) {
+    p.on('disconnected', () => {
+      setTimeout(() => {
+        try {
+          if (!p.destroyed && p.disconnected) p.reconnect();
+        } catch (e) {}
+      }, 1000);
+    });
   }
 
   function call(name, ...args) {
@@ -61,6 +85,7 @@
       isHost = true;
       conns = [];
       peer = new Peer('outplay-room-' + code, options());
+      keepAlive(peer);
       peer.on('open', (id) => call('ready', id));
       peer.on('connection', (conn) => {
         conn.on('open', () => {
@@ -76,15 +101,29 @@
       isHost = false;
       conns = [];
       peer = new Peer(options());
-      peer.on('open', (id) => {
-        const conn = peer.connect('outplay-room-' + code, { reliable: true });
+      const me = peer;
+      me.on('open', (id) => {
+        const conn = me.connect('outplay-room-' + code, {
+          reliable: true,
+          serialization: 'json',
+        });
+        // The room exists but the two phones can't reach each other
+        // (some school or work Wi-Fi blocks it): say so instead of hanging.
+        const stuck = setTimeout(() => {
+          if (peer === me && !conn.open) failed({ type: 'no-link' });
+        }, 12000);
         conn.on('open', () => {
+          clearTimeout(stuck);
           conns = [conn];
           wire(conn);
           call('ready', id);
         });
+        conn.on('error', () => {
+          clearTimeout(stuck);
+          if (peer === me && !conn.open) failed({ type: 'no-link' });
+        });
       });
-      peer.on('error', failed);
+      me.on('error', failed);
     },
     send(text) {
       for (const c of conns) if (c.open) c.send(text);
@@ -134,6 +173,7 @@
     if (lobby.peer || !lobbyWanted() || typeof Peer === 'undefined') return;
     const p = new Peer(LOBBY, options());
     lobby.peer = p;
+    keepAlive(p);
     p.on('open', () => {
       lobby.isLobby = true;
       lobbyTick();
@@ -175,7 +215,7 @@
     const p = new Peer(options());
     lobby.peer = p;
     p.on('open', () => {
-      const c = p.connect(LOBBY, { reliable: true });
+      const c = p.connect(LOBBY, { reliable: true, serialization: 'json' });
       lobby.conn = c;
       c.on('open', () => {
         if (lobby.mine) c.send(JSON.stringify({ t: 'room', room: lobby.mine }));

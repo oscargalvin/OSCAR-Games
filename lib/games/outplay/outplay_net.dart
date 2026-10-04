@@ -48,8 +48,12 @@ class RoomInfo {
   /// or 0 for everyone against everyone.
   final int teamSize;
 
+  /// A room made with a code for friends (Quick Play leaves these alone).
+  final bool friends;
+
   const RoomInfo({
     this.teamSize = 0,
+    this.friends = false,
     required this.code,
     required this.name,
     required this.avatar,
@@ -66,6 +70,7 @@ class RoomInfo {
     'players': players,
     'playing': playing,
     'size': teamSize,
+    'fr': friends,
   };
 
   static RoomInfo? fromJson(Object? raw) {
@@ -82,6 +87,7 @@ class RoomInfo {
       mapId: (raw['map'] as String?) ?? '',
       players: (raw['players'] as num?)?.toInt() ?? 1,
       playing: raw['playing'] == true,
+      friends: raw['fr'] == true,
       teamSize: ((raw['size'] as num?)?.toInt() ?? 0).clamp(0, 4),
     );
   }
@@ -137,6 +143,10 @@ class OutplayRoom {
   int teamSize = 0;
   bool get isTeams => teamSize > 0;
 
+  /// Rooms made in Find Players show their code so friends can type it in;
+  /// Quick Play rooms just match strangers and keep it hidden.
+  bool showCode = false;
+
   /// Your team (0 or 1) in a team room. The room maker is always team 0.
   int myTeam = 0;
   final Map<String, int> _guestTeams = {};
@@ -156,12 +166,14 @@ class OutplayRoom {
     OutplayLink Function() makeLink,
     String mapId, {
     int teamSize = 0,
+    bool showCode = false,
     Duration timeout = const Duration(seconds: 15),
   }) async {
     for (var tries = 0; ; tries++) {
       final link = makeLink();
       final room = OutplayRoom._(link, true, newRoomCode(), mapId)
-        ..teamSize = teamSize;
+        ..teamSize = teamSize
+        ..showCode = showCode;
       final done = Completer<OutplayRoom>();
       link.host(
         room.code,
@@ -188,6 +200,7 @@ class OutplayRoom {
               'size': room.teamSize,
               'team': team,
               'started': room.started,
+              'code': room.showCode,
               'clock': room._sinceStart.elapsedMilliseconds / 1000,
             });
           },
@@ -215,7 +228,7 @@ class OutplayRoom {
   static Future<OutplayRoom> join(
     OutplayLink Function() makeLink,
     String code, {
-    Duration timeout = const Duration(seconds: 15),
+    Duration timeout = const Duration(seconds: 20),
   }) async {
     final link = makeLink();
     final room = OutplayRoom._(link, false, code.toUpperCase(), '');
@@ -238,6 +251,7 @@ class OutplayRoom {
             room.teamSize = ((m['size'] as num?)?.toInt() ?? 0).clamp(0, 4);
             room.myTeam = (m['team'] as num?)?.toInt() ?? 0;
             room.started = m['started'] == true;
+            room.showCode = m['code'] == true;
             room.joinClock = (m['clock'] as num?)?.toDouble() ?? 0;
             done.complete(room);
             return;
@@ -256,6 +270,11 @@ class OutplayRoom {
     } catch (e) {
       link.close();
       if (e == 'full') throw 'That game is already full. Pick someone else!';
+      if (e == 'no-link') {
+        throw 'Found room ${room.code} but couldn\'t connect to it. Some Wi-Fi '
+            '(like school Wi-Fi) blocks games: try mobile data or the same '
+            'Wi-Fi as your friend.';
+      }
       if (e is TimeoutException || e == 'peer-unavailable') {
         throw 'No room with the code ${room.code}. Check the code and try again.';
       }

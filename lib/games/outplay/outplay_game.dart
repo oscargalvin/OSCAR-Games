@@ -289,6 +289,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   bool _netBusy = false;
   int _qpStep = 0; // Quick Play: 0 size, 1 AI or human, 2 map
   int _qpSize = 1;
+  int _roomSize = 1;
   bool _qpHuman = false;
   String? _netError;
 
@@ -1053,6 +1054,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           players: _people.length,
           playing: _phase != _Phase.waiting,
           teamSize: _room.teamSize,
+          friends: _room.showCode,
         ),
       );
     }
@@ -2048,7 +2050,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
             children: [
               Text(
                 _onlineTeams
-                    ? 'Finding players… ${others + 1}/${_teamSize * 2}'
+                    ? (_room.showCode
+                          ? 'Waiting for players… ${others + 1}/${_teamSize * 2}'
+                          : 'Finding players… ${others + 1}/${_teamSize * 2}')
                     : (others > 0 ? 'Players here' : 'Waiting for players…'),
                 style: const TextStyle(
                   color: Colors.white,
@@ -2058,7 +2062,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               ),
               const SizedBox(height: 4),
               Text(
-                _onlineTeams
+                _onlineTeams && _room.showCode
+                    ? '$_teamLabel on ${_map.name}. It starts as soon as '
+                          '${_teamSize * 2} people are in.'
+                          '${others > 0 ? '\nHere: ${names.join(', ')}' : ''}'
+                          '\nTell your friends the room code:'
+                    : _onlineTeams
                     ? (others == 0
                           ? 'Quick Play $_teamLabel on ${_map.name}. '
                                 'It starts as soon as everyone is here.'
@@ -2071,7 +2080,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                 style: const TextStyle(color: Colors.white),
               ),
               // Room codes are only for Find Players rooms.
-              if (others == 0 && !_onlineTeams)
+              if ((others == 0 && !_onlineTeams) ||
+                  (_onlineTeams && _room.showCode))
                 Text(
                   _room.code,
                   style: const TextStyle(
@@ -2187,6 +2197,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
             .where(
               (r) =>
                   r.teamSize == size &&
+                  !r.friends &&
                   !r.playing &&
                   r.players < size * 2 &&
                   // Picked a map? Only fight people who picked the same one.
@@ -2202,7 +2213,11 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     await _goOnline(teamSize: size);
   }
 
-  Future<void> _goOnline({String? joinCode, int teamSize = 0}) async {
+  Future<void> _goOnline({
+    String? joinCode,
+    int teamSize = 0,
+    bool showCode = false,
+  }) async {
     final make = widget.makeLink;
     if (make() == null) {
       setState(() => _netError = 'Online play only works on the website.');
@@ -2219,7 +2234,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     OutplayRoom room;
     try {
       room = joinCode == null
-          ? await OutplayRoom.host(() => make()!, mapId, teamSize: teamSize)
+          ? await OutplayRoom.host(
+              () => make()!,
+              mapId,
+              teamSize: teamSize,
+              showCode: showCode,
+            )
           : await OutplayRoom.join(() => make()!, joinCode);
     } catch (e) {
       if (mounted) {
@@ -2431,19 +2451,39 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     return _panelShell(color, [
       _panelTitle(
         'Find Players',
-        'Play real people online! Make a room and wait for someone, '
-            'or press Join to see who is waiting.',
+        'Play real people online! Make a room, pick 1v1 to 4v4 and give '
+            'friends the code. It starts when everyone is in.',
         color,
       ),
       const SizedBox(height: 12),
       me,
       _mapPicker(),
+      const SizedBox(height: 12),
+      const Text(
+        'Room size',
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (var n = 1; n <= 4; n++)
+            ChoiceChip(
+              label: Text('${n}v$n'),
+              selected: _roomSize == n,
+              onSelected: (_) => setState(() => _roomSize = n),
+            ),
+        ],
+      ),
       const SizedBox(height: 14),
       Row(
         children: [
           Expanded(
             child: ElevatedButton(
-              onPressed: _netBusy ? null : () => _goOnline(),
+              onPressed: _netBusy
+                  ? null
+                  : () => _goOnline(teamSize: _roomSize, showCode: true),
               style: ElevatedButton.styleFrom(
                 backgroundColor: color,
                 padding: const EdgeInsets.symmetric(vertical: 14),
@@ -2542,8 +2582,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                         ),
                       ),
                       Text(
-                        '${map.name} · ${r.players} '
-                        '${r.players == 1 ? 'player' : 'players'}',
+                        r.teamSize > 0
+                            ? '${map.name} · ${r.players}/${r.teamSize * 2} in'
+                            : '${map.name} · ${r.players} '
+                                  '${r.players == 1 ? 'player' : 'players'}',
                         style: const TextStyle(color: Colors.white70),
                       ),
                     ],

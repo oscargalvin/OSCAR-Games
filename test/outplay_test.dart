@@ -291,6 +291,66 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('a 2v2 code room shows its code and starts when 4 are in', (
+    tester,
+  ) async {
+    await _phone(tester);
+    OutplaySave.instance.name = 'Oscar';
+    final hub = LoopbackHub();
+    var listed = <RoomInfo>[];
+    hub.makeDirectory().browse((rooms) => listed = rooms);
+    final room = await OutplayRoom.host(
+      hub.makeLink,
+      'arena',
+      teamSize: 2,
+      showCode: true,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OutplayGameScreen(
+          mode: OutplayMode.online,
+          mapId: room.mapId,
+          room: room,
+          makeDirectory: hub.makeDirectory,
+        ),
+      ),
+    );
+    for (var i = 0; i < 50; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text('Waiting for players… 1/4'), findsOneWidget);
+    expect(find.text(room.code), findsOneWidget);
+    // Quick Play strangers leave friends' rooms alone.
+    expect(listed.single.friends, isTrue);
+
+    // Three friends type the code in and go straight into the room.
+    final friends = [
+      for (var i = 0; i < 3; i++)
+        await OutplayRoom.join(hub.makeLink, room.code),
+    ];
+    expect(friends.every((f) => f.showCode && f.teamSize == 2), isTrue);
+    for (var i = 0; i < 10; i++) {
+      for (final (n, f) in friends.indexed) {
+        f.send({
+          't': 's',
+          'id': f.myId,
+          'n': 'Friend $n',
+          'x': 6.5,
+          'y': 3.5 + n,
+          'tm': f.myTeam,
+        });
+      }
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.textContaining('Online 2v2'), findsOneWidget);
+    // A fifth person is turned away.
+    expect(
+      () => OutplayRoom.join(hub.makeLink, room.code),
+      throwsA(contains('already full')),
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('avatars survive saving and loading', () async {
     final save = OutplaySave.instance;
     save.name = 'Oscar';
