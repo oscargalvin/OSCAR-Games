@@ -13,6 +13,8 @@ import 'package:oscar_games/games/board_game/board_game_screen.dart';
 import 'package:oscar_games/games/boat_fishing/boat_fishing_screen.dart';
 import 'package:oscar_games/games/fly_or_crash/fly_or_crash_screen.dart';
 import 'package:oscar_games/games/memory_match/memory_match_screen.dart';
+import 'package:oscar_games/games/outplay/outplay_match.dart';
+import 'package:oscar_games/games/outplay/outplay_screen.dart';
 import 'package:oscar_games/games/reaction/reaction_screen.dart';
 import 'package:oscar_games/games/snake/snake_screen.dart';
 import 'package:oscar_games/games/target_shooter/models/game_world.dart';
@@ -40,6 +42,8 @@ final _screens = <String, Widget Function()>{
   'flight': () => const FlightScreen(destination: _paris),
   'cartoon_flight': () => const CartoonFlightScreen(destination: _paris),
   'attendant': () => const AttendantScreen(destination: _paris),
+  'outplay': () => const OutplayScreen(),
+  'outplay_match': () => const OutplayMatchScreen(),
   'board_game': () => const BoardGameScreen(),
   'boat_fishing': () => const BoatFishingScreen(),
   'tic_tac_toe': () => const TicTacToeScreen(),

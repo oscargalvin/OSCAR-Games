@@ -15,6 +15,7 @@ import '../games/boat_fishing/boat_fishing_screen.dart';
 // import '../games/world_cup/world_cup_screen.dart';
 import '../games/board_game/board_game_screen.dart';
 import '../games/fly_or_crash/fly_or_crash_screen.dart';
+import '../games/outplay/outplay_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -25,6 +26,19 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final List<GameInfo> games = [
+    GameInfo(
+      id: 'outplay',
+      title: 'Outplay',
+      subtitle: '1v1 arena duels',
+      description:
+          'Duel a bot, first to 5 rounds. Start with an assault rifle and '
+          'your fists, then unlock guns, a knife, a scythe and a second gun.',
+      icon: Icons.gps_fixed_rounded,
+      color: AppTheme.danger,
+      secondaryColor: AppTheme.warning,
+      screenBuilder: () => const OutplayScreen(),
+      difficulty: 'Hard',
+    ),
     GameInfo(
       id: 'fly_or_crash',
       title: 'Fly or Crash',
@@ -141,6 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Hand-picked tile colours so neighbouring games never clash.
   static const Map<String, Color> _tileColors = {
+    'outplay': Color(0xFF4FC3F7), // arena blue
     'fly_or_crash': Color(0xFFFFFFFF), // boarding-pass white
     'board_game': Color(0xFFFFC93C), // sunflower
     'world_cup': Color(0xFF3DDC84), // pitch green
@@ -173,6 +188,9 @@ class _HomeScreenState extends State<HomeScreen> {
       case 'boat_fishing':
         final c = save.fishCoins;
         return c > 0 ? c : null;
+      case 'outplay':
+        final w = save.getHighScore('outplay');
+        return w > 0 ? w : null;
       case 'fly_or_crash':
         final l = save.getHighScore('fly_or_crash');
         return l > 0 ? l : null;
