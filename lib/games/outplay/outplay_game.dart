@@ -12,7 +12,7 @@ import 'outplay_data.dart';
 import 'outplay_maps.dart';
 import 'outplay_net.dart';
 
-enum OutplayMode { lobby, duel, freeForAll, online }
+enum OutplayMode { lobby, duel, freeForAll, online, teams }
 
 const double _personRadius = 0.25;
 const double _walkSpeed = 3.0;
@@ -63,6 +63,7 @@ class _Person {
   double ghostT = 0; // a ghost just got them
   int kills = 0;
   int deaths = 0;
+  int team = -1; // 0 or 1 in a team game, -1 when it's everyone for themselves
 
   // Online: someone playing on another phone.
   bool remote = false;
@@ -176,6 +177,9 @@ class OutplayGameScreen extends StatefulWidget {
   final String mapId;
   final int bots;
 
+  /// Players per team in a team game against AI (2 = 2v2...).
+  final int teamSize;
+
   /// The online room, when playing real people.
   final OutplayRoom? room;
 
@@ -188,6 +192,7 @@ class OutplayGameScreen extends StatefulWidget {
     this.mode = OutplayMode.lobby,
     this.mapId = 'warehouse',
     this.bots = 1,
+    this.teamSize = 2,
     this.room,
     this.makeLink = createLink,
     this.makeDirectory = createDirectory,
@@ -252,10 +257,24 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   bool get _lobby => widget.mode == OutplayMode.lobby;
   bool get _online => widget.mode == OutplayMode.online;
   // Online games use the free-for-all rules.
-  bool get _ffa => widget.mode == OutplayMode.freeForAll || _online;
+  bool get _ffa =>
+      widget.mode == OutplayMode.freeForAll ||
+      _online ||
+      widget.mode == OutplayMode.teams;
   OutplayRoom get _room => widget.room!;
-  bool get _duelOnline => _online && _room.kind == 'duel';
-  int get _killsToWin => _duelOnline ? 5 : _ffaKillsToWin;
+  bool get _onlineTeams => _online && _room.isTeams;
+  int get _teamSize => _onlineTeams
+      ? _room.teamSize
+      : (widget.mode == OutplayMode.teams ? widget.teamSize : 0);
+  bool get _teamGame => _teamSize > 0;
+  int get _killsToWin => _teamGame ? 5 * _teamSize : _ffaKillsToWin;
+  String get _teamLabel => '${_teamSize}v$_teamSize';
+
+  bool _allies(_Person a, _Person b) =>
+      !identical(a, b) && a.team >= 0 && a.team == b.team;
+
+  int _teamScore(int team) =>
+      _people.where((p) => p.team == team).fold(0, (sum, p) => sum + p.kills);
   double _sendT = 0;
   bool _hostLeft = false;
   bool _closedEarly = false;
@@ -268,6 +287,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   OutplayDirectory? _lister; // puts your room on the Join list
   double _listT = 0;
   bool _netBusy = false;
+  int _qpStep = 0; // Quick Play: 0 size, 1 AI or human, 2 map
+  int _qpSize = 1;
+  bool _qpHuman = false;
   String? _netError;
 
   @override
@@ -291,10 +313,15 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       angle: -pi / 2,
     );
     _people.add(_you);
+    if (_online) _you.team = _room.isTeams ? _room.myTeam : -1;
+    if (widget.mode == OutplayMode.teams) _you.team = 0;
     if (!_lobby && !_online) {
       final tier = _save.wins.clamp(0, 12);
       final names = [..._botNames]..shuffle(_rnd);
-      for (var i = 0; i < widget.bots; i++) {
+      final botCount = widget.mode == OutplayMode.teams
+          ? widget.teamSize * 2 - 1
+          : widget.bots;
+      for (var i = 0; i < botCount; i++) {
         final gun = kGuns[_rnd.nextInt(min(kGuns.length, 3 + tier))];
         final level = 1 + (tier ~/ 3).clamp(0, kMaxLevel - 1);
         final bot = _Person(
@@ -309,6 +336,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           pos: spawns[(i + 1) % spawns.length],
           angle: 0,
         );
+        // In a team game the first bots are on your team.
+        if (widget.mode == OutplayMode.teams) {
+          bot.team = i < widget.teamSize - 1 ? 0 : 1;
+        }
         bot.aimError = (0.4 - tier * 0.012).clamp(0.25, 0.4);
         bot.turnRate = 2.4 + tier * 0.15;
         _people.add(bot);
@@ -353,16 +384,19 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       // Everyone else places themselves on their own phone. In a 1v1 the
       // room maker takes one end and the other player the other end, so
       // you start face to face.
-      if (_duelOnline) {
-        final (a, b) = _duelSpawns();
-        final mine = _room.isHost ? a : b, theirs = _room.isHost ? b : a;
-        _you.respawn(mine, (theirs - mine).direction);
+      if (_onlineTeams) {
+        _placeOnTeam(_you, _rnd.nextInt(_teamSize));
       } else {
         _you.respawn(spawns.first, _faceCentre(spawns.first));
       }
       for (final p in _people) {
         p.kills = 0;
         p.deaths = 0;
+      }
+    } else if (_teamGame) {
+      final slot = [0, 0];
+      for (final p in _people) {
+        _placeOnTeam(p, slot[p.team]++);
       }
     } else if (!_ffa) {
       // Start at opposite ends, looking straight at each other.
@@ -398,10 +432,32 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
 
   double _faceCentre(Offset p) => (_map.centre - p).direction;
 
+  /// Puts someone at their team's end of the map, facing the other team.
+  /// Team 0 always gets the same end on every phone.
+  void _placeOnTeam(_Person p, int slot) {
+    final (a, b) = _duelSpawns();
+    final home = p.team == 1 ? b : a, away = p.team == 1 ? a : b;
+    final facing = (away - home).direction;
+    // Teammates stand side by side.
+    const offsets = [0.0, 0.9, -0.9, 1.8, -1.8];
+    var at = home;
+    for (var k = 0; k < offsets.length; k++) {
+      final o = offsets[(slot + k) % offsets.length];
+      final spot = home + Offset.fromDirection(facing + pi / 2, o);
+      if (!_blocked(spot.dx, spot.dy)) {
+        at = spot;
+        break;
+      }
+    }
+    p.respawn(at, facing);
+  }
+
   /// Two start spots that can see each other, a good fighting distance
   /// apart. Every phone works out the same pair, so online 1v1 players
   /// land in their own spots, face to face.
   (Offset, Offset) _duelSpawns() {
+    final corners = _map.cornerSpots;
+    if (corners != null && corners.length == 2) return (corners[0], corners[1]);
     final all = _map.spawnPoints();
     var best = (all.first, all.last);
     var bestScore = double.infinity;
@@ -449,7 +505,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
 
     switch (_phase) {
       case _Phase.waiting:
-        if (_duelOnline && _room.isHost && _people.length >= 2) {
+        if (_onlineTeams && _room.isHost && _people.length >= _teamSize * 2) {
           _hostStart();
           break;
         }
@@ -661,7 +717,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       _Person? best;
       var bestF = reach;
       for (final o in _people) {
-        if (identical(o, p) || !o.alive || (_lobby)) continue;
+        if (identical(o, p) || !o.alive || _lobby || _allies(o, p)) continue;
         final d = o.pos - p.pos;
         final f = d.dx * dir.dx + d.dy * dir.dy;
         if (f <= 0 || f >= bestF) continue;
@@ -685,7 +741,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     p.swingT = min(0.22, m.cooldown * 0.9);
     if (p.isYou) SoundService.instance.play(GameSound.tap);
     for (final o in _people) {
-      if (identical(o, p) || !o.alive) continue;
+      if (identical(o, p) || !o.alive || _allies(o, p)) continue;
       final d = o.pos - p.pos;
       if (d.distance > m.reach + _personRadius) continue;
       final diff = _angleDiff(p.angle, d.direction).abs();
@@ -707,7 +763,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       b.travelled += step.distance;
       var popped = false;
       for (final o in _people) {
-        if (identical(o, b.owner) || !o.alive) continue;
+        if (identical(o, b.owner) || !o.alive || _allies(o, b.owner)) continue;
         if ((o.pos - b.pos).distance < _personRadius + 0.15) {
           popped = true;
           break;
@@ -732,7 +788,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     _pops.add(_Pop(b.pos, radius, g.shotColor));
     final dmg = g.damage * levelDamageMul(b.owner.lvl(g.id));
     for (final o in _people) {
-      if (identical(o, b.owner) || !o.alive) continue;
+      if (identical(o, b.owner) || !o.alive || _allies(o, b.owner)) continue;
       final d = (o.pos - b.pos).distance;
       if (d < radius + _personRadius) {
         final falloff = g.splash > 0
@@ -819,11 +875,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     for (final p in _people) {
       if (p.alive || p.remote) continue;
       p.respawnT -= dt;
-      if (p.respawnT <= 0 && _duelOnline) {
-        // Back to your own end of the map, facing the other end.
-        final (a, b) = _duelSpawns();
-        final mine = _room.isHost ? a : b, theirs = _room.isHost ? b : a;
-        p.respawn(mine, (theirs - mine).direction);
+      if (p.respawnT <= 0 && _teamGame) {
+        // Back to your team's end of the map, facing the other team.
+        _placeOnTeam(p, _rnd.nextInt(3));
       } else if (p.respawnT <= 0) {
         // Pick the start spot furthest from everyone else.
         Offset best = _map.spawnPoints().first;
@@ -856,6 +910,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }) {
     if (!p.alive || _phase != _Phase.fight || _lobby) return;
     if (p.shieldT > 0 && _ffa) return;
+    if (by != null && _allies(by, p)) return; // no hurting your own team
     if (_online) {
       if (p.remote) {
         // Their own phone takes the damage; we just tell them about it.
@@ -914,9 +969,18 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       }
       _phase = _Phase.roundOver;
       _phaseT = 0;
-    } else if (by != null && by.kills >= _killsToWin) {
-      _finishMatch();
+    } else {
+      _checkScores();
     }
+  }
+
+  /// Ends the game once a player (or a team) has enough KOs.
+  void _checkScores() {
+    if (_phase == _Phase.matchOver || _phase == _Phase.waiting) return;
+    final done = _teamGame
+        ? _teamScore(0) >= _killsToWin || _teamScore(1) >= _killsToWin
+        : _people.any((p) => p.kills >= _killsToWin);
+    if (done) _finishMatch();
   }
 
   void _addFeed(String text) {
@@ -929,7 +993,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     if (_phase == _Phase.matchOver) return;
     _lister?.unannounce();
     _lister = null;
-    if (_ffa) {
+    if (_teamGame) {
+      _youWon = _teamScore(_you.team) > _teamScore(1 - _you.team);
+      _coinsEarned = _youWon ? 100 : 0;
+    } else if (_ffa) {
       final top = _people.map((p) => p.kills).reduce(max);
       _youWon = _you.kills == top && top > 0;
       // Coins only for winning the whole game.
@@ -985,7 +1052,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           mapId: _map.id,
           players: _people.length,
           playing: _phase != _Phase.waiting,
-          kind: _room.kind,
+          teamSize: _room.teamSize,
         ),
       );
     }
@@ -1010,6 +1077,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         'sw': _you.swingT > 0,
         'fl': _you.flashT > 0,
         'k': _you.kills,
+        'tm': _you.team,
         'd': _you.deaths,
       });
     }
@@ -1072,10 +1140,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         if (m['sw'] == true && p.swingT <= 0) p.swingT = 0.2;
         if (m['fl'] == true) p.flashT = 0.06;
         p.kills = (m['k'] as int?) ?? p.kills;
+        p.team = (m['tm'] as int?) ?? p.team;
         p.deaths = (m['d'] as int?) ?? p.deaths;
-        if (_phase == _Phase.fight && p.kills >= _killsToWin) {
-          _finishMatch();
-        }
+        if (_phase == _Phase.fight) _checkScores();
         break;
       case 'hit':
         if (m['to'] != _you.netId) return;
@@ -1102,7 +1169,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               ? '${victim.name} ${(m['c'] as String?) ?? 'fell in the lava'}'
               : '${killer.isYou ? 'You' : killer.name} outplayed ${victim.name}',
         );
-        if (killer != null && killer.kills >= _killsToWin) _finishMatch();
+        _checkScores();
         break;
       case 'ball':
         final owner = _byNetId(m['id']);
@@ -1159,7 +1226,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     _Person? target;
     var bestScore = double.infinity;
     for (final o in _people) {
-      if (identical(o, b) || !o.alive) continue;
+      if (identical(o, b) || !o.alive || _allies(o, b)) continue;
       final d = (o.pos - b.pos).distance;
       final score = d + (_canSee(b.pos, o.pos) ? 0 : 6);
       if (score < bestScore) {
@@ -1383,6 +1450,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         mode: mode,
         mapId: mapId,
         bots: mode == OutplayMode.duel ? 1 : _pickBots,
+        teamSize: _qpSize,
       ),
     );
   }
@@ -1601,7 +1669,13 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       );
     }
     String line;
-    if (_ffa) {
+    if (_teamGame) {
+      final left = max(0, (_ffaTimeLimit - _clock).ceil());
+      line =
+          'Your team ${_teamScore(_you.team)} - ${_teamScore(1 - _you.team)} '
+          'Them  ·  first to $_killsToWin  ·  '
+          '${left ~/ 60}:${(left % 60).toString().padLeft(2, '0')}';
+    } else if (_ffa) {
       final top = _people.map((p) => p.kills).reduce(max);
       final left = max(0, (_ffaTimeLimit - _clock).ceil());
       line =
@@ -1803,7 +1877,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       final left = 3 - (_phaseT / 0.6).floor();
       big = left > 0 ? '$left' : 'FIGHT!';
       small = _ffa
-          ? '${_duelOnline ? 'Online 1v1' : (_online ? 'Online' : 'Free-for-all')} · ${_map.name} · first to $_killsToWin KOs'
+          ? '${_teamGame ? (_online ? 'Online $_teamLabel' : _teamLabel) : (_online ? 'Online' : 'Free-for-all')} · ${_map.name} · first to $_killsToWin KOs'
           : 'Round $_round · ${_map.name}';
     } else {
       big = _lastRoundYours ? 'OUTPLAYED!' : 'You got outplayed';
@@ -1886,6 +1960,16 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                 ),
               ),
               const SizedBox(height: 6),
+              if (_teamGame)
+                Text(
+                  'Your team ${_teamScore(_you.team)} - '
+                  '${_teamScore(1 - _you.team)} Them',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               if (_ffa)
                 for (final p in ranking.take(5))
                   Text(
@@ -1963,11 +2047,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                others > 0
-                    ? 'Players here'
-                    : (_duelOnline
-                          ? 'Looking for someone…'
-                          : 'Waiting for players…'),
+                _onlineTeams
+                    ? 'Finding players… ${others + 1}/${_teamSize * 2}'
+                    : (others > 0 ? 'Players here' : 'Waiting for players…'),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 22,
@@ -1976,14 +2058,20 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               ),
               const SizedBox(height: 4),
               Text(
-                others == 0
-                    ? 'People pressing Join can see you and jump in. '
-                          'Or tell a friend your room code:'
-                    : names.join(', '),
+                _onlineTeams
+                    ? (others == 0
+                          ? 'Quick Play $_teamLabel on ${_map.name}. '
+                                'It starts as soon as everyone is here.'
+                          : names.join(', '))
+                    : (others == 0
+                          ? 'People pressing Join can see you and jump in. '
+                                'Or tell a friend your room code:'
+                          : names.join(', ')),
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white),
               ),
-              if (others == 0)
+              // Room codes are only for Find Players rooms.
+              if (others == 0 && !_onlineTeams)
                 Text(
                   _room.code,
                   style: const TextStyle(
@@ -1994,7 +2082,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                   ),
                 ),
               const SizedBox(height: 10),
-              if (_duelOnline)
+              if (_onlineTeams)
                 const SizedBox.shrink()
               else if (_room.isHost)
                 ElevatedButton(
@@ -2027,6 +2115,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     _stopBrowsing();
     setState(() {
       _panel = null;
+      _qpStep = 0;
       _netError = null;
     });
   }
@@ -2069,9 +2158,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     setState(() {});
   }
 
-  /// Quick Play against a human: join someone looking for a 1v1, or make
-  /// a 1v1 room and wait for someone to find you.
-  Future<void> _quickMatch() async {
+  /// Quick Play against humans: join a room of people waiting for the same
+  /// size of game on the same map, or make one and wait for people to come.
+  Future<void> _quickMatch(int size) async {
     if (_save.name.trim().isEmpty) {
       await _editPlayer();
       if (_save.name.trim().isEmpty || !mounted) return;
@@ -2093,24 +2182,27 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     dir.stopBrowse();
     if (!mounted) return;
     setState(() => _netBusy = false);
-    final open = rooms
-        .where(
-          (r) =>
-              r.kind == 'duel' &&
-              !r.playing &&
-              r.players < 2 &&
-              // Picked a map? Only fight people who picked the same one.
-              (_pickMap == 'random' || r.mapId == _pickMap),
-        )
-        .toList();
-    if (open.isNotEmpty) {
-      await _goOnline(joinCode: open[_rnd.nextInt(open.length)].code);
+    final open =
+        rooms
+            .where(
+              (r) =>
+                  r.teamSize == size &&
+                  !r.playing &&
+                  r.players < size * 2 &&
+                  // Picked a map? Only fight people who picked the same one.
+                  (_pickMap == 'random' || r.mapId == _pickMap),
+            )
+            .toList()
+          // Fill up the fullest room first so games start sooner.
+          ..sort((a, b) => b.players.compareTo(a.players));
+    for (final r in open.take(2)) {
+      await _goOnline(joinCode: r.code);
       if (!mounted || _netError == null) return;
     }
-    await _goOnline(kind: 'duel');
+    await _goOnline(teamSize: size);
   }
 
-  Future<void> _goOnline({String? joinCode, String kind = 'ffa'}) async {
+  Future<void> _goOnline({String? joinCode, int teamSize = 0}) async {
     final make = widget.makeLink;
     if (make() == null) {
       setState(() => _netError = 'Online play only works on the website.');
@@ -2127,7 +2219,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     OutplayRoom room;
     try {
       room = joinCode == null
-          ? await OutplayRoom.host(() => make()!, mapId, kind: kind)
+          ? await OutplayRoom.host(() => make()!, mapId, teamSize: teamSize)
           : await OutplayRoom.join(() => make()!, joinCode);
     } catch (e) {
       if (mounted) {
@@ -2471,7 +2563,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                   child: Text(
                     r.playing
                         ? 'PLAYING'
-                        : (r.kind == 'duel' ? '1V1' : 'WAITING'),
+                        : (r.teamSize > 0
+                              ? '${r.teamSize}V${r.teamSize}'
+                              : 'WAITING'),
                     style: const TextStyle(
                       color: kOutplayInk,
                       fontSize: 12,
@@ -2490,139 +2584,228 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   Widget _buildPadPanel() {
     final pad = _panel!;
     if (pad == 'O') return _buildOnlinePanel();
-    final quick = pad == 'Q';
-    final color = quick ? const Color(0xFF66BB6A) : const Color(0xFFFFA726);
+    if (pad == 'Q') return _buildQuickPanel();
+    const color = Color(0xFFFFA726);
     return _panelShell(color, [
-      quick
-          ? _panelTitle(
-              'Quick Play',
-              '1v1! Fight an AI, or a real person online.',
-              color,
-            )
-          : _panelTitle(
-              'Free-for-all',
-              'Everyone against everyone. First to $_ffaKillsToWin KOs wins.',
-              color,
-            ),
+      _panelTitle(
+        'Free-for-all',
+        'Everyone against everyone. First to $_ffaKillsToWin KOs wins.',
+        color,
+      ),
       _mapPicker(),
-      if (!quick) ...[
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Players',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            IconButton(
-              onPressed: _pickBots > 1
-                  ? () => setState(() => _pickBots--)
-                  : null,
-              icon: const Icon(
-                Icons.remove_circle_outline_rounded,
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Players',
+              style: TextStyle(
                 color: Colors.white,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            Text(
-              '${_pickBots + 1}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-              ),
+          ),
+          IconButton(
+            onPressed: _pickBots > 1 ? () => setState(() => _pickBots--) : null,
+            icon: const Icon(
+              Icons.remove_circle_outline_rounded,
+              color: Colors.white,
             ),
-            IconButton(
-              onPressed: _pickBots < 19
-                  ? () => setState(() => _pickBots++)
-                  : null,
-              icon: const Icon(
-                Icons.add_circle_outline_rounded,
-                color: Colors.white,
-              ),
+          ),
+          Text(
+            '${_pickBots + 1}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
             ),
-          ],
-        ),
-      ],
+          ),
+          IconButton(
+            onPressed: _pickBots < 19
+                ? () => setState(() => _pickBots++)
+                : null,
+            icon: const Icon(
+              Icons.add_circle_outline_rounded,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
       const SizedBox(height: 14),
-      if (quick) ...[
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _netBusy ? null : () => _launch(OutplayMode.duel),
-                icon: const Icon(Icons.smart_toy_rounded),
-                label: const Text('AI'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: color,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _netBusy ? null : _quickMatch,
-                icon: const Icon(Icons.person_rounded),
-                label: const Text('HUMAN'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF42A5F5),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-              ),
-            ),
-          ],
-        ),
-        if (_netBusy)
-          const Padding(
-            padding: EdgeInsets.only(top: 10),
-            child: Text(
-              'Looking for someone to fight…',
-              style: TextStyle(color: Colors.white70),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _closePanel,
+              child: const Text('Not now'),
             ),
           ),
-        if (_netError != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              _netError!,
-              style: const TextStyle(color: Color(0xFFFF8A80)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ElevatedButton(
+              onPressed: () => _launch(OutplayMode.freeForAll),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: color,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('PLAY'),
             ),
           ),
-        const SizedBox(height: 10),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton(
-            onPressed: _netBusy ? null : _closePanel,
-            child: const Text('Not now'),
-          ),
-        ),
-      ] else
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: _closePanel,
-                child: const Text('Not now'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton(
-                onPressed: () => _launch(OutplayMode.freeForAll),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: color,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                child: const Text('PLAY'),
-              ),
-            ),
-          ],
-        ),
+        ],
+      ),
     ]);
+  }
+
+  /// Quick Play, one question at a time: how big, AI or human, which map.
+  Widget _buildQuickPanel() {
+    const color = Color(0xFF66BB6A);
+    Widget big(String label, VoidCallback onTap, {IconData? icon, Color? bg}) =>
+        ElevatedButton(
+          onPressed: _netBusy ? null : onTap,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: bg ?? color,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (icon != null) ...[Icon(icon), const SizedBox(width: 8)],
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        );
+    Widget back(VoidCallback onTap) => SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        onPressed: _netBusy ? null : onTap,
+        child: const Text('Back'),
+      ),
+    );
+    final size = '${_qpSize}v$_qpSize';
+
+    switch (_qpStep) {
+      case 0:
+        return _panelShell(color, [
+          _panelTitle('Quick Play', 'What do you want to play?', color),
+          const SizedBox(height: 14),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 2.6,
+            children: [
+              for (var n = 1; n <= 4; n++)
+                big(
+                  '${n}v$n',
+                  () => setState(() {
+                    _qpSize = n;
+                    _qpStep = 1;
+                  }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _closePanel,
+              child: const Text('Not now'),
+            ),
+          ),
+        ]);
+      case 1:
+        return _panelShell(color, [
+          _panelTitle('Quick Play $size', 'AI or human?', color),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: big(
+                  'AI',
+                  () => setState(() {
+                    _qpHuman = false;
+                    _qpStep = 2;
+                  }),
+                  icon: Icons.smart_toy_rounded,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: big(
+                  'HUMAN',
+                  () => setState(() {
+                    _qpHuman = true;
+                    _qpStep = 2;
+                  }),
+                  icon: Icons.person_rounded,
+                  bg: const Color(0xFF42A5F5),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          back(() => setState(() => _qpStep = 0)),
+        ]);
+      default:
+        return _panelShell(color, [
+          _panelTitle(
+            'Quick Play $size · ${_qpHuman ? 'Human' : 'AI'}',
+            _qpHuman
+                ? 'Pick a map. You will play people who picked the same map.'
+                : 'Pick a map.',
+            color,
+          ),
+          _mapPicker(),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: big('PLAY', _startQuickPlay, icon: Icons.play_arrow_rounded),
+          ),
+          if (_netBusy)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                _qpSize == 1
+                    ? 'Looking for someone to fight…'
+                    : 'Looking for players…',
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+          if (_netError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                _netError!,
+                style: const TextStyle(color: Color(0xFFFF8A80)),
+              ),
+            ),
+          const SizedBox(height: 10),
+          back(
+            () => setState(() {
+              _qpStep = 1;
+              _netError = null;
+            }),
+          ),
+        ]);
+    }
+  }
+
+  void _startQuickPlay() {
+    if (_qpHuman) {
+      _quickMatch(_qpSize);
+    } else if (_qpSize == 1) {
+      _launch(OutplayMode.duel);
+    } else {
+      _launch(OutplayMode.teams);
+    }
   }
 }
 
@@ -2665,6 +2848,7 @@ class _ViewPainter extends CustomPainter {
     _paintFloor(canvas);
     _paintWalls(canvas);
     _paintStrap(canvas);
+    _paintRopes(canvas);
     _paintSprites(canvas);
     _paintTracers(canvas);
     _paintWeapon(canvas);
@@ -2693,6 +2877,22 @@ class _ViewPainter extends CustomPainter {
           Offset(x, _horizon * (0.25 + 0.1 * (i % 3))),
           _w * 0.08,
           Paint()..color = const Color(0x33212121),
+        );
+      }
+    } else if (map.id == 'arena') {
+      // Big lights hanging over the ring.
+      for (var i = 0; i < 5; i++) {
+        final x =
+            ((i * 0.21 - s._you.angle / (2 * pi)) % 1) * _w * 1.4 - _w * 0.2;
+        canvas.drawCircle(
+          Offset(x, _horizon * 0.35),
+          18,
+          Paint()..color = const Color(0x66FFF9C4),
+        );
+        canvas.drawCircle(
+          Offset(x, _horizon * 0.35),
+          7,
+          Paint()..color = const Color(0xFFFFFDE7),
         );
       }
     } else if (map.hazard == MapHazard.cars || map.id == 'courtyard') {
@@ -2729,6 +2929,16 @@ class _ViewPainter extends CustomPainter {
         return Colors.white;
       }
       return const Color(0xFF424242);
+    }
+    final ring = _ring;
+    if (ring != null && ring.inflate(0.2).contains(Offset(x, y))) {
+      // The ring canvas, with a white edge.
+      final inner = ring.deflate(0.25);
+      return inner.contains(Offset(x, y))
+          ? ((cx + cy).isEven
+                ? const Color(0xFF1565C0)
+                : const Color(0xFF1976D2))
+          : Colors.white;
     }
     if (map.hazard == MapHazard.bouncy) {
       // The bumpy croc footbed.
@@ -2780,6 +2990,8 @@ class _ViewPainter extends CustomPainter {
     }
   }
 
+  late final Rect? _ring = map.ring?.inflate(0.0);
+
   Color _wallColor(String c) {
     switch (c) {
       case 'R':
@@ -2798,6 +3010,14 @@ class _ViewPainter extends CustomPainter {
         return const Color(0xFF7CB342);
       case 'J':
         return const Color(0xFFFFCA28);
+      case 'A':
+        return const Color(0xFF263238);
+      case 'P':
+        return const Color(0xFFE53935);
+      case 'U':
+        return const Color(0xFF1E88E5);
+      case 'N':
+        return const Color(0xFFECEFF1);
       default:
         return const Color(0xFF8A93A8);
     }
@@ -2883,6 +3103,46 @@ class _ViewPainter extends CustomPainter {
           edge,
         );
       }
+      if (hit.cell == 'A') {
+        // Rows of cheering fans in the stands.
+        const shirts = [
+          Color(0xFFEF5350),
+          Color(0xFFFFCA28),
+          Color(0xFF42A5F5),
+          Color(0xFF66BB6A),
+          Color(0xFFAB47BC),
+          Color(0xFFFFFFFF),
+        ];
+        final col = (hit.wallX * 5).floor();
+        final fx = (hit.wallX * 5) % 1;
+        if (fx > 0.15 && fx < 0.85) {
+          for (var r = 0; r < 4; r++) {
+            final seed = (col * 7 + r * 13 + hit.cell.hashCode) % shirts.length;
+            final bounce = sin(s._clock * 6 + col + r * 2) > 0.6 ? 0.03 : 0.0;
+            final y0 = top + wallH * (0.12 + r * 0.22 - bounce);
+            edge.color = Color.lerp(
+              shirts[seed],
+              map.skyBottom,
+              (perp / 16).clamp(0.0, 0.6),
+            )!;
+            canvas.drawRect(
+              Rect.fromLTWH(x, y0 + wallH * 0.06, _colW + 0.6, wallH * 0.09),
+              edge,
+            );
+            if (fx > 0.3 && fx < 0.7) {
+              edge.color = Color.lerp(
+                const Color(0xFFFFCC80),
+                map.skyBottom,
+                (perp / 16).clamp(0.0, 0.6),
+              )!;
+              canvas.drawRect(
+                Rect.fromLTWH(x, y0, _colW + 0.6, wallH * 0.06),
+                edge,
+              );
+            }
+          }
+        }
+      }
       // Brick and crate details.
       if (hit.cell == 'R' || hit.cell == 'C') {
         edge.color = Color.lerp(color, Colors.black, 0.25)!;
@@ -2893,6 +3153,40 @@ class _ViewPainter extends CustomPainter {
             Rect.fromLTWH(x, yy, _colW + 0.6, max(1, (bottom - top) / 60)),
             edge,
           );
+        }
+      }
+    }
+  }
+
+  /// The boxing ring's ropes, hidden where a post or wall is in front.
+  void _paintRopes(Canvas canvas) {
+    final ring = _ring;
+    if (ring == null) return;
+    final corners = [
+      ring.topLeft,
+      ring.topRight,
+      ring.bottomRight,
+      ring.bottomLeft,
+    ];
+    const colours = [Color(0xFFE53935), Colors.white, Color(0xFF1E88E5)];
+    final paint = Paint()..strokeCap = StrokeCap.round;
+    for (var side = 0; side < 4; side++) {
+      final a = corners[side], b = corners[(side + 1) % 4];
+      for (var r = 0; r < 3; r++) {
+        final z = 0.35 + r * 0.22;
+        paint.color = colours[r];
+        const steps = 20;
+        for (var i = 0; i < steps; i++) {
+          final p0 = Offset.lerp(a, b, i / steps)!;
+          final p1 = Offset.lerp(a, b, (i + 1) / steps)!;
+          final t = _toCamera((p0 + p1) / 2);
+          if (t.dy < 0.2) continue;
+          final s0 = _project(p0, z), s1 = _project(p1, z);
+          if (s0 == null || s1 == null) continue;
+          final col = (((s0.dx + s1.dx) / 2) / _colW).floor();
+          if (col >= 0 && col < _zbuf.length && _zbuf[col] < t.dy) continue;
+          paint.strokeWidth = (_proj / t.dy * 0.03).clamp(1.0, 4.0);
+          canvas.drawLine(s0, s1, paint);
         }
       }
     }
@@ -3128,7 +3422,8 @@ class _ViewPainter extends CustomPainter {
       p.name,
       tag - Offset(0, max(9, h * 0.07)),
       (h * 0.11).clamp(9.0, 16.0),
-      Colors.white,
+      // Teammates' names are blue.
+      s._allies(p, s._you) ? const Color(0xFF80D8FF) : Colors.white,
     );
     final barW = max(30.0, w * 0.9);
     final bar = Rect.fromCenter(
@@ -3139,7 +3434,10 @@ class _ViewPainter extends CustomPainter {
     c.drawRect(bar, Paint()..color = Colors.black54);
     c.drawRect(
       Rect.fromLTWH(bar.left, bar.top, bar.width * p.hp / 100, bar.height),
-      Paint()..color = const Color(0xFFEF5350),
+      Paint()
+        ..color = s._allies(p, s._you)
+            ? const Color(0xFF40C4FF)
+            : const Color(0xFFEF5350),
     );
   }
 
@@ -3501,7 +3799,10 @@ class _ViewPainter extends CustomPainter {
       canvas.drawCircle(
         origin + p.pos * cell,
         max(2, cell * 0.45),
-        Paint()..color = const Color(0xFFFF5252),
+        Paint()
+          ..color = s._allies(p, s._you)
+              ? const Color(0xFF40C4FF)
+              : const Color(0xFFFF5252),
       );
     }
     final me = origin + s._you.pos * cell;

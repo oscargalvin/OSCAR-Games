@@ -46,6 +46,11 @@ final _screens = <String, Widget Function()>{
   'outplay': () => const OutplayScreen(),
   'outplay_zone': () => const OutplayGameScreen(),
   'outplay_player': () => const OutplayAvatarScreen(),
+  'outplay_team': () => const OutplayGameScreen(
+    mode: OutplayMode.teams,
+    teamSize: 4,
+    mapId: 'arena',
+  ),
   'outplay_mansion': () => const OutplayGameScreen(
     mode: OutplayMode.freeForAll,
     mapId: 'mansion',

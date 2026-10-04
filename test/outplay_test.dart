@@ -74,7 +74,14 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  for (final map in ['volcano', 'runway', 'courtyard', 'mansion', 'crocs']) {
+  for (final map in [
+    'volcano',
+    'runway',
+    'courtyard',
+    'mansion',
+    'crocs',
+    'arena',
+  ]) {
     testWidgets('the bot wins rounds on $map', (tester) async {
       await _phone(tester);
       await tester.pumpWidget(
@@ -176,14 +183,54 @@ void main() {
 
   test('a 1v1 room lets in one person and turns the next away', () async {
     final hub = LoopbackHub();
-    final host = await OutplayRoom.host(hub.makeLink, 'crocs', kind: 'duel');
+    final host = await OutplayRoom.host(hub.makeLink, 'crocs', teamSize: 1);
     final first = await OutplayRoom.join(hub.makeLink, host.code);
-    expect(first.kind, 'duel');
+    expect(first.teamSize, 1);
+    expect(first.myTeam, 1);
     expect(first.mapId, 'crocs');
     expect(
       () => OutplayRoom.join(hub.makeLink, host.code),
       throwsA(contains('full')),
     );
+  });
+
+  test('a 2v2 room shares people out between the teams', () async {
+    final hub = LoopbackHub();
+    final host = await OutplayRoom.host(hub.makeLink, 'arena', teamSize: 2);
+    final teams = [host.myTeam];
+    for (var i = 0; i < 3; i++) {
+      teams.add((await OutplayRoom.join(hub.makeLink, host.code)).myTeam);
+    }
+    expect(teams.where((t) => t == 0).length, 2);
+    expect(teams.where((t) => t == 1).length, 2);
+    expect(
+      () => OutplayRoom.join(hub.makeLink, host.code),
+      throwsA(contains('full')),
+    );
+  });
+
+  testWidgets('a 3v3 against AI plays to the end', (tester) async {
+    await _phone(tester);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: OutplayGameScreen(
+          mode: OutplayMode.teams,
+          teamSize: 3,
+          mapId: 'arena',
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.textContaining('Your team 0 - 0 Them'), findsOneWidget);
+    var finished = false;
+    for (var i = 0; i < 200 * 20 && !finished; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      finished =
+          find.text('VICTORY').evaluate().isNotEmpty ||
+          find.text('DEFEAT').evaluate().isNotEmpty;
+    }
+    expect(finished, isTrue);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('quick play against a human waits in a 1v1 room', (tester) async {
@@ -204,17 +251,27 @@ void main() {
     final stick = await tester.startGesture(const Offset(80, 560));
     await stick.moveBy(const Offset(-10, -20));
     await stick.moveBy(const Offset(-14.6, -29.2));
-    for (var i = 0; i < 120 && find.text('HUMAN').evaluate().isEmpty; i++) {
+    for (var i = 0; i < 120 && find.text('1v1').evaluate().isEmpty; i++) {
       await tester.pump(const Duration(milliseconds: 33));
     }
     await stick.up();
+    // Quick Play asks: how big, AI or human, which map.
+    await tester.tap(find.text('1v1'));
+    await tester.pump();
     await tester.tap(find.text('HUMAN'));
+    await tester.pump();
+    await tester.tap(find.text('Crazy Crocs'));
+    await tester.pump();
+    await tester.tap(find.text('PLAY'));
     for (var i = 0; i < 100; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
     // Nobody else was looking, so we wait for someone in our own 1v1 room.
-    expect(find.text('Looking for someone…'), findsOneWidget);
-    expect(listed.single.kind, 'duel');
+    expect(find.text('Finding players… 1/2'), findsOneWidget);
+    // No room codes in Quick Play.
+    expect(find.textContaining('room code'), findsNothing);
+    expect(listed.single.teamSize, 1);
+    expect(listed.single.mapId, 'crocs');
     expect(listed.single.name, 'Oscar');
 
     // Someone else presses Human and lands in our room: it starts.
@@ -226,6 +283,7 @@ void main() {
         'n': 'Friend',
         'x': 6.5,
         'y': 3.5,
+        'tm': 1,
       });
       await tester.pump(const Duration(milliseconds: 50));
     }

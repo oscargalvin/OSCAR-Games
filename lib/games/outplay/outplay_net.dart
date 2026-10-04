@@ -44,11 +44,12 @@ class RoomInfo {
   final int players;
   final bool playing;
 
-  /// 'duel' for a 1v1 from Quick Play, 'ffa' for everyone against everyone.
-  final String kind;
+  /// Players per team for a Quick Play team game (1 = 1v1, 2 = 2v2...),
+  /// or 0 for everyone against everyone.
+  final int teamSize;
 
   const RoomInfo({
-    this.kind = 'ffa',
+    this.teamSize = 0,
     required this.code,
     required this.name,
     required this.avatar,
@@ -64,7 +65,7 @@ class RoomInfo {
     'map': mapId,
     'players': players,
     'playing': playing,
-    'kind': kind,
+    'size': teamSize,
   };
 
   static RoomInfo? fromJson(Object? raw) {
@@ -81,7 +82,7 @@ class RoomInfo {
       mapId: (raw['map'] as String?) ?? '',
       players: (raw['players'] as num?)?.toInt() ?? 1,
       playing: raw['playing'] == true,
-      kind: raw['kind'] == 'duel' ? 'duel' : 'ffa',
+      teamSize: ((raw['size'] as num?)?.toInt() ?? 0).clamp(0, 4),
     );
   }
 
@@ -131,10 +132,15 @@ class OutplayRoom {
   String mapId;
   bool started = false;
 
-  /// 'duel' rooms are 1v1 and start by themselves; 'ffa' rooms wait for Start.
-  String kind = 'ffa';
-  int _guests = 0;
-  bool get full => kind == 'duel' && _guests >= 1;
+  /// Quick Play team rooms (1v1 up to 4v4) start by themselves once full;
+  /// 0 means everyone against everyone, started by the room maker.
+  int teamSize = 0;
+  bool get isTeams => teamSize > 0;
+
+  /// Your team (0 or 1) in a team room. The room maker is always team 0.
+  int myTeam = 0;
+  final Map<String, int> _guestTeams = {};
+  bool get full => isTeams && _guestTeams.length >= teamSize * 2 - 1;
 
   /// For someone joining late: how far into the game it already is.
   double joinClock = 0;
@@ -149,12 +155,13 @@ class OutplayRoom {
   static Future<OutplayRoom> host(
     OutplayLink Function() makeLink,
     String mapId, {
-    String kind = 'ffa',
+    int teamSize = 0,
     Duration timeout = const Duration(seconds: 15),
   }) async {
     for (var tries = 0; ; tries++) {
       final link = makeLink();
-      final room = OutplayRoom._(link, true, newRoomCode(), mapId)..kind = kind;
+      final room = OutplayRoom._(link, true, newRoomCode(), mapId)
+        ..teamSize = teamSize;
       final done = Completer<OutplayRoom>();
       link.host(
         room.code,
@@ -169,18 +176,23 @@ class OutplayRoom {
               room.send({'t': 'full', 'to': id});
               return;
             }
-            room._guests++;
+            // Put them on whichever team has fewer players.
+            final onRed = room._guestTeams.values.where((t) => t == 1).length;
+            final onBlue = 1 + room._guestTeams.length - onRed;
+            final team = onRed < onBlue ? 1 : 0;
+            room._guestTeams[id] = team;
             room.send({
               't': 'welcome',
               'to': id,
               'map': room.mapId,
-              'kind': room.kind,
+              'size': room.teamSize,
+              'team': team,
               'started': room.started,
               'clock': room._sinceStart.elapsedMilliseconds / 1000,
             });
           },
           left: (id) {
-            room._guests = max(0, room._guests - 1);
+            room._guestTeams.remove(id);
             room._receive(jsonEncode({'t': 'bye', 'id': id}));
           },
           error: (e) {
@@ -223,7 +235,8 @@ class OutplayRoom {
               (m['to'] == null || m['to'] == room.myId) &&
               !done.isCompleted) {
             room.mapId = m['map'] as String;
-            room.kind = m['kind'] == 'duel' ? 'duel' : 'ffa';
+            room.teamSize = ((m['size'] as num?)?.toInt() ?? 0).clamp(0, 4);
+            room.myTeam = (m['team'] as num?)?.toInt() ?? 0;
             room.started = m['started'] == true;
             room.joinClock = (m['clock'] as num?)?.toDouble() ?? 0;
             done.complete(room);

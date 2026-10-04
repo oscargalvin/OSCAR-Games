@@ -6,7 +6,8 @@ enum MapHazard { none, lava, cars, ghosts, bouncy }
 
 /// A map drawn as rows of characters:
 ///   `#` stone wall, `R` red brick, `B` blue panel, `C` crate, `K` dark rock,
-///   `W` spooky wallpaper, `D` bookshelf, `X` croc rubber, `J` croc charm
+///   `W` spooky wallpaper, `D` bookshelf, `X` croc rubber, `J` croc charm,
+///   `A` arena crowd, `P` red corner post, `U` blue corner post, `N` white post
 ///   `.` floor, `S` a place people can start
 ///   `Q` `F` `O` (Duel Zone only) the quick play, free-for-all and online pads
 class OutplayMap {
@@ -26,9 +27,28 @@ class OutplayMap {
   /// Where the croc's heel strap crosses the shoe, if it has one.
   final double? strapX;
 
+  /// Where the two sides start in a 1v1 or team game, if the map says.
+  final List<Offset>? cornerSpots;
+
+  /// The boxing ring's corners (top-left and bottom-right posts), if any.
+  Rect? get ring {
+    Offset? a, b;
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        final c = rows[y][x];
+        if (c != 'P' && c != 'U' && c != 'N') continue;
+        final p = Offset(x + 0.5, y + 0.5);
+        a = a == null ? p : Offset(min(a.dx, p.dx), min(a.dy, p.dy));
+        b = b == null ? p : Offset(max(b.dx, p.dx), max(b.dy, p.dy));
+      }
+    }
+    return a == null ? null : Rect.fromPoints(a, b!);
+  }
+
   const OutplayMap({
     this.wallHeight = 1,
     this.strapX,
+    this.cornerSpots,
     required this.id,
     required this.name,
     required this.blurb,
@@ -59,7 +79,11 @@ class OutplayMap {
       c == 'W' ||
       c == 'D' ||
       c == 'X' ||
-      c == 'J';
+      c == 'J' ||
+      c == 'A' ||
+      c == 'P' ||
+      c == 'U' ||
+      c == 'N';
 
   Offset get centre => Offset(width / 2, height / 2);
 
@@ -289,6 +313,41 @@ const List<OutplayMap> kArenaMaps = [
     skyBottom: Color(0xFFB3E5FC),
     floorA: Color(0xFF9CCC65),
     floorB: Color(0xFF97C760),
+  ),
+  OutplayMap(
+    id: 'arena',
+    name: 'Arena',
+    blurb: 'A boxing ring with a cheering crowd. Red corner vs blue corner!',
+    cornerSpots: [Offset(7.6, 7.6), Offset(14.4, 14.4)],
+    wallHeight: 1.6,
+    rows: [
+      'AAAAAAAAAAAAAAAAAAAAAA',
+      'A....................A',
+      'A.........S..........A',
+      'A..S..............S..A',
+      'A....................A',
+      'A....................A',
+      'A.....P........N.....A',
+      'A....................A',
+      'A....................A',
+      'A........S..S........A',
+      'A.S..................A',
+      'A..................S.A',
+      'A........S..S........A',
+      'A....................A',
+      'A....................A',
+      'A.....N........U.....A',
+      'A....................A',
+      'A....................A',
+      'A..S..............S..A',
+      'A..........S.........A',
+      'A....................A',
+      'AAAAAAAAAAAAAAAAAAAAAA',
+    ],
+    skyTop: Color(0xFF05070F),
+    skyBottom: Color(0xFF1C2541),
+    floorA: Color(0xFF2B2D42),
+    floorB: Color(0xFF32344D),
   ),
 ];
 
