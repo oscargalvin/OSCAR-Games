@@ -20,7 +20,15 @@ class OutplayMap {
   final Color floorA;
   final Color floorB;
 
+  /// How tall the walls are (1 is normal; a croc shoe towers over you).
+  final double wallHeight;
+
+  /// Where the croc's heel strap crosses the shoe, if it has one.
+  final double? strapX;
+
   const OutplayMap({
+    this.wallHeight = 1,
+    this.strapX,
     required this.id,
     required this.name,
     required this.blurb,
@@ -253,29 +261,34 @@ const List<OutplayMap> kArenaMaps = [
     id: 'crocs',
     name: 'Crazy Crocs',
     blurb:
-        'Fight inside a giant croc shoe. The squishy floor makes you jump higher!',
+        'You\'re tiny, inside a giant croc shoe! The squishy footbed makes '
+        'you jump higher.',
     hazard: MapHazard.bouncy,
+    wallHeight: 2.4,
+    strapX: 27.5,
     rows: [
-      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-      'XXXXX.......S....XXXXXXXXXXXXXXX',
-      'XXX...S.................SXXXXXXX',
-      'XX......J............J.......XXX',
-      'X..............................X',
-      'X..............................X',
-      'X..S........S..J..S........J.S.X',
-      'X..............................X',
-      'X..............................X',
-      'XX......J............J.......XXX',
-      'XXX...S.................SXXXXXXX',
-      'XXXXX.......S....XXXXXXXXXXXXXXX',
-      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      'XXXXXXX.......XXXXXXXXXXXXXXXXXXXXXX',
+      'XXXXX....................XXXXXXXXXXX',
+      'XXXX..S.......S................XXXXX',
+      'XXX......J.............J....S...XXXX',
+      'XXX..............................XXX',
+      'XX..................S.............XX',
+      'XX................................XX',
+      'XX.S.............J..............S.XX',
+      'XX................................XX',
+      'XX..................S.............XX',
+      'XXX..............................XXX',
+      'XXX......J.............J....S...XXXX',
+      'XXXX..S.......S................XXXXX',
+      'XXXXX....................XXXXXXXXXXX',
+      'XXXXXXX.......XXXXXXXXXXXXXXXXXXXXXX',
+      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
     ],
     skyTop: Color(0xFF1E88E5),
     skyBottom: Color(0xFFB3E5FC),
-    floorA: Color(0xFFAED581),
-    floorB: Color(0xFFA5CF76),
+    floorA: Color(0xFF9CCC65),
+    floorB: Color(0xFF97C760),
   ),
 ];
 

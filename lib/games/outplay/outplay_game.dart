@@ -350,16 +350,26 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     // Duels start at opposite ends; free-for-all spreads everyone out.
     spawns.shuffle(_rnd);
     if (_online) {
-      // Everyone else places themselves on their own phone.
-      _you.respawn(spawns.first, _faceCentre(spawns.first));
+      // Everyone else places themselves on their own phone. In a 1v1 the
+      // room maker takes one end and the other player the other end, so
+      // you start face to face.
+      if (_duelOnline) {
+        final (a, b) = _duelSpawns();
+        final mine = _room.isHost ? a : b, theirs = _room.isHost ? b : a;
+        _you.respawn(mine, (theirs - mine).direction);
+      } else {
+        _you.respawn(spawns.first, _faceCentre(spawns.first));
+      }
       for (final p in _people) {
         p.kills = 0;
         p.deaths = 0;
       }
     } else if (!_ffa) {
-      spawns.sort((a, b) => a.dy.compareTo(b.dy));
-      _you.respawn(spawns.last, _faceCentre(spawns.last));
-      _people[1].respawn(spawns.first, _faceCentre(spawns.first));
+      // Start at opposite ends, looking straight at each other.
+      var (a, b) = _duelSpawns();
+      if (_rnd.nextBool()) (a, b) = (b, a);
+      _you.respawn(a, (b - a).direction);
+      _people[1].respawn(b, (a - b).direction);
     } else {
       for (var i = 0; i < _people.length; i++) {
         var at = spawns[i % spawns.length];
@@ -387,6 +397,36 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }
 
   double _faceCentre(Offset p) => (_map.centre - p).direction;
+
+  /// Two start spots that can see each other, a good fighting distance
+  /// apart. Every phone works out the same pair, so online 1v1 players
+  /// land in their own spots, face to face.
+  (Offset, Offset) _duelSpawns() {
+    final all = _map.spawnPoints();
+    var best = (all.first, all.last);
+    var bestScore = double.infinity;
+    for (var i = 0; i < all.length; i++) {
+      for (var j = i + 1; j < all.length; j++) {
+        final d = (all[i] - all[j]).distance;
+        // A wide clear view, so nothing stands between you.
+        final side = Offset.fromDirection(
+          (all[j] - all[i]).direction + pi / 2,
+          0.4,
+        );
+        final clear = [
+          Offset.zero,
+          side,
+          -side,
+        ].every((o) => _canSee(all[i] + o, all[j] + o));
+        final score = (d - 12).abs() + (clear ? 0 : 100);
+        if (score < bestScore - 1e-6) {
+          bestScore = score;
+          best = (all[i], all[j]);
+        }
+      }
+    }
+    return best;
+  }
 
   // ---- game loop ----------------------------------------------------------
 
@@ -779,7 +819,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     for (final p in _people) {
       if (p.alive || p.remote) continue;
       p.respawnT -= dt;
-      if (p.respawnT <= 0) {
+      if (p.respawnT <= 0 && _duelOnline) {
+        // Back to your own end of the map, facing the other end.
+        final (a, b) = _duelSpawns();
+        final mine = _room.isHost ? a : b, theirs = _room.isHost ? b : a;
+        p.respawn(mine, (theirs - mine).direction);
+      } else if (p.respawnT <= 0) {
         // Pick the start spot furthest from everyone else.
         Offset best = _map.spawnPoints().first;
         var bestScore = -1.0;
@@ -2049,7 +2094,14 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     if (!mounted) return;
     setState(() => _netBusy = false);
     final open = rooms
-        .where((r) => r.kind == 'duel' && !r.playing && r.players < 2)
+        .where(
+          (r) =>
+              r.kind == 'duel' &&
+              !r.playing &&
+              r.players < 2 &&
+              // Picked a map? Only fight people who picked the same one.
+              (_pickMap == 'random' || r.mapId == _pickMap),
+        )
         .toList();
     if (open.isNotEmpty) {
       await _goOnline(joinCode: open[_rnd.nextInt(open.length)].code);
@@ -2612,6 +2664,7 @@ class _ViewPainter extends CustomPainter {
     _paintSky(canvas);
     _paintFloor(canvas);
     _paintWalls(canvas);
+    _paintStrap(canvas);
     _paintSprites(canvas);
     _paintTracers(canvas);
     _paintWeapon(canvas);
@@ -2676,6 +2729,11 @@ class _ViewPainter extends CustomPainter {
         return Colors.white;
       }
       return const Color(0xFF424242);
+    }
+    if (map.hazard == MapHazard.bouncy) {
+      // The bumpy croc footbed.
+      final fx = x - cx - 0.5, fy = y - cy - 0.5;
+      if (fx * fx + fy * fy < 0.03) return const Color(0xFFA9D672);
     }
     return (cx + cy).isEven ? map.floorA : map.floorB;
   }
@@ -2761,7 +2819,7 @@ class _ViewPainter extends CustomPainter {
         hit.dist * (ray.dx * _dir.dx + ray.dy * _dir.dy) / ray.distance,
       );
       _zbuf[i] = perp;
-      final top = _horizon + (_camZ - 1) * _proj / perp;
+      final top = _horizon + (_camZ - map.wallHeight) * _proj / perp;
       final bottom = _horizon + _camZ * _proj / perp;
       var color = _wallColor(hit.cell);
       if (hit.side == 1) color = Color.lerp(color, Colors.black, 0.22)!;
@@ -2801,19 +2859,29 @@ class _ViewPainter extends CustomPainter {
         }
       }
       if (hit.cell == 'X' || hit.cell == 'J') {
-        // The holes in a croc.
+        // The round holes in a croc, in rows up the wall.
         edge.color = Color.lerp(color, Colors.black, 0.45)!;
+        final perUnit = wallH / map.wallHeight; // screen size of 1 block
         final dx = ((hit.wallX * 3) % 1 - 0.5) / 0.3;
         if (dx.abs() < 1) {
-          final half = sqrt(1 - dx * dx) * wallH * 0.09;
-          for (final hy in [0.3, 0.62]) {
-            final cy = top + wallH * hy;
+          final half = sqrt(1 - dx * dx) * perUnit * 0.1;
+          final holeRows = max(2, (map.wallHeight * 2.5).round());
+          for (var r = 0; r < holeRows; r++) {
+            // Stagger every other row like the real thing.
+            if (r.isOdd && ((hit.wallX * 3).floor().isEven)) continue;
+            final cy = top + wallH * (r + 0.7) / (holeRows + 0.4);
             canvas.drawRect(
               Rect.fromLTRB(x, cy - half, x + _colW + 0.6, cy + half),
               edge,
             );
           }
         }
+        // The rounded rim along the top.
+        edge.color = Color.lerp(color, Colors.white, 0.18)!;
+        canvas.drawRect(
+          Rect.fromLTWH(x, top, _colW + 0.6, max(1, perUnit * 0.12)),
+          edge,
+        );
       }
       // Brick and crate details.
       if (hit.cell == 'R' || hit.cell == 'C') {
@@ -2827,6 +2895,54 @@ class _ViewPainter extends CustomPainter {
           );
         }
       }
+    }
+  }
+
+  /// The croc's heel strap, arching over the back of the shoe.
+  void _paintStrap(Canvas canvas) {
+    final sx = map.strapX;
+    if (sx == null) return;
+    final col = sx.floor();
+    var y0 = -1, y1 = -1;
+    for (var y = 0; y < map.height; y++) {
+      if (!map.solidAt(col, y)) {
+        if (y0 < 0) y0 = y;
+        y1 = y;
+      }
+    }
+    if (y0 < 0) return;
+    final a = y0.toDouble(), b = y1 + 1.0;
+    final h = map.wallHeight;
+    const steps = 24;
+    final band = Paint()..color = const Color(0xFF689F38);
+    final ink = Paint()
+      ..color = kOutplayInk
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    Offset world(double t) => Offset(sx + sin(pi * t) * 2.6, a + (b - a) * t);
+    double height(double t) => h - 0.15 + sin(pi * t) * 0.9;
+    for (var i = 0; i < steps; i++) {
+      final t0 = i / steps, t1 = (i + 1) / steps;
+      final p0 = world(t0), p1 = world(t1);
+      final q = [
+        _project(p0, height(t0)),
+        _project(p1, height(t1)),
+        _project(p1, height(t1) + 0.55),
+        _project(p0, height(t0) + 0.55),
+      ];
+      if (q.any((e) => e == null)) continue;
+      final path = Path()..addPolygon([for (final e in q) e!], true);
+      canvas.drawPath(path, band);
+      canvas.drawPath(path, ink);
+    }
+    // The round rivets that hold the strap on.
+    for (final t in [0.0, 1.0]) {
+      final c = _project(world(t), height(t) + 0.27);
+      final edge = _project(world(t) + const Offset(0.3, 0), height(t) + 0.27);
+      if (c == null || edge == null) continue;
+      final r = max(3.0, (edge - c).distance);
+      canvas.drawCircle(c, r, Paint()..color = const Color(0xFFFFCA28));
+      canvas.drawCircle(c, r, ink);
     }
   }
 
