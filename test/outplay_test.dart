@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:oscar_games/games/outplay/outplay_avatar.dart';
 import 'package:oscar_games/games/outplay/outplay_data.dart';
 import 'package:oscar_games/games/outplay/outplay_game.dart';
+import 'package:oscar_games/games/outplay/outplay_maps.dart';
 import 'package:oscar_games/games/outplay/outplay_net.dart';
 
 Future<void> _phone(WidgetTester tester) async {
@@ -81,6 +82,8 @@ void main() {
     'mansion',
     'crocs',
     'arena',
+    'lake',
+    'goat_karts',
   ]) {
     testWidgets('the bot wins rounds on $map', (tester) async {
       await _phone(tester);
@@ -349,6 +352,38 @@ void main() {
       throwsA(contains('already full')),
     );
     await tester.pumpWidget(const SizedBox());
+  });
+
+  test('Lazy Lake has water in the middle and dry places to start', () {
+    final lake = mapById('lake');
+    expect(lake.isWater(lake.centre), isTrue);
+    for (final s in lake.spawnPoints()) {
+      expect(lake.isWater(s), isFalse, reason: '$s');
+    }
+  });
+
+  test('the goat karts stay on the race track', () {
+    final track = mapById('goat_karts');
+    for (var s = 0.0; s < track.loopLength; s += 0.25) {
+      final p = track.loopPoint(s);
+      expect(track.trackOffset(p).abs(), lessThan(0.01), reason: '$s');
+      for (final lane in [-0.7, 0.7]) {
+        final q = p + Offset(lane, 0);
+        expect(track.solidAt(q.dx.floor(), q.dy.floor()), isFalse);
+      }
+    }
+    for (final s in track.spawnPoints()) {
+      expect(track.onTrack(s), isFalse, reason: '$s');
+    }
+  });
+
+  test('the Sizzler hooks people and is the second best melee', () {
+    final sizzler = meleeById('sizzler');
+    expect(sizzler.hook, isTrue);
+    // The shop prices melees from worst to best: only the Scythe beats it.
+    final ranked = [...kMelees]..sort((a, b) => b.price.compareTo(a.price));
+    expect(ranked.map((m) => m.id).take(2), ['scythe', 'sizzler']);
+    expect(sizzler.damage, lessThan(meleeById('scythe').damage));
   });
 
   test('avatars survive saving and loading', () async {

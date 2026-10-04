@@ -19,6 +19,10 @@ const double _walkSpeed = 3.0;
 const double _fov = 1.15; // about 66 degrees
 const double _jumpSpeed = 3.6;
 const double _gravity = 12;
+
+// Lazy Lake: swimming heals for this long, then you drown after _drownTime.
+const double _healTime = 3;
+const double _drownTime = 5;
 const int _duelRoundsToWin = 5;
 const int _ffaKillsToWin = 10;
 const double _ffaTimeLimit = 180;
@@ -61,6 +65,9 @@ class _Person {
   double walkCycle = 0;
   double shieldT = 0; // can't be hurt just after coming back
   double ghostT = 0; // a ghost just got them
+  double waterT = 0; // how long they've been in the lake
+  double kartT = 0; // a go-kart just launched them
+  Offset fling = Offset.zero; // sliding after a kart hit or a hook
   int kills = 0;
   int deaths = 0;
   int team = -1; // 0 or 1 in a team game, -1 when it's everyone for themselves
@@ -116,6 +123,9 @@ class _Person {
     slot = 0;
     path = [];
     shieldT = 1.5;
+    waterT = 0;
+    kartT = 0;
+    fling = Offset.zero;
   }
 }
 
@@ -135,6 +145,13 @@ class _Car {
   final Color color;
   _Car(this.x, this.y, this.speed, this.color);
   Offset get pos => Offset(x, y);
+}
+
+class _Kart {
+  final Offset pos;
+  final double heading;
+  final Color color;
+  const _Kart(this.pos, this.heading, this.color);
 }
 
 class _Tracer {
@@ -559,6 +576,13 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       p.flashT = max(0, p.flashT - dt);
       p.shieldT = max(0, p.shieldT - dt);
       p.ghostT = max(0, p.ghostT - dt);
+      p.kartT = max(0, p.kartT - dt);
+      // Sliding after a go-kart or a Sizzler hook.
+      if (p.fling != Offset.zero) {
+        if (p.alive && !p.remote) _moveBy(p, p.fling * dt);
+        p.fling *= exp(-3.0 * dt);
+        if (p.fling.distance < 0.05) p.fling = Offset.zero;
+      }
       // Jumping and falling.
       if (p.z > 0 || p.vz > 0) {
         p.vz -= _gravity * dt;
@@ -634,7 +658,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   void _updatePerson(_Person p, double dt, Offset move, bool fire) {
     if (!p.alive) return;
     if (move != Offset.zero) {
-      _moveBy(p, move * (_walkSpeed * p.speedMul * dt));
+      final swim = p.grounded && _map.isWater(p.pos) ? 0.7 : 1.0;
+      _moveBy(p, move * (_walkSpeed * p.speedMul * swim * dt));
       p.walkCycle += dt * 9 * move.distance;
     }
     p.cooldown -= dt;
@@ -751,7 +776,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         o,
         m.damage * levelDamageMul(p.lvl(m.id)),
         p,
-        knock: Offset.fromDirection(d.direction, m.knockback),
+        // The Sizzler hooks them right up to you.
+        knock: m.hook
+            ? Offset.fromDirection(d.direction + pi, max(0, d.distance - 0.7))
+            : Offset.fromDirection(d.direction, m.knockback),
       );
     }
   }
@@ -801,6 +829,42 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }
 
   void _updateHazards(double dt) {
+    if (_map.hazard == MapHazard.water) {
+      for (final p in _people) {
+        if (!p.alive || p.remote) continue;
+        if (!_map.isWater(p.pos)) {
+          p.waterT = 0;
+          continue;
+        }
+        if (!p.grounded) continue;
+        p.waterT += dt;
+        // The first 3 seconds in the lake heal you...
+        if (p.waterT <= _healTime && _phase == _Phase.fight) {
+          p.hp = min(100, p.hp + 18 * dt);
+        }
+        // ...but stay in longer than 5 and you drown.
+        if (p.waterT > _drownTime) {
+          p.shieldT = 0;
+          _damage(p, 999, null, quiet: true, cause: 'drowned in the lake');
+        }
+      }
+    }
+    if (_map.hazard == MapHazard.karts) {
+      for (final k in _karts) {
+        for (final p in _people) {
+          if (!p.alive || p.remote || p.kartT > 0 || p.z > 0.35) continue;
+          if ((p.pos - k.pos).distance > 0.55 + _personRadius) continue;
+          // Boing! Launched into the air, no damage.
+          p.kartT = 1.2;
+          p.vz = 6.5;
+          final side = (p.pos - k.pos).direction;
+          p.fling =
+              Offset.fromDirection(k.heading, 5.5) +
+              Offset.fromDirection(side, 3);
+          if (p.isYou) _addFeed('A goat kart launched you!');
+        }
+      }
+    }
     if (_map.hazard == MapHazard.lava) {
       for (final p in _people) {
         if (p.alive && p.grounded && _map.isLava(p.pos, _clock)) {
@@ -851,6 +915,25 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           c.dx + ax * sin(_clock * (0.13 + i * 0.03) + i * 1.7),
           c.dy + ay * sin(_clock * (0.17 + i * 0.025) + i * 2.9),
         ),
+    ];
+  }
+
+  /// The go-karts on Crazy Goat Cars. Like the ghosts they follow the
+  /// clock, so every phone in an online game sees them in the same place.
+  List<_Kart> get _karts {
+    if (_map.hazard != MapHazard.karts) return const [];
+    final len = _map.loopLength;
+    return [
+      for (var i = 0; i < 6; i++)
+        () {
+          final speed = 4.6 + (i * 37 % 6) * 0.45;
+          final along = i * len / 6 + _clock * speed;
+          final lane = i.isEven ? -0.7 : 0.7;
+          final a = _map.loopPoint(along), b = _map.loopPoint(along + 0.05);
+          final heading = (b - a).direction;
+          final out = Offset.fromDirection(heading - pi / 2, lane);
+          return _Kart(a + out, heading, _shirts[(i * 3) % _shirts.length]);
+        }(),
     ];
   }
 
@@ -936,7 +1019,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     // Bots hit softer so the game stays easy.
     if (by != null && !by.isYou && !by.remote && p.isYou) amount *= 0.5;
     p.hp -= amount;
-    if (knock != Offset.zero) _moveBy(p, knock);
+    // Big pulls slide you over; small knocks just bump you.
+    if (knock.distance > 1.1) {
+      p.fling += knock * 3;
+    } else if (knock != Offset.zero) {
+      _moveBy(p, knock);
+    }
     p.hurtT = 0.15;
     if (slow > 0) p.slowT = max(p.slowT, slow);
     if (by != null && by.isYou) {
@@ -1297,6 +1385,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       }
     }
 
+    // Swim to heal, but get out before drowning.
+    if (_map.hazard == MapHazard.water && b.waterT > 2.6) {
+      move = (b.pos - _map.centre) + move * 0.2;
+    }
     // Stay out of the lava and hop over cars.
     if (_map.hazard == MapHazard.lava &&
         (b.pos - _map.centre).distance > _map.safeRadius(_clock) - 1.2) {
@@ -2937,7 +3029,10 @@ class _ViewPainter extends CustomPainter {
           Paint()..color = const Color(0xFFFFFDE7),
         );
       }
-    } else if (map.hazard == MapHazard.cars || map.id == 'courtyard') {
+    } else if (map.hazard == MapHazard.cars ||
+        map.hazard == MapHazard.water ||
+        map.hazard == MapHazard.karts ||
+        map.id == 'courtyard') {
       final x = ((0.3 - s._you.angle / (2 * pi)) % 1) * _w * 2 - _w * 0.5;
       canvas.drawCircle(
         Offset(x, _horizon * 0.3),
@@ -2971,6 +3066,41 @@ class _ViewPainter extends CustomPainter {
         return Colors.white;
       }
       return const Color(0xFF424242);
+    }
+    if (map.hazard == MapHazard.water) {
+      final d = map.lakeDistance(Offset(x, y));
+      if (d < 1) {
+        // Rippling lake water, deeper blue in the middle.
+        final ripple = 0.5 + 0.5 * sin(t * 1.8 + x * 2.1 + y * 1.4);
+        return Color.lerp(
+          Color.lerp(
+            const Color(0xFF0277BD),
+            const Color(0xFF29B6F6),
+            (d * d).clamp(0.0, 1.0),
+          ),
+          const Color(0xFF81D4FA),
+          ripple * 0.25,
+        )!;
+      }
+      if (d < 1.16) return const Color(0xFFFFE082); // sandy beach
+    }
+    if (map.hazard == MapHazard.karts) {
+      final off = map.trackOffset(Offset(x, y));
+      if (off.abs() < OutplayMap.trackHalfWidth) {
+        // Red and white kerbs along both edges.
+        if (off.abs() > OutplayMap.trackHalfWidth - 0.25) {
+          return ((x + y) * 1.4).floor().isEven
+              ? const Color(0xFFE53935)
+              : Colors.white;
+        }
+        // A chequered start line across the top straight.
+        if ((x - map.centre.dx).abs() < 0.4 && y < map.centre.dy) {
+          return ((x * 2.5).floor() + (y * 2.5).floor()).isEven
+              ? Colors.white
+              : const Color(0xFF212121);
+        }
+        return const Color(0xFF546E7A);
+      }
     }
     final ring = _ring;
     if (ring != null && ring.inflate(0.2).contains(Offset(x, y))) {
@@ -3060,6 +3190,12 @@ class _ViewPainter extends CustomPainter {
         return const Color(0xFF1E88E5);
       case 'N':
         return const Color(0xFFECEFF1);
+      case 'G':
+        return const Color(0xFF2E7D32);
+      case 'Y':
+        return const Color(0xFF37474F);
+      case 'H':
+        return const Color(0xFFE6C065);
       default:
         return const Color(0xFF8A93A8);
     }
@@ -3098,6 +3234,31 @@ class _ViewPainter extends CustomPainter {
         // Stripy old wallpaper.
         edge.color = Color.lerp(color, Colors.white, 0.08)!;
         canvas.drawRect(Rect.fromLTRB(x, top, x + _colW + 0.6, bottom), edge);
+      }
+      if (hit.cell == 'Y') {
+        // Stacks of tyres with red and white bands.
+        final band = (hit.wallX * 4).floor().isEven
+            ? const Color(0xFFE53935)
+            : Colors.white;
+        edge.color = Color.lerp(
+          band,
+          map.skyBottom,
+          (perp / 16).clamp(0.0, 0.65),
+        )!;
+        canvas.drawRect(
+          Rect.fromLTWH(x, top + wallH * 0.42, _colW + 0.6, wallH * 0.16),
+          edge,
+        );
+      }
+      if (hit.cell == 'H') {
+        // Straw lines on the hay bales.
+        edge.color = Color.lerp(color, Colors.brown, 0.3)!;
+        for (final f in [0.3, 0.7]) {
+          canvas.drawRect(
+            Rect.fromLTWH(x, top + wallH * f, _colW + 0.6, wallH * 0.05),
+            edge,
+          );
+        }
       }
       if (hit.cell == 'D') {
         // Bookshelves: shelves with coloured books.
@@ -3354,6 +3515,9 @@ class _ViewPainter extends CustomPainter {
     for (final car in s._cars) {
       billboard(car.pos, 0, 0.72, 1.5, (c, r, scale) => _drawCar(c, car, r));
     }
+    for (final k in s._karts) {
+      billboard(k.pos, 0, 0.62, 1.0, (c, r, scale) => _drawKart(c, k, r));
+    }
     final ghosts = s._ghosts;
     for (var i = 0; i < ghosts.length; i++) {
       final bob = 0.25 + 0.12 * sin(s._clock * 2 + i);
@@ -3574,6 +3738,80 @@ class _ViewPainter extends CustomPainter {
     );
   }
 
+  /// A go-kart with a goat driving it.
+  void _drawKart(Canvas c, _Kart k, Rect r) {
+    final w = r.width, h = r.height;
+    final ink = Paint()
+      ..color = kOutplayInk
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = max(1, w * 0.02);
+    // Goat: white head, curly horns, little beard.
+    final head = Rect.fromLTWH(
+      r.left + w * 0.36,
+      r.top + h * 0.1,
+      w * 0.28,
+      h * 0.34,
+    );
+    for (final side in [-1.0, 1.0]) {
+      final horn = Path()
+        ..moveTo(head.center.dx + side * w * 0.06, head.top + h * 0.04)
+        ..quadraticBezierTo(
+          head.center.dx + side * w * 0.2,
+          head.top - h * 0.12,
+          head.center.dx + side * w * 0.2,
+          head.top + h * 0.06,
+        );
+      c.drawPath(
+        horn,
+        Paint()
+          ..color = const Color(0xFF8D6E63)
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = max(1.5, w * 0.035),
+      );
+      // Floppy ears.
+      c.drawOval(
+        Rect.fromCenter(
+          center: Offset(head.center.dx + side * w * 0.17, head.top + h * 0.12),
+          width: w * 0.1,
+          height: h * 0.06,
+        ),
+        Paint()..color = const Color(0xFFEEEEEE),
+      );
+    }
+    c.drawOval(head, Paint()..color = const Color(0xFFF5F5F5));
+    c.drawOval(head, ink);
+    for (final side in [-1.0, 1.0]) {
+      c.drawCircle(
+        Offset(head.center.dx + side * w * 0.05, head.top + h * 0.13),
+        max(1.0, w * 0.02),
+        Paint()..color = kOutplayInk,
+      );
+    }
+    final beard = Path()
+      ..moveTo(head.center.dx - w * 0.03, head.bottom - h * 0.02)
+      ..lineTo(head.center.dx, head.bottom + h * 0.1)
+      ..lineTo(head.center.dx + w * 0.03, head.bottom - h * 0.02)
+      ..close();
+    c.drawPath(beard, Paint()..color = const Color(0xFFBDBDBD));
+    // The kart.
+    final body = RRect.fromRectAndRadius(
+      Rect.fromLTWH(r.left + w * 0.05, r.top + h * 0.45, w * 0.9, h * 0.33),
+      Radius.circular(h * 0.1),
+    );
+    c.drawRRect(body, Paint()..color = k.color);
+    c.drawRRect(body, ink);
+    c.drawRect(
+      Rect.fromLTWH(r.left + w * 0.4, r.top + h * 0.5, w * 0.2, h * 0.12),
+      Paint()..color = Colors.white,
+    );
+    for (final fx in [0.16, 0.84]) {
+      final wheel = Offset(r.left + w * fx, r.top + h * 0.82);
+      c.drawCircle(wheel, h * 0.16, Paint()..color = const Color(0xFF212121));
+      c.drawCircle(wheel, h * 0.06, Paint()..color = const Color(0xFF9E9E9E));
+    }
+  }
+
   void _drawSign(Canvas c, Rect r, String label, Color color) {
     final pole = Rect.fromLTWH(
       r.center.dx - r.width * 0.04,
@@ -3703,7 +3941,10 @@ class _ViewPainter extends CustomPainter {
         _h * (0.82 - swing * 0.08) + bobY,
       );
       canvas.rotate(-pi / 2 + 0.5 - swing * 1.1);
-      final big = m.look == WeaponLook.scythe || m.look == WeaponLook.slapper;
+      final big =
+          m.look == WeaponLook.scythe ||
+          m.look == WeaponLook.slapper ||
+          m.look == WeaponLook.snake;
       paintWeapon(canvas, m.look, m.color, min(_w, _h) * (big ? 0.55 : 0.36));
     }
     canvas.restore();
@@ -3763,6 +4004,39 @@ class _ViewPainter extends CustomPainter {
     if (you.alive && you.grounded && map.isLava(you.pos, s._clock)) {
       vignette(const Color(0x99FF6D00));
     }
+    if (you.alive && you.waterT > 0) {
+      // Under the lake: heal at first, then hurry out!
+      final healing = you.waterT <= _healTime;
+      vignette(healing ? const Color(0x8829B6F6) : const Color(0xAA01579B));
+      final left = max(0.0, _drownTime - you.waterT);
+      _text(
+        canvas,
+        healing
+            ? 'Healing in the lake…'
+            : 'GET OUT! ${left.toStringAsFixed(1)}',
+        c + const Offset(0, -70),
+        healing ? 18 : 24,
+        healing ? Colors.white : const Color(0xFFFF8A80),
+      );
+      // Bubbles show how much breath is left.
+      final bubbles = (left / _drownTime * 5).ceil();
+      for (var i = 0; i < 5; i++) {
+        final at = c + Offset((i - 2) * 18.0, -44);
+        canvas.drawCircle(
+          at,
+          6,
+          Paint()..color = i < bubbles ? Colors.white : const Color(0x5501579B),
+        );
+        canvas.drawCircle(
+          at,
+          6,
+          Paint()
+            ..color = const Color(0xFF01579B)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5,
+        );
+      }
+    }
     if (!you.alive && s._ffa) {
       canvas.drawRect(screen, Paint()..color = const Color(0x88000000));
       _text(canvas, 'Back in ${you.respawnT.ceil()}...', c, 28, Colors.white);
@@ -3813,6 +4087,23 @@ class _ViewPainter extends CustomPainter {
         origin + g * cell,
         cell * 0.6,
         Paint()..color = const Color(0xCCE1BEE7),
+      );
+    }
+    if (map.hazard == MapHazard.water) {
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: origin + map.centre * cell,
+          width: OutplayMap.lakeRx * 2 * cell,
+          height: OutplayMap.lakeRy * 2 * cell,
+        ),
+        Paint()..color = const Color(0xCC29B6F6),
+      );
+    }
+    for (final k in s._karts) {
+      canvas.drawCircle(
+        origin + k.pos * cell,
+        max(2, cell * 0.5),
+        Paint()..color = k.color,
       );
     }
     if (map.hazard == MapHazard.cars) {

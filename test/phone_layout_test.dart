@@ -56,6 +56,13 @@ final _screens = <String, Widget Function()>{
     mapId: 'mansion',
     bots: 5,
   ),
+  'outplay_lake': () => const OutplayGameScreen(
+    mode: OutplayMode.freeForAll,
+    mapId: 'lake',
+    bots: 5,
+  ),
+  'outplay_karts': () =>
+      const OutplayGameScreen(mode: OutplayMode.duel, mapId: 'goat_karts'),
   'outplay_crocs': () =>
       const OutplayGameScreen(mode: OutplayMode.duel, mapId: 'crocs'),
   'outplay_duel': () =>

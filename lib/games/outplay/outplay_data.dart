@@ -19,6 +19,7 @@ enum WeaponLook {
   pan,
   slapper,
   scythe,
+  snake,
 }
 
 /// How a gun's shots travel.
@@ -90,7 +91,11 @@ class Melee {
   final Color color;
   final WeaponLook look;
 
+  /// Pulls whoever it hits over to you instead of knocking them away.
+  final bool hook;
+
   const Melee({
+    this.hook = false,
     required this.id,
     required this.name,
     required this.blurb,
@@ -281,6 +286,20 @@ const List<Melee> kMelees = [
     moveMul: 1.05,
     color: Color(0xFFFF8A65),
     look: WeaponLook.slapper,
+  ),
+  Melee(
+    id: 'sizzler',
+    name: 'Sizzler',
+    blurb: 'A snake that bites from far away and hooks people over to you!',
+    price: 550,
+    damage: 34,
+    cooldown: 0.55,
+    reach: 2.4,
+    arc: 0.9,
+    hook: true,
+    moveMul: 1.1,
+    color: Color(0xFF66BB6A),
+    look: WeaponLook.snake,
   ),
   Melee(
     id: 'scythe',

@@ -193,6 +193,70 @@ void paintWeapon(Canvas canvas, WeaponLook look, Color color, double size) {
         ..close();
       path(blade, body);
       break;
+    case WeaponLook.snake:
+      // A wiggly green snake: tail on the left, head on the right.
+      final wiggle = Path()..moveTo(-50 * s, 0);
+      for (var i = 0; i < 4; i++) {
+        final x0 = (-50 + i * 20) * s;
+        wiggle.quadraticBezierTo(
+          x0 + 10 * s,
+          (i.isEven ? -16 : 16) * s,
+          x0 + 20 * s,
+          0,
+        );
+      }
+      canvas.drawPath(
+        wiggle,
+        Paint()
+          ..color = kOutplayInk
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = 15 * s,
+      );
+      canvas.drawPath(
+        wiggle,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = 10 * s,
+      );
+      // Yellow stripes down its back.
+      for (var i = 0; i < 4; i++) {
+        canvas.drawCircle(
+          Offset((-40 + i * 20) * s, (i.isEven ? -8 : 8) * s),
+          2.5 * s,
+          Paint()..color = const Color(0xFFFFEB3B),
+        );
+      }
+      // Forked red tongue.
+      final tongue = Paint()
+        ..color = const Color(0xFFE53935)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = max(1.0, 2.5 * s);
+      canvas.drawLine(Offset(44 * s, 0), Offset(54 * s, 0), tongue);
+      canvas.drawLine(Offset(54 * s, 0), Offset(58 * s, -4 * s), tongue);
+      canvas.drawLine(Offset(54 * s, 0), Offset(58 * s, 4 * s), tongue);
+      final head = Rect.fromCenter(
+        center: Offset(36 * s, 0),
+        width: 22 * s,
+        height: 17 * s,
+      );
+      canvas.drawOval(head, body);
+      canvas.drawOval(head, ink);
+      for (final ey in [-4.0, 4.0]) {
+        canvas.drawCircle(
+          Offset(39 * s, ey * s),
+          2.6 * s,
+          Paint()..color = const Color(0xFFFFEB3B),
+        );
+        canvas.drawCircle(
+          Offset(39.5 * s, ey * s),
+          1.2 * s,
+          Paint()..color = kOutplayInk,
+        );
+      }
+      break;
   }
 }
 

@@ -2,12 +2,13 @@ import 'dart:math';
 import 'dart:ui';
 
 /// What makes a map special.
-enum MapHazard { none, lava, cars, ghosts, bouncy }
+enum MapHazard { none, lava, cars, ghosts, bouncy, water, karts }
 
 /// A map drawn as rows of characters:
 ///   `#` stone wall, `R` red brick, `B` blue panel, `C` crate, `K` dark rock,
 ///   `W` spooky wallpaper, `D` bookshelf, `X` croc rubber, `J` croc charm,
 ///   `A` arena crowd, `P` red corner post, `U` blue corner post, `N` white post
+///   `G` hedge, `Y` tyre wall, `H` hay bale
 ///   `.` floor, `S` a place people can start
 ///   `Q` `F` `O` (Duel Zone only) the quick play, free-for-all and online pads
 class OutplayMap {
@@ -83,7 +84,10 @@ class OutplayMap {
       c == 'A' ||
       c == 'P' ||
       c == 'U' ||
-      c == 'N';
+      c == 'N' ||
+      c == 'G' ||
+      c == 'Y' ||
+      c == 'H';
 
   Offset get centre => Offset(width / 2, height / 2);
 
@@ -117,6 +121,74 @@ class OutplayMap {
   static const double roadBottom = 8;
   bool onRoad(Offset p) =>
       hazard == MapHazard.cars && p.dy >= roadTop && p.dy <= roadBottom;
+
+  /// Lazy Lake: an oval lake in the middle of the map.
+  static const double lakeRx = 6.6;
+  static const double lakeRy = 4.6;
+
+  /// How far out from the middle of the lake you are (under 1 is water).
+  double lakeDistance(Offset p) {
+    final dx = (p.dx - centre.dx) / lakeRx, dy = (p.dy - centre.dy) / lakeRy;
+    return sqrt(dx * dx + dy * dy);
+  }
+
+  bool isWater(Offset p) => hazard == MapHazard.water && lakeDistance(p) < 1;
+
+  /// Crazy Goat Cars: the go-karts race round a loop with rounded corners.
+  /// Its middle line is a rounded box 2 squares in from the tyre wall.
+  static const double trackHalfWidth = 2;
+  static const double loopInset = 3;
+  static const double loopCorner = 2.5;
+
+  /// How far [p] is from the middle of the race track (negative = inside).
+  double trackOffset(Offset p) {
+    final hx = width / 2 - loopInset - loopCorner;
+    final hy = height / 2 - loopInset - loopCorner;
+    final qx = (p.dx - centre.dx).abs() - hx;
+    final qy = (p.dy - centre.dy).abs() - hy;
+    final outside = sqrt(pow(max(qx, 0.0), 2) + pow(max(qy, 0.0), 2));
+    return outside + min(max(qx, qy), 0.0) - loopCorner;
+  }
+
+  bool onTrack(Offset p) =>
+      hazard == MapHazard.karts && trackOffset(p).abs() < trackHalfWidth;
+
+  /// Length of the race loop.
+  double get loopLength {
+    final w = width - 2 * loopInset - 2 * loopCorner;
+    final h = height - 2 * loopInset - 2 * loopCorner;
+    return 2 * (w + h) + 2 * pi * loopCorner;
+  }
+
+  /// The point [s] squares along the race loop (going clockwise).
+  Offset loopPoint(double s) {
+    final r = loopCorner;
+    final l = loopInset + r, t = loopInset + r;
+    final rgt = width - loopInset - r, btm = height - loopInset - r;
+    final w = rgt - l, h = btm - t, arc = pi * r / 2;
+    var d = s % loopLength;
+    if (d < 0) d += loopLength;
+    // Top straight, going right.
+    if (d < w) return Offset(l + d, t - r);
+    d -= w;
+    if (d < arc) {
+      return Offset(rgt, t) + Offset.fromDirection(-pi / 2 + d / r, r);
+    }
+    d -= arc;
+    if (d < h) return Offset(rgt + r, t + d);
+    d -= h;
+    if (d < arc) return Offset(rgt, btm) + Offset.fromDirection(d / r, r);
+    d -= arc;
+    if (d < w) return Offset(rgt - d, btm + r);
+    d -= w;
+    if (d < arc) {
+      return Offset(l, btm) + Offset.fromDirection(pi / 2 + d / r, r);
+    }
+    d -= arc;
+    if (d < h) return Offset(l - r, btm - d);
+    d -= h;
+    return Offset(l, t) + Offset.fromDirection(pi + d / r, r);
+  }
 }
 
 const OutplayMap kDuelZone = OutplayMap(
@@ -348,6 +420,72 @@ const List<OutplayMap> kArenaMaps = [
     skyBottom: Color(0xFF1C2541),
     floorA: Color(0xFF2B2D42),
     floorB: Color(0xFF32344D),
+  ),
+  OutplayMap(
+    id: 'lake',
+    name: 'Lazy Lake',
+    blurb:
+        'A sunny lake. Swim to heal for 3 seconds, but stay in longer than '
+        '5 and you drown!',
+    hazard: MapHazard.water,
+    rows: [
+      'GGGGGGGGGGGGGGGGGGGGGGGGGG',
+      'G.S.....S.......S......S.G',
+      'G........................G',
+      'G..G..........S.......G..G',
+      'G........................G',
+      'G.S....................S.G',
+      'G........................G',
+      'GS......................SG',
+      'G........................G',
+      'GG......................GG',
+      'G........................G',
+      'G........................G',
+      'G.S....................S.G',
+      'G........................G',
+      'G..G.......S..........G..G',
+      'G........................G',
+      'G.S.....S.......S......S.G',
+      'GGGGGGGGGGGGGGGGGGGGGGGGGG',
+    ],
+    skyTop: Color(0xFF29B6F6),
+    skyBottom: Color(0xFFE1F5FE),
+    floorA: Color(0xFF7CB342),
+    floorB: Color(0xFF76AC3E),
+  ),
+  OutplayMap(
+    id: 'goat_karts',
+    name: 'Crazy Goat Cars',
+    blurb:
+        'A race track full of go-karts driven by goats. Get hit and you go '
+        'flying!',
+    hazard: MapHazard.karts,
+    rows: [
+      'YYYYYYYYYYYYYYYYYYYYYYYYYYYYYY',
+      'Y............................Y',
+      'Y............................Y',
+      'Y............................Y',
+      'Y............................Y',
+      'Y..................S.........Y',
+      'Y.............H..............Y',
+      'Y......S..............S......Y',
+      'Y........HH..................Y',
+      'Y................S...........Y',
+      'Y...........S................Y',
+      'Y..................HH........Y',
+      'Y......S..............S......Y',
+      'Y..............H.............Y',
+      'Y.........S..................Y',
+      'Y............................Y',
+      'Y............................Y',
+      'Y............................Y',
+      'Y............................Y',
+      'YYYYYYYYYYYYYYYYYYYYYYYYYYYYYY',
+    ],
+    skyTop: Color(0xFF1E88E5),
+    skyBottom: Color(0xFFFFE0B2),
+    floorA: Color(0xFF8BC34A),
+    floorB: Color(0xFF85BC45),
   ),
 ];
 
