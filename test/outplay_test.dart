@@ -239,6 +239,57 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('pressing AI asks easy, medium or hard', (tester) async {
+    await _phone(tester);
+    OutplaySave.instance.name = 'Oscar';
+    await tester.pumpWidget(const MaterialApp(home: OutplayGameScreen()));
+    final stick = await tester.startGesture(const Offset(80, 560));
+    await stick.moveBy(const Offset(-10, -20));
+    await stick.moveBy(const Offset(-14.6, -29.2));
+    for (var i = 0; i < 120 && find.text('1v1').evaluate().isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    await stick.up();
+    await tester.tap(find.text('1v1'));
+    await tester.pump();
+    await tester.tap(find.text('AI'));
+    await tester.pump();
+    expect(find.text('EASY'), findsOneWidget);
+    expect(find.text('MEDIUM'), findsOneWidget);
+    expect(find.text('HARD'), findsOneWidget);
+    await tester.tap(find.text('HARD'));
+    await tester.pump();
+    expect(find.text('Quick Play 1v1 · AI · Hard'), findsOneWidget);
+    await tester.tap(find.text('PLAY'));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    final game = tester.widget<OutplayGameScreen>(
+      find.byType(OutplayGameScreen).last,
+    );
+    expect(game.difficulty, 2);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final level in [0, 2]) {
+    testWidgets('a game against ${level == 0 ? 'easy' : 'hard'} AI '
+        'gets going', (tester) async {
+      await _phone(tester);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OutplayGameScreen(mode: OutplayMode.duel, difficulty: level),
+        ),
+      );
+      var scored = false;
+      for (var i = 0; i < 240 * 20 && !scored; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        scored = find.textContaining('You 0 - 1').evaluate().isNotEmpty;
+      }
+      expect(scored, isTrue);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('quick play against a human waits in a 1v1 room', (tester) async {
     await _phone(tester);
     OutplaySave.instance.name = 'Oscar';

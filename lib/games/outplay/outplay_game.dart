@@ -91,6 +91,7 @@ class _Person {
   double wobble = 0;
   double aimError = 0.2;
   double turnRate = 4;
+  double reactDelay = 0.9; // how long a bot looks before it shoots
   double reactT = 0;
 
   _Person({
@@ -220,6 +221,9 @@ class OutplayGameScreen extends StatefulWidget {
   final String mapId;
   final int bots;
 
+  /// How good the bots are: 0 easy, 1 medium, 2 hard.
+  final int difficulty;
+
   /// Players per team in a team game against AI (2 = 2v2...).
   final int teamSize;
 
@@ -235,6 +239,7 @@ class OutplayGameScreen extends StatefulWidget {
     this.mode = OutplayMode.lobby,
     this.mapId = 'warehouse',
     this.bots = 1,
+    this.difficulty = 1,
     this.teamSize = 2,
     this.room,
     this.makeLink = createLink,
@@ -331,10 +336,11 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   OutplayDirectory? _lister; // puts your room on the Join list
   double _listT = 0;
   bool _netBusy = false;
-  int _qpStep = 0; // Quick Play: 0 size, 1 AI or human, 2 map
+  int _qpStep = 0; // Quick Play: 0 size, 1 AI or human, 3 how hard, 2 map
   int _qpSize = 1;
   int _roomSize = 1;
   bool _qpHuman = false;
+  int _qpLevel = 1; // AI: 0 easy, 1 medium, 2 hard
   String? _netError;
 
   @override
@@ -371,8 +377,16 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           ? widget.teamSize * 2 - 1
           : widget.bots;
       for (var i = 0; i < botCount; i++) {
-        final gun = kGuns[_rnd.nextInt(min(kGuns.length, 3 + tier))];
-        final level = 1 + (tier ~/ 3).clamp(0, kMaxLevel - 1);
+        final diff = widget.difficulty;
+        final gun =
+            kGuns[_rnd.nextInt(
+              min(kGuns.length, diff == 0 ? 3 : 3 + tier + (diff == 2 ? 4 : 0)),
+            )];
+        final level = switch (diff) {
+          0 => 1,
+          2 => min(kMaxLevel, 2 + tier ~/ 3),
+          _ => 1 + (tier ~/ 3).clamp(0, kMaxLevel - 1),
+        };
         final bot = _Person(
           name:
               names[i % names.length] +
@@ -396,8 +410,19 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         if (widget.mode == OutplayMode.teams) {
           bot.team = i < widget.teamSize - 1 ? 0 : 1;
         }
-        bot.aimError = (0.4 - tier * 0.012).clamp(0.25, 0.4);
-        bot.turnRate = 2.4 + tier * 0.15;
+        switch (diff) {
+          case 0: // Easy: slow to turn, wobbly aim, slow to shoot.
+            bot.aimError = 0.6;
+            bot.turnRate = 1.6;
+            bot.reactDelay = 1.5;
+          case 2: // Hard: snaps on to you and shoots fast.
+            bot.aimError = 0.1;
+            bot.turnRate = 5;
+            bot.reactDelay = 0.35;
+          default:
+            bot.aimError = (0.4 - tier * 0.012).clamp(0.25, 0.4);
+            bot.turnRate = 2.4 + tier * 0.15;
+        }
         _people.add(bot);
       }
     }
@@ -1505,7 +1530,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         b.angle += diff.clamp(-turn, turn);
         final reach = b.slot == 2 ? b.melee.reach + 0.2 : gun.range;
         fire =
-            b.reactT > 0.9 &&
+            b.reactT > b.reactDelay &&
             diff.abs() < 0.12 + 0.3 / max(dist, 0.5) &&
             dist < reach;
       } else {
@@ -1692,6 +1717,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         mode: mode,
         mapId: mapId,
         bots: mode == OutplayMode.duel ? 1 : _pickBots,
+        difficulty: _qpLevel,
         teamSize: _qpSize,
       ),
     );
@@ -3073,7 +3099,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                   'AI',
                   () => setState(() {
                     _qpHuman = false;
-                    _qpStep = 2;
+                    _qpStep = 3;
                   }),
                   icon: Icons.smart_toy_rounded,
                 ),
@@ -3095,10 +3121,38 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           const SizedBox(height: 12),
           back(() => setState(() => _qpStep = 0)),
         ]);
+      case 3:
+        const levels = [
+          ('EASY', Color(0xFF66BB6A), Icons.sentiment_satisfied_rounded),
+          ('MEDIUM', Color(0xFFFFB300), Icons.sentiment_neutral_rounded),
+          ('HARD', Color(0xFFE53935), Icons.local_fire_department_rounded),
+        ];
+        return _panelShell(color, [
+          _panelTitle('Quick Play $size · AI', 'How hard?', color),
+          const SizedBox(height: 14),
+          for (var i = 0; i < levels.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: SizedBox(
+                width: double.infinity,
+                child: big(
+                  levels[i].$1,
+                  () => setState(() {
+                    _qpLevel = i;
+                    _qpStep = 2;
+                  }),
+                  icon: levels[i].$3,
+                  bg: levels[i].$2,
+                ),
+              ),
+            ),
+          back(() => setState(() => _qpStep = 1)),
+        ]);
       default:
         return _panelShell(color, [
           _panelTitle(
-            'Quick Play $size · ${_qpHuman ? 'Human' : 'AI'}',
+            'Quick Play $size · '
+            '${_qpHuman ? 'Human' : 'AI · ${const ['Easy', 'Medium', 'Hard'][_qpLevel]}'}',
             _qpHuman
                 ? 'Pick a map. You will play people who picked the same map.'
                 : 'Pick a map.',
@@ -3131,7 +3185,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           const SizedBox(height: 10),
           back(
             () => setState(() {
-              _qpStep = 1;
+              _qpStep = _qpHuman ? 1 : 3;
               _netError = null;
             }),
           ),
