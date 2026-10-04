@@ -1,0 +1,3 @@
+tags:
+  slow:
+    skip: "Slow play-through; run with: flutter test --run-skipped -t slow"

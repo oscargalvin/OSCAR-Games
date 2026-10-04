@@ -258,7 +258,9 @@ class _TargetGameScreenState extends State<TargetGameScreen>
   }
 
   void _onPanStart(DragStartDetails details) {
-    if (levelComplete || levelFailed || showCountdown || arrowsLeft <= 0) return;
+    if (levelComplete || levelFailed || showCountdown || arrowsLeft <= 0) {
+      return;
+    }
     setState(() {
       _isAiming = true;
       _dragStart = details.localPosition;
@@ -313,12 +315,9 @@ class _TargetGameScreenState extends State<TargetGameScreen>
     setState(() {
       arrowsLeft--;
       totalShots++;
-      arrows.add(Arrow(
-        position: launchPt,
-        vx: vx,
-        vy: vy,
-        angle: atan2(vy, vx),
-      ));
+      arrows.add(
+        Arrow(position: launchPt, vx: vx, vy: vy, angle: atan2(vy, vx)),
+      );
     });
 
     Future.delayed(const Duration(seconds: 2), () {
@@ -373,7 +372,7 @@ class _TargetGameScreenState extends State<TargetGameScreen>
       builder: (ctx) => Dialog(
         backgroundColor: AppTheme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -449,8 +448,11 @@ class _TargetGameScreenState extends State<TargetGameScreen>
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                color: Colors.white70, size: 20),
+            icon: const Icon(
+              Icons.arrow_back_ios_new_rounded,
+              color: Colors.white70,
+              size: 20,
+            ),
             onPressed: () {
               _gameLoop?.cancel();
               Navigator.of(context).pop();
@@ -539,8 +541,8 @@ class _TargetGameScreenState extends State<TargetGameScreen>
     final label = strength < 1.0
         ? 'Light'
         : strength < 2.0
-            ? 'Moderate'
-            : 'Strong';
+        ? 'Moderate'
+        : 'Strong';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -576,7 +578,10 @@ class _TargetGameScreenState extends State<TargetGameScreen>
         final newSize = Size(constraints.maxWidth, constraints.maxHeight);
         if (_gameAreaSize == null || _gameAreaSize != newSize) {
           _gameAreaSize = newSize;
-          if (targets.isEmpty && !showCountdown && !levelComplete && !levelFailed) {
+          if (targets.isEmpty &&
+              !showCountdown &&
+              !levelComplete &&
+              !levelFailed) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _spawnTargets();
             });
@@ -602,7 +607,8 @@ class _TargetGameScreenState extends State<TargetGameScreen>
               arrowColor: widget.playerData.equippedArrow.color,
               windForce: windForce,
               gameAreaSize: newSize,
-              isMythic: widget.playerData.equippedBow.rarity == BowRarity.mythic,
+              isMythic:
+                  widget.playerData.equippedBow.rarity == BowRarity.mythic,
               pauseActive: _pauseAbilityActive,
             ),
             size: newSize,
@@ -640,7 +646,10 @@ class _TargetGameScreenState extends State<TargetGameScreen>
             if (widget.world.diamondMultiplier > 1) ...[
               const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.warning.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
@@ -720,8 +729,8 @@ class _TargetGameScreenState extends State<TargetGameScreen>
     final stars = _accuracy >= 80
         ? 3
         : _accuracy >= 50
-            ? 2
-            : 1;
+        ? 2
+        : 1;
     final reward = widget.world.diamondsPerLevel;
 
     return ScaleTransition(
@@ -748,90 +757,100 @@ class _TargetGameScreenState extends State<TargetGameScreen>
                 ),
               ],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('🎯', style: TextStyle(fontSize: 44)),
-                const SizedBox(height: 12),
-                Text(
-                  'Level $currentLevel Complete!',
-                  style: TextStyle(
-                    color: widget.world.primaryColor,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(
-                    3,
-                    (i) => Icon(
-                      i < stars
-                          ? Icons.star_rounded
-                          : Icons.star_outline_rounded,
-                      color: AppTheme.warning,
-                      size: 32,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('🎯', style: TextStyle(fontSize: 44)),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Level $currentLevel Complete!',
+                    style: TextStyle(
+                      color: widget.world.primaryColor,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildResultStat('Accuracy', '$_accuracy%'),
-                    _buildResultStat('Shots', '$totalShots'),
-                    _buildResultStat(
-                      'Time',
-                      '${(maxTime - timeLeft).toStringAsFixed(1)}s',
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(
+                      3,
+                      (i) => Icon(
+                        i < stars
+                            ? Icons.star_rounded
+                            : Icons.star_outline_rounded,
+                        color: AppTheme.warning,
+                        size: 32,
+                      ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      const Icon(Icons.diamond_rounded,
-                          color: AppTheme.accent, size: 18),
-                      const SizedBox(width: 6),
-                      Text(
-                        '+$reward Diamonds${reward > 5 ? ' (x${widget.world.diamondMultiplier})' : ''}',
-                        style: const TextStyle(
+                      _buildResultStat('Accuracy', '$_accuracy%'),
+                      _buildResultStat('Shots', '$totalShots'),
+                      _buildResultStat(
+                        'Time',
+                        '${(maxTime - timeLeft).toStringAsFixed(1)}s',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accent.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.diamond_rounded,
                           color: AppTheme.accent,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '+$reward Diamonds${reward > 5 ? ' (x${widget.world.diamondMultiplier})' : ''}',
+                          style: const TextStyle(
+                            color: AppTheme.accent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Wrap(
+                    alignment: WrapAlignment.spaceEvenly,
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _retryLevel,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('Retry'),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _nextLevel,
+                        icon: const Icon(Icons.arrow_forward_rounded),
+                        label: Text(
+                          currentLevel >= PlayerData.maxLevel
+                              ? 'Finish'
+                              : 'Next Level',
                         ),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    TextButton.icon(
-                      onPressed: _retryLevel,
-                      icon: const Icon(Icons.refresh_rounded),
-                      label: const Text('Retry'),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _nextLevel,
-                      icon: const Icon(Icons.arrow_forward_rounded),
-                      label: Text(
-                          currentLevel >= PlayerData.maxLevel
-                              ? 'Finish'
-                              : 'Next Level'),
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -849,59 +868,59 @@ class _TargetGameScreenState extends State<TargetGameScreen>
           decoration: BoxDecoration(
             color: AppTheme.cardColor,
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(
-              color: AppTheme.danger.withValues(alpha: 0.5),
-            ),
+            border: Border.all(color: AppTheme.danger.withValues(alpha: 0.5)),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('💥', style: TextStyle(fontSize: 44)),
-              const SizedBox(height: 12),
-              const Text(
-                'Level Failed',
-                style: TextStyle(
-                  color: AppTheme.danger,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '$targetsHit/$targetsPerLevel targets hit',
-                style: const TextStyle(
-                  color: AppTheme.textSecondary,
-                  fontSize: 14,
-                ),
-              ),
-              if (arrowsLeft <= 0) ...[
-                const SizedBox(height: 4),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('💥', style: TextStyle(fontSize: 44)),
+                const SizedBox(height: 12),
                 const Text(
-                  'Ran out of arrows!',
-                  style: TextStyle(color: AppTheme.warning, fontSize: 13),
-                ),
-              ],
-              if (timeLeft <= 0) ...[
-                const SizedBox(height: 4),
-                const Text(
-                  'Time ran out!',
-                  style: TextStyle(color: AppTheme.warning, fontSize: 13),
-                ),
-              ],
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _retryLevel,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Try Again'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.danger,
-                    foregroundColor: Colors.white,
+                  'Level Failed',
+                  style: TextStyle(
+                    color: AppTheme.danger,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                Text(
+                  '$targetsHit/$targetsPerLevel targets hit',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 14,
+                  ),
+                ),
+                if (arrowsLeft <= 0) ...[
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Ran out of arrows!',
+                    style: TextStyle(color: AppTheme.warning, fontSize: 13),
+                  ),
+                ],
+                if (timeLeft <= 0) ...[
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Time ran out!',
+                    style: TextStyle(color: AppTheme.warning, fontSize: 13),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _retryLevel,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try Again'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.danger,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1048,13 +1067,15 @@ class _GamePainter extends CustomPainter {
         ..color = Colors.white.withValues(alpha: 0.25)
         ..strokeWidth = 0.8;
       canvas.drawLine(
-          Offset(center.dx - r, center.dy),
-          Offset(center.dx + r, center.dy),
-          linePaint);
+        Offset(center.dx - r, center.dy),
+        Offset(center.dx + r, center.dy),
+        linePaint,
+      );
       canvas.drawLine(
-          Offset(center.dx, center.dy - r),
-          Offset(center.dx, center.dy + r),
-          linePaint);
+        Offset(center.dx, center.dy - r),
+        Offset(center.dx, center.dy + r),
+        linePaint,
+      );
     }
   }
 
@@ -1185,15 +1206,15 @@ class _GamePainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 4
         ..strokeCap = StrokeCap.round
-        ..color = Color.lerp(
-          AppTheme.success,
-          AppTheme.danger,
-          drawStrength,
-        )!;
-      final meterRect =
-          Rect.fromCircle(center: center, radius: bowR + 12);
+        ..color = Color.lerp(AppTheme.success, AppTheme.danger, drawStrength)!;
+      final meterRect = Rect.fromCircle(center: center, radius: bowR + 12);
       canvas.drawArc(
-          meterRect, pi * 0.6, -pi * 1.2 * drawStrength, false, meterPaint);
+        meterRect,
+        pi * 0.6,
+        -pi * 1.2 * drawStrength,
+        false,
+        meterPaint,
+      );
     }
   }
 
@@ -1245,10 +1266,26 @@ class _GamePainter extends CustomPainter {
 
     canvas.drawCircle(p, r, paint);
 
-    canvas.drawLine(Offset(p.dx - r * 1.4, p.dy), Offset(p.dx - r * 0.4, p.dy), paint);
-    canvas.drawLine(Offset(p.dx + r * 0.4, p.dy), Offset(p.dx + r * 1.4, p.dy), paint);
-    canvas.drawLine(Offset(p.dx, p.dy - r * 1.4), Offset(p.dx, p.dy - r * 0.4), paint);
-    canvas.drawLine(Offset(p.dx, p.dy + r * 0.4), Offset(p.dx, p.dy + r * 1.4), paint);
+    canvas.drawLine(
+      Offset(p.dx - r * 1.4, p.dy),
+      Offset(p.dx - r * 0.4, p.dy),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(p.dx + r * 0.4, p.dy),
+      Offset(p.dx + r * 1.4, p.dy),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(p.dx, p.dy - r * 1.4),
+      Offset(p.dx, p.dy - r * 0.4),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(p.dx, p.dy + r * 0.4),
+      Offset(p.dx, p.dy + r * 1.4),
+      paint,
+    );
 
     final dotPaint = Paint()
       ..color = AppTheme.danger

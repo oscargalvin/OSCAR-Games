@@ -44,11 +44,7 @@ class _SnakeScreenState extends State<SnakeScreen> {
   }
 
   void _initGame() {
-    snake = [
-      const Point(5, 10),
-      const Point(4, 10),
-      const Point(3, 10),
-    ];
+    snake = [const Point(5, 10), const Point(4, 10), const Point(3, 10)];
     direction = Direction.right;
     nextDirection = Direction.right;
     score = 0;
@@ -137,16 +133,39 @@ class _SnakeScreenState extends State<SnakeScreen> {
   Widget build(BuildContext context) {
     return GameScaffold(
       title: 'Snake',
-      body: Column(
-        children: [
-          const SizedBox(height: 16),
-          _buildStats(),
-          const SizedBox(height: 16),
-          Expanded(child: _buildGameArea()),
-          const SizedBox(height: 12),
-          _buildControls(),
-          const SizedBox(height: 24),
-        ],
+      body: LayoutBuilder(
+        builder: (context, c) {
+          // Phone turned sideways: put the arrow pad beside the board.
+          if (c.maxWidth > c.maxHeight) {
+            return Column(
+              children: [
+                const SizedBox(height: 8),
+                _buildStats(),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(child: _buildGameArea()),
+                      FittedBox(child: _buildControls()),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            );
+          }
+          return Column(
+            children: [
+              const SizedBox(height: 16),
+              _buildStats(),
+              const SizedBox(height: 16),
+              Expanded(child: _buildGameArea()),
+              const SizedBox(height: 12),
+              _buildControls(),
+              const SizedBox(height: 24),
+            ],
+          );
+        },
       ),
     );
   }
@@ -208,17 +227,12 @@ class _SnakeScreenState extends State<SnakeScreen> {
             decoration: BoxDecoration(
               color: AppTheme.surface.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: AppTheme.accent.withValues(alpha: 0.2),
-              ),
+              border: Border.all(color: AppTheme.accent.withValues(alpha: 0.2)),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(20),
               child: Stack(
-                children: [
-                  _buildGrid(),
-                  if (!isPlaying) _buildOverlay(),
-                ],
+                children: [_buildGrid(), if (!isPlaying) _buildOverlay()],
               ),
             ),
           ),
@@ -291,7 +305,9 @@ class _SnakeScreenState extends State<SnakeScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _buildControlButton(
-                  Icons.keyboard_arrow_left_rounded, Direction.left),
+                Icons.keyboard_arrow_left_rounded,
+                Direction.left,
+              ),
               const SizedBox(width: 8),
               GestureDetector(
                 onTap: isPlaying ? _pauseGame : _startGame,
@@ -302,7 +318,8 @@ class _SnakeScreenState extends State<SnakeScreen> {
                     color: AppTheme.accent.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
-                        color: AppTheme.accent.withValues(alpha: 0.4)),
+                      color: AppTheme.accent.withValues(alpha: 0.4),
+                    ),
                   ),
                   child: Icon(
                     isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
@@ -313,11 +330,15 @@ class _SnakeScreenState extends State<SnakeScreen> {
               ),
               const SizedBox(width: 8),
               _buildControlButton(
-                  Icons.keyboard_arrow_right_rounded, Direction.right),
+                Icons.keyboard_arrow_right_rounded,
+                Direction.right,
+              ),
             ],
           ),
           _buildControlButton(
-              Icons.keyboard_arrow_down_rounded, Direction.down),
+            Icons.keyboard_arrow_down_rounded,
+            Direction.down,
+          ),
         ],
       ),
     );

@@ -345,7 +345,7 @@ class _BoatFishingScreenState extends State<BoatFishingScreen>
             side: BorderSide(color: fish.rarity.color.withValues(alpha: 0.45), width: 2),
           ),
           backgroundColor: AppTheme.primaryMid,
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1231,18 +1231,29 @@ class _BoatFishingScreenState extends State<BoatFishingScreen>
                         ),
                       ),
                       const SizedBox(height: 12),
-                      Row(
+                      // Wrap so the button drops below the price on narrow phones.
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
-                          Icon(Icons.monetization_on_rounded,
-                              color: affordable ? AppTheme.warning : AppTheme.danger, size: 18),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              priceLabel,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: affordable ? AppTheme.textPrimary : AppTheme.danger,
+                          Text.rich(
+                            TextSpan(children: [
+                              WidgetSpan(
+                                alignment: PlaceholderAlignment.middle,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: Icon(Icons.monetization_on_rounded,
+                                      color: affordable ? AppTheme.warning : AppTheme.danger,
+                                      size: 18),
+                                ),
                               ),
+                              TextSpan(text: priceLabel),
+                            ]),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: affordable ? AppTheme.textPrimary : AppTheme.danger,
                             ),
                           ),
                           FilledButton(

@@ -105,12 +105,14 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
             _showWinDialog();
           }
         } else {
+          final a = firstFlipped!, b = secondFlipped!;
           Future.delayed(const Duration(milliseconds: 800), () {
-            if (mounted) {
+            // Skip if the game was restarted while the cards were showing.
+            if (mounted && firstFlipped == a && secondFlipped == b) {
               SoundService.instance.play(GameSound.noMatch);
               setState(() {
-                flipped[firstFlipped!] = false;
-                flipped[secondFlipped!] = false;
+                flipped[a] = false;
+                flipped[b] = false;
                 firstFlipped = null;
                 secondFlipped = null;
                 isChecking = false;
@@ -135,7 +137,7 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
       builder: (context) => Dialog(
         backgroundColor: AppTheme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,

@@ -183,7 +183,7 @@ class _ShopScreenState extends State<ShopScreen>
       builder: (ctx) => Dialog(
         backgroundColor: AppTheme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -287,7 +287,7 @@ class _ShopScreenState extends State<ShopScreen>
       builder: (ctx) => Dialog(
         backgroundColor: AppTheme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -325,7 +325,7 @@ class _ShopScreenState extends State<ShopScreen>
       builder: (ctx) => Dialog(
         backgroundColor: AppTheme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -488,7 +488,7 @@ class _ShopScreenState extends State<ShopScreen>
       builder: (ctx) => Dialog(
         backgroundColor: AppTheme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -567,7 +567,7 @@ class _ShopScreenState extends State<ShopScreen>
       builder: (ctx) => Dialog(
         backgroundColor: AppTheme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -616,8 +616,10 @@ class _ShopScreenState extends State<ShopScreen>
                 ),
               ),
               const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              Wrap(
+                alignment: WrapAlignment.spaceEvenly,
+                spacing: 12,
+                runSpacing: 8,
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(ctx).pop(),
@@ -1379,9 +1381,12 @@ class _ShopScreenState extends State<ShopScreen>
                   if (currency == 'diamonds')
                     const Icon(Icons.diamond_rounded, size: 16),
                   if (currency == 'diamonds') const SizedBox(width: 6),
-                  Text(
-                    currency == 'diamonds' ? '$price Diamonds' : price,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  Flexible(
+                    child: Text(
+                      currency == 'diamonds' ? '$price Diamonds' : price,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ],
               ),

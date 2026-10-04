@@ -170,11 +170,7 @@ class _ReactionScreenState extends State<ReactionScreen>
             _times.isNotEmpty ? '${_averageTime}ms' : '--',
             AppTheme.accent,
           ),
-          _buildStatItem(
-            'Tries',
-            '${_times.length}',
-            AppTheme.purple,
-          ),
+          _buildStatItem('Tries', '${_times.length}', AppTheme.purple),
         ],
       ),
     );
@@ -234,68 +230,73 @@ class _ReactionScreenState extends State<ReactionScreen>
           ],
         ),
         child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AnimatedBuilder(
-                animation: _pulseController,
-                builder: (context, child) {
-                  return Transform.scale(
-                    scale: _state == ReactionState.ready
-                        ? 1.0 + _pulseController.value * 0.1
-                        : 1.0,
-                    child: child,
-                  );
-                },
-                child: Icon(
-                  _state == ReactionState.waiting
-                      ? Icons.hourglass_top_rounded
-                      : _state == ReactionState.ready
-                          ? Icons.touch_app_rounded
-                          : _state == ReactionState.tooEarly
-                              ? Icons.warning_rounded
-                              : Icons.timer_rounded,
-                  color: _backgroundColor,
-                  size: 64,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                _mainText,
-                style: TextStyle(
-                  color: _backgroundColor,
-                  fontSize: _state == ReactionState.result ? 48 : 32,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                _subText,
-                style: TextStyle(
-                  color: _backgroundColor.withValues(alpha: 0.7),
-                  fontSize: 16,
-                ),
-              ),
-              if (_state == ReactionState.result) ...[
-                const SizedBox(height: 32),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(16),
+          child: SingleChildScrollView(
+            physics: const NeverScrollableScrollPhysics(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedBuilder(
+                  animation: _pulseController,
+                  builder: (context, child) {
+                    return Transform.scale(
+                      scale: _state == ReactionState.ready
+                          ? 1.0 + _pulseController.value * 0.1
+                          : 1.0,
+                      child: child,
+                    );
+                  },
+                  child: Icon(
+                    _state == ReactionState.waiting
+                        ? Icons.hourglass_top_rounded
+                        : _state == ReactionState.ready
+                        ? Icons.touch_app_rounded
+                        : _state == ReactionState.tooEarly
+                        ? Icons.warning_rounded
+                        : Icons.timer_rounded,
+                    color: _backgroundColor,
+                    size: 64,
                   ),
-                  child: const Text(
-                    'Tap to try again',
-                    style: TextStyle(
-                      color: AppTheme.accent,
-                      fontWeight: FontWeight.w600,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  _mainText,
+                  style: TextStyle(
+                    color: _backgroundColor,
+                    fontSize: _state == ReactionState.result ? 48 : 32,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _subText,
+                  style: TextStyle(
+                    color: _backgroundColor.withValues(alpha: 0.7),
+                    fontSize: 16,
+                  ),
+                ),
+                if (_state == ReactionState.result) ...[
+                  const SizedBox(height: 32),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accent.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Text(
+                      'Tap to try again',
+                      style: TextStyle(
+                        color: AppTheme.accent,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
