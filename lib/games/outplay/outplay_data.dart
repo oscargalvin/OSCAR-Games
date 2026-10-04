@@ -330,6 +330,7 @@ class OutplaySave {
   String melee = 'fist';
   int wins = 0;
   int losses = 0;
+  String name = ''; // shown to other players online
 
   Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -355,6 +356,7 @@ class OutplaySave {
       if (!ownedMelees.contains(melee)) melee = 'fist';
       wins = m['wins'] as int? ?? 0;
       losses = m['losses'] as int? ?? 0;
+      name = m['name'] as String? ?? '';
     } catch (_) {
       // A broken save starts fresh rather than crashing the game.
     }
@@ -375,6 +377,7 @@ class OutplaySave {
         'melee': melee,
         'wins': wins,
         'losses': losses,
+        'name': name,
       }),
     );
     await _prefs!.setInt('highscore_outplay', wins);

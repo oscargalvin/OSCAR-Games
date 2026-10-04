@@ -9,8 +9,9 @@ import '../../services/sound_service.dart';
 import 'outplay_art.dart';
 import 'outplay_data.dart';
 import 'outplay_maps.dart';
+import 'outplay_net.dart';
 
-enum OutplayMode { lobby, duel, freeForAll }
+enum OutplayMode { lobby, duel, freeForAll, online }
 
 const double _personRadius = 0.25;
 const double _walkSpeed = 3.0;
@@ -61,6 +62,12 @@ class _Person {
   double shieldT = 0; // can't be hurt just after coming back
   int kills = 0;
   int deaths = 0;
+
+  // Online: someone playing on another phone.
+  bool remote = false;
+  String netId = '';
+  Offset netPos = Offset.zero;
+  double netQuiet = 0; // seconds since we last heard from them
 
   // Bot brain.
   List<Point<int>> path = [];
@@ -160,7 +167,7 @@ class _Hit {
   const _Hit(this.dist, this.cell, this.side, this.wallX);
 }
 
-enum _Phase { countdown, fight, roundOver, matchOver }
+enum _Phase { waiting, countdown, fight, roundOver, matchOver }
 
 /// First-person Outplay: the Duel Zone lobby, 1v1 duels and free-for-alls.
 class OutplayGameScreen extends StatefulWidget {
@@ -168,11 +175,19 @@ class OutplayGameScreen extends StatefulWidget {
   final String mapId;
   final int bots;
 
+  /// The online room, when playing real people.
+  final OutplayRoom? room;
+
+  /// Makes online links; tests swap in a pretend one.
+  final OutplayLink? Function() makeLink;
+
   const OutplayGameScreen({
     super.key,
     this.mode = OutplayMode.lobby,
     this.mapId = 'warehouse',
     this.bots = 1,
+    this.room,
+    this.makeLink = createLink,
   });
 
   @override
@@ -232,7 +247,19 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   double _topPad = 0;
 
   bool get _lobby => widget.mode == OutplayMode.lobby;
-  bool get _ffa => widget.mode == OutplayMode.freeForAll;
+  bool get _online => widget.mode == OutplayMode.online;
+  // Online games use the free-for-all rules.
+  bool get _ffa => widget.mode == OutplayMode.freeForAll || _online;
+  OutplayRoom get _room => widget.room!;
+  double _sendT = 0;
+  bool _hostLeft = false;
+  bool _closedEarly = false;
+
+  // The Find Players panel.
+  final _nameBox = TextEditingController();
+  final _codeBox = TextEditingController();
+  bool _netBusy = false;
+  String? _netError;
 
   @override
   void initState() {
@@ -242,7 +269,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     _you = _Person(
       name: 'You',
       isYou: true,
-      shirt: const Color(0xFF4FC3F7),
+      shirt: _online
+          ? _shirts[_rnd.nextInt(_shirts.length)]
+          : const Color(0xFF4FC3F7),
       skin: const Color(0xFFFFCC80),
       guns: [
         gunById(_save.primary),
@@ -256,7 +285,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       angle: -pi / 2,
     );
     _people.add(_you);
-    if (!_lobby) {
+    _nameBox.text = _save.name;
+    if (!_lobby && !_online) {
       final tier = _save.wins.clamp(0, 12);
       final names = [..._botNames]..shuffle(_rnd);
       for (var i = 0; i < widget.bots; i++) {
@@ -286,6 +316,16 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       }
     }
     _startRound();
+    if (_online) {
+      _you.netId = _room.myId;
+      if (!_room.started) {
+        _phase = _Phase.waiting;
+      } else if (_room.joinClock > 2.4) {
+        // Joining a game that's already going.
+        _clock = _room.joinClock - 2.4;
+        _phase = _Phase.fight;
+      }
+    }
     _ticker = createTicker(_tick)..start();
   }
 
@@ -293,6 +333,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   void dispose() {
     _ticker.dispose();
     _focus.dispose();
+    _nameBox.dispose();
+    _codeBox.dispose();
+    widget.room?.close();
     super.dispose();
   }
 
@@ -305,7 +348,14 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     }
     // Duels start at opposite ends; free-for-all spreads everyone out.
     spawns.shuffle(_rnd);
-    if (!_ffa) {
+    if (_online) {
+      // Everyone else places themselves on their own phone.
+      _you.respawn(spawns.first, _faceCentre(spawns.first));
+      for (final p in _people) {
+        p.kills = 0;
+        p.deaths = 0;
+      }
+    } else if (!_ffa) {
       spawns.sort((a, b) => a.dy.compareTo(b.dy));
       _you.respawn(spawns.last, _faceCentre(spawns.last));
       _people[1].respawn(spawns.first, _faceCentre(spawns.first));
@@ -354,7 +404,14 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       _feedT = 2.5;
     }
 
+    if (_online) _netTick(dt);
+
     switch (_phase) {
+      case _Phase.waiting:
+        _look(dt);
+        _updatePerson(_you, dt, _yourMove(), false);
+        _separate();
+        break;
       case _Phase.countdown:
         _look(dt);
         if (_phaseT >= 2.4) {
@@ -367,7 +424,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         _look(dt);
         _updatePerson(_you, dt, _yourMove(), _firing || _keyFire);
         for (final p in _people) {
-          if (!p.isYou) _updateBot(p, dt);
+          if (!p.isYou && !p.remote) _updateBot(p, dt);
         }
         _separate();
         _updateBalls(dt);
@@ -484,7 +541,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         p.reloadingSlot = -1;
       }
     }
-    if (_lobby) return;
+    if (_lobby || _phase == _Phase.waiting) return;
     final gun = p.gun;
     if (gun != null) {
       if (fire && p.cooldown <= 0 && !p.reloading) {
@@ -535,7 +592,19 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       final a = p.angle + (_rnd.nextDouble() * 2 - 1) * g.spread;
       final dir = Offset(cos(a), sin(a));
       if (g.kind == ShotKind.ball) {
-        _balls.add(_Ball(p.pos + dir * 0.35, dir * g.ballSpeed, p, g));
+        final start = p.pos + dir * 0.35, vel = dir * g.ballSpeed;
+        _balls.add(_Ball(start, vel, p, g));
+        if (_online && p.isYou) {
+          _room.send({
+            't': 'ball',
+            'id': _you.netId,
+            'x': start.dx,
+            'y': start.dy,
+            'vx': vel.dx,
+            'vy': vel.dy,
+            'g': g.id,
+          });
+        }
         continue;
       }
       final wall = _cast(p.pos, a).dist;
@@ -572,8 +641,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       if (d.distance > m.reach + _personRadius) continue;
       final diff = _angleDiff(p.angle, d.direction).abs();
       if (diff > m.arc / 2 + 0.3) continue;
-      _damage(o, m.damage * levelDamageMul(p.lvl(m.id)), p);
-      _moveBy(o, Offset.fromDirection(d.direction, m.knockback));
+      _damage(
+        o,
+        m.damage * levelDamageMul(p.lvl(m.id)),
+        p,
+        knock: Offset.fromDirection(d.direction, m.knockback),
+      );
     }
   }
 
@@ -631,13 +704,18 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     }
     if (_map.hazard == MapHazard.cars) {
       _carT -= dt;
-      if (_carT <= 0) {
+      // Online, the host sends the cars so everyone sees the same ones.
+      if (_carT <= 0 && (!_online || _room.isHost)) {
         _carT = 1.6 + _rnd.nextDouble() * 2.2;
         final leftLane = _rnd.nextBool();
         final y = leftLane ? 5.8 : 7.2;
         final speed = (6 + _rnd.nextDouble() * 3) * (leftLane ? 1 : -1);
         final x = speed > 0 ? 0.5 : _map.width - 0.5;
-        _cars.add(_Car(x, y, speed, _shirts[_rnd.nextInt(_shirts.length)]));
+        final colour = _rnd.nextInt(_shirts.length);
+        _cars.add(_Car(x, y, speed, _shirts[colour]));
+        if (_online) {
+          _room.send({'t': 'car', 'x': x, 'y': y, 's': speed, 'c': colour});
+        }
       }
       for (final c in _cars) {
         c.x += c.speed * dt;
@@ -658,7 +736,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   void _updateRespawns(double dt) {
     if (!_ffa) return;
     for (final p in _people) {
-      if (p.alive) continue;
+      if (p.alive || p.remote) continue;
       p.respawnT -= dt;
       if (p.respawnT <= 0) {
         // Pick the start spot furthest from everyone else.
@@ -687,12 +765,36 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     double slow = 0,
     bool quiet = false,
     String? cause,
+    Offset knock = Offset.zero,
+    bool fromNet = false,
   }) {
     if (!p.alive || _phase != _Phase.fight || _lobby) return;
     if (p.shieldT > 0 && _ffa) return;
+    if (_online) {
+      if (p.remote) {
+        // Their own phone takes the damage; we just tell them about it.
+        if (by == null || !by.isYou) return;
+        _room.send({
+          't': 'hit',
+          'to': p.netId,
+          'by': _you.netId,
+          'dmg': amount,
+          'slow': slow,
+          'kx': knock.dx,
+          'ky': knock.dy,
+        });
+        _hitMarkT = 0.15;
+        _popups.add(_Popup(p.pos, amount.round().toString(), Colors.white));
+        SoundService.instance.play(GameSound.hit);
+        return;
+      }
+      // Hits from other players only count when their phone says so.
+      if (by != null && by.remote && !fromNet) return;
+    }
     // Bots hit softer so the game stays easy.
-    if (by != null && !by.isYou && p.isYou) amount *= 0.5;
+    if (by != null && !by.isYou && !by.remote && p.isYou) amount *= 0.5;
     p.hp -= amount;
+    if (knock != Offset.zero) _moveBy(p, knock);
     p.hurtT = 0.15;
     if (slow > 0) p.slowT = max(p.slowT, slow);
     if (by != null && by.isYou) {
@@ -708,6 +810,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     if (by != null && !identical(by, p)) by.kills++;
     final killer = by == null ? null : (by.isYou ? 'You' : by.name);
     final victim = p.isYou ? 'you' : p.name;
+    if (_online && p.isYou) {
+      _room.send({'t': 'ko', 'v': _you.netId, 'k': by?.netId, 'c': cause});
+    }
     _addFeed(
       killer == null
           ? '${p.isYou ? 'You' : p.name} ${cause ?? 'fell in the lava'}'
@@ -740,7 +845,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       final top = _people.map((p) => p.kills).reduce(max);
       _youWon = _you.kills == top && top > 0;
       // Coins only for winning the whole game.
-      _coinsEarned = _youWon ? 80 : 0;
+      _coinsEarned = _youWon ? (_online ? 100 : 80) : 0;
     } else {
       _youWon = _yourRounds > _botRounds;
       _coinsEarned = _youWon ? 100 : 0;
@@ -756,6 +861,193 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     _phase = _Phase.matchOver;
     _phaseT = 0;
     _firing = false;
+  }
+
+  // ---- online -------------------------------------------------------------
+
+  void _netTick(double dt) {
+    for (final m in _room.takeMessages()) {
+      _onNet(m);
+    }
+    for (final p in [..._people]) {
+      if (!p.remote) continue;
+      p.netQuiet += dt;
+      if (p.netQuiet > 8) {
+        _people.remove(p);
+        _addFeed('${p.name} left');
+        continue;
+      }
+      // Glide towards where their phone says they are.
+      final gap = p.netPos - p.pos;
+      if (gap.distance > 3) {
+        p.pos = p.netPos;
+      } else {
+        p.pos += gap * min(1.0, dt * 12);
+        p.walkCycle += gap.distance * min(1.0, dt * 12) * 3;
+      }
+    }
+    _sendT -= dt;
+    if (_sendT <= 0) {
+      _sendT = 1 / 15;
+      _room.send({
+        't': 's',
+        'id': _you.netId,
+        'n': _myName,
+        'sh': _you.shirt.toARGB32(),
+        'sk': _you.skin.toARGB32(),
+        'g0': _you.guns[0]?.id,
+        'g1': _you.guns[1]?.id,
+        'm': _you.melee.id,
+        'x': _you.pos.dx,
+        'y': _you.pos.dy,
+        'a': _you.angle,
+        'z': _you.z,
+        'hp': _you.hp,
+        'al': _you.alive,
+        'sl': _you.slot,
+        'sw': _you.swingT > 0,
+        'fl': _you.flashT > 0,
+        'k': _you.kills,
+        'd': _you.deaths,
+      });
+    }
+  }
+
+  String get _myName {
+    final n = _save.name.trim();
+    return n.isEmpty ? _guestName : n;
+  }
+
+  late final String _guestName = 'Player ${10 + _rnd.nextInt(90)}';
+
+  _Person? _byNetId(Object? id) {
+    if (id == null) return null;
+    for (final p in _people) {
+      if (p.netId == id) return p;
+    }
+    return null;
+  }
+
+  double _num(Object? v) => (v as num?)?.toDouble() ?? 0;
+
+  void _onNet(Map<String, dynamic> m) {
+    switch (m['t']) {
+      case 's':
+        final id = m['id'] as String?;
+        if (id == null || id == _you.netId) return;
+        var p = _byNetId(id);
+        final at = Offset(_num(m['x']), _num(m['y']));
+        if (p == null) {
+          final g1 = m['g1'] as String?;
+          p =
+              _Person(
+                  name: (m['n'] as String?) ?? 'Player',
+                  isYou: false,
+                  shirt: Color((m['sh'] as int?) ?? 0xFFEF5350),
+                  skin: Color((m['sk'] as int?) ?? 0xFFFFCC80),
+                  guns: [
+                    gunById((m['g0'] as String?) ?? ''),
+                    g1 == null ? null : gunById(g1),
+                  ],
+                  melee: meleeById((m['m'] as String?) ?? ''),
+                  levels: {},
+                  pos: at,
+                  angle: _num(m['a']),
+                )
+                ..remote = true
+                ..netId = id;
+          _people.add(p);
+          if (_phase != _Phase.waiting) _addFeed('${p.name} joined');
+        }
+        p.netPos = at;
+        p.netQuiet = 0;
+        p.angle = _num(m['a']);
+        p.z = _num(m['z']);
+        p.vz = 0;
+        p.hp = _num(m['hp']);
+        p.alive = m['al'] == true;
+        p.slot = ((m['sl'] as int?) ?? 0).clamp(0, 2);
+        if (p.slot == 1 && p.guns[1] == null) p.slot = 0;
+        if (m['sw'] == true && p.swingT <= 0) p.swingT = 0.2;
+        if (m['fl'] == true) p.flashT = 0.06;
+        p.kills = (m['k'] as int?) ?? p.kills;
+        p.deaths = (m['d'] as int?) ?? p.deaths;
+        if (_phase == _Phase.fight && p.kills >= _ffaKillsToWin) {
+          _finishMatch();
+        }
+        break;
+      case 'hit':
+        if (m['to'] != _you.netId) return;
+        final by = _byNetId(m['by']);
+        if (by == null) return;
+        _damage(
+          _you,
+          _num(m['dmg']),
+          by,
+          slow: _num(m['slow']),
+          knock: Offset(_num(m['kx']), _num(m['ky'])),
+          fromNet: true,
+        );
+        break;
+      case 'ko':
+        final victim = _byNetId(m['v']);
+        if (victim == null || identical(victim, _you)) return;
+        final killer = m['k'] == _you.netId ? _you : _byNetId(m['k']);
+        victim.alive = false;
+        victim.deaths++;
+        if (killer != null) killer.kills++;
+        _addFeed(
+          killer == null
+              ? '${victim.name} ${(m['c'] as String?) ?? 'fell in the lava'}'
+              : '${killer.isYou ? 'You' : killer.name} outplayed ${victim.name}',
+        );
+        if (killer != null && killer.kills >= _ffaKillsToWin) _finishMatch();
+        break;
+      case 'ball':
+        final owner = _byNetId(m['id']);
+        if (owner == null) return;
+        _balls.add(
+          _Ball(
+            Offset(_num(m['x']), _num(m['y'])),
+            Offset(_num(m['vx']), _num(m['vy'])),
+            owner,
+            gunById((m['g'] as String?) ?? ''),
+          ),
+        );
+        break;
+      case 'car':
+        if (_map.hazard != MapHazard.cars) return;
+        final c = ((m['c'] as int?) ?? 0) % _shirts.length;
+        _cars.add(_Car(_num(m['x']), _num(m['y']), _num(m['s']), _shirts[c]));
+        break;
+      case 'start':
+        if (_phase == _Phase.waiting) {
+          _startRound();
+        }
+        break;
+      case 'bye':
+        final p = _byNetId(m['id']);
+        if (p != null) {
+          _people.remove(p);
+          _addFeed('${p.name} left');
+        }
+        break;
+      case 'hostLeft':
+        _hostLeft = true;
+        if (_phase == _Phase.waiting) {
+          _closedEarly = true;
+          _phase = _Phase.matchOver;
+        } else {
+          _finishMatch();
+        }
+        break;
+    }
+  }
+
+  void _hostStart() {
+    if (!_room.isHost || _phase != _Phase.waiting) return;
+    _room.start();
+    _startRound();
   }
 
   // ---- bots ---------------------------------------------------------------
@@ -985,17 +1277,19 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     final mapId = _pickMap == 'random'
         ? ids[_rnd.nextInt(ids.length)]
         : _pickMap;
-    setState(() => _panel = null);
-    _ticker.stop();
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => OutplayGameScreen(
-          mode: mode,
-          mapId: mapId,
-          bots: mode == OutplayMode.duel ? 1 : _pickBots,
-        ),
+    await _launchWith(
+      OutplayGameScreen(
+        mode: mode,
+        mapId: mapId,
+        bots: mode == OutplayMode.duel ? 1 : _pickBots,
       ),
     );
+  }
+
+  Future<void> _launchWith(OutplayGameScreen game) async {
+    setState(() => _panel = null);
+    _ticker.stop();
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => game));
     if (!mounted) return;
     // Step back off the pad when you return.
     _you.pos = _map.spawnPoints().first;
@@ -1036,6 +1330,11 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
+    // Let the name and room code boxes have the keyboard.
+    if (_panel != null) {
+      _keys.clear();
+      return KeyEventResult.ignored;
+    }
     final k = e.logicalKey;
     if (e is KeyDownEvent) {
       _keys.add(k);
@@ -1078,6 +1377,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                 SafeArea(child: _buildHud(size)),
                 if (_phase == _Phase.countdown || _phase == _Phase.roundOver)
                   _buildBanner(),
+                if (_phase == _Phase.waiting) _buildWaiting(),
                 if (_phase == _Phase.matchOver) _buildMatchOver(),
                 if (_panel != null) _buildPadPanel(),
               ],
@@ -1191,6 +1491,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       return const Padding(
         padding: EdgeInsets.only(top: 10),
         child: Text('DUEL ZONE', style: style),
+      );
+    }
+    if (_phase == _Phase.waiting) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Text('ROOM ${_room.code}', style: style),
       );
     }
     String line;
@@ -1396,7 +1702,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       final left = 3 - (_phaseT / 0.6).floor();
       big = left > 0 ? '$left' : 'FIGHT!';
       small = _ffa
-          ? 'Free-for-all · ${_map.name} · first to $_ffaKillsToWin KOs'
+          ? '${_online ? 'Online' : 'Free-for-all'} · ${_map.name} · first to $_ffaKillsToWin KOs'
           : 'Round $_round · ${_map.name}';
     } else {
       big = _lastRoundYours ? 'OUTPLAYED!' : 'You got outplayed';
@@ -1459,8 +1765,17 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_hostLeft)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'The player who made the room left.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
               Text(
-                _youWon ? 'VICTORY' : 'DEFEAT',
+                _closedEarly ? 'ROOM CLOSED' : (_youWon ? 'VICTORY' : 'DEFEAT'),
                 style: TextStyle(
                   color: _youWon
                       ? const Color(0xFF4FC3F7)
@@ -1524,6 +1839,119 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     );
   }
 
+  Widget _buildWaiting() {
+    final others = _people.length - 1;
+    return Positioned(
+      left: 16,
+      right: 16,
+      top: _topPad + 70,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFF42A5F5), width: 2),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Room code',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              Text(
+                _room.code,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 40,
+                  letterSpacing: 6,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              Text(
+                others == 0
+                    ? 'Tell your friends this code so they can join.'
+                    : '${others + 1} players here: ${[_myName, for (final p in _people)
+                        if (p.remote) p.name].join(', ')}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white),
+              ),
+              const SizedBox(height: 10),
+              if (_room.isHost)
+                ElevatedButton(
+                  onPressed: others > 0 ? _hostStart : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF42A5F5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: Text(others > 0 ? 'START' : 'Waiting for players…'),
+                )
+              else
+                const Text(
+                  'Waiting for the room maker to press Start…',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _goOnline({required bool host}) async {
+    final make = widget.makeLink;
+    if (make() == null) {
+      setState(() => _netError = "Online play only works on the website.");
+      return;
+    }
+    final code = _codeBox.text.trim().toUpperCase();
+    if (!host && code.length != 4) {
+      setState(() => _netError = 'Type the 4 letter room code first.');
+      return;
+    }
+    _save.name = _nameBox.text.trim();
+    _save.save();
+    setState(() {
+      _netBusy = true;
+      _netError = null;
+    });
+    final ids = kArenaMaps.map((m) => m.id).toList();
+    final mapId = _pickMap == 'random'
+        ? ids[_rnd.nextInt(ids.length)]
+        : _pickMap;
+    OutplayRoom room;
+    try {
+      room = host
+          ? await OutplayRoom.host(() => make()!, mapId)
+          : await OutplayRoom.join(() => make()!, code);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _netBusy = false;
+          _netError = '$e';
+        });
+      }
+      return;
+    }
+    if (!mounted) {
+      room.close();
+      return;
+    }
+    setState(() => _netBusy = false);
+    _launchWith(
+      OutplayGameScreen(
+        mode: OutplayMode.online,
+        mapId: room.mapId,
+        room: room,
+      ),
+    );
+  }
+
   Widget _buildPadPanel() {
     final pad = _panel!;
     final String title, text;
@@ -1540,10 +1968,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         color = const Color(0xFFFFA726);
         break;
       default:
-        title = 'Find a real player';
+        title = 'Find Players';
         text =
-            'Playing real people online needs an online game server, '
-            "which isn't set up yet. Try Quick Play or Free-for-all for now!";
+            'Play real people online! Make a room and tell your friends '
+            'the code, or type a friend\'s code to join their room.';
         color = const Color(0xFF42A5F5);
     }
     Widget mapChip(String id, String name) => ChoiceChip(
@@ -1578,7 +2006,20 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(text, style: const TextStyle(color: Colors.white70)),
-                if (pad != 'O') ...[
+                if (pad == 'O') ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _nameBox,
+                    maxLength: 12,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Your name',
+                      counterText: '',
+                      isDense: true,
+                    ),
+                  ),
+                ],
+                ...[
                   const SizedBox(height: 12),
                   const Text(
                     'Map',
@@ -1639,13 +2080,72 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                     ],
                   ),
                 ],
+                if (pad == 'O') ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _netBusy ? null : () => _goOnline(host: true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: color,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('MAKE A ROOM'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _codeBox,
+                          maxLength: 4,
+                          textCapitalization: TextCapitalization.characters,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            letterSpacing: 4,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Room code',
+                            counterText: '',
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      ElevatedButton(
+                        onPressed: _netBusy
+                            ? null
+                            : () => _goOnline(host: false),
+                        child: const Text('JOIN'),
+                      ),
+                    ],
+                  ),
+                  if (_netBusy)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: Text(
+                        'Connecting…',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                  if (_netError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        _netError!,
+                        style: const TextStyle(color: Color(0xFFFF8A80)),
+                      ),
+                    ),
+                ],
                 const SizedBox(height: 14),
                 Row(
                   children: [
                     Expanded(
                       child: OutlinedButton(
                         onPressed: () => setState(() => _panel = null),
-                        child: Text(pad == 'O' ? 'OK' : 'Not now'),
+                        child: Text(pad == 'O' ? 'Close' : 'Not now'),
                       ),
                     ),
                     if (pad != 'O') ...[

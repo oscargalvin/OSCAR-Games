@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:oscar_games/games/outplay/outplay_data.dart';
 import 'package:oscar_games/games/outplay/outplay_game.dart';
+import 'package:oscar_games/games/outplay/outplay_net.dart';
 
 Future<void> _phone(WidgetTester tester) async {
   tester.view.physicalSize = const Size(375, 667) * 3;
@@ -92,6 +93,85 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+
+  testWidgets('two players meet in an online room and fight', (tester) async {
+    tester.view.physicalSize = const Size(750, 667) * 2;
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+    final hub = LoopbackHub();
+    final hostRoom = await OutplayRoom.host(hub.makeLink, 'warehouse');
+    final guestRoom = await OutplayRoom.join(hub.makeLink, hostRoom.code);
+    expect(guestRoom.mapId, 'warehouse');
+    final guestKey = GlobalKey();
+
+    Widget app({required bool withHost}) => MaterialApp(
+      home: Row(
+        children: [
+          if (withHost)
+            Expanded(
+              child: OutplayGameScreen(
+                mode: OutplayMode.online,
+                mapId: hostRoom.mapId,
+                room: hostRoom,
+              ),
+            ),
+          Expanded(
+            child: OutplayGameScreen(
+              key: guestKey,
+              mode: OutplayMode.online,
+              mapId: guestRoom.mapId,
+              room: guestRoom,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(app(withHost: true));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    // Both phones see each other in the waiting room.
+    expect(find.textContaining('2 players here'), findsNWidgets(2));
+    expect(find.text(hostRoom.code), findsNWidgets(2));
+    await tester.tap(find.text('START'));
+    for (var i = 0; i < 100; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.textContaining('KOs 0'), findsNWidgets(2));
+
+    // The guest's phone says it hit the host hard enough to knock them out.
+    guestRoom.send({
+      't': 'hit',
+      'to': hostRoom.myId,
+      'by': guestRoom.myId,
+      'dmg': 500,
+    });
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(
+      find.textContaining(RegExp(r'^Player \d+ outplayed you$')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('KOs 1'), findsOneWidget);
+
+    // The host leaves: the guest is told the room closed.
+    await tester.pumpWidget(app(withHost: false));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text('The player who made the room left.'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  test('joining a room code nobody made says so', () async {
+    final hub = LoopbackHub();
+    expect(
+      () => OutplayRoom.join(hub.makeLink, 'ZZZZ'),
+      throwsA(contains('No room with the code ZZZZ')),
+    );
+  });
 
   test('old saves drop guns that were removed', () async {
     SharedPreferences.setMockInitialValues({
