@@ -471,6 +471,69 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('you can unlock a second melee slot and put the Sizzler in it', (
+    tester,
+  ) async {
+    await _phone(tester);
+    final save = OutplaySave.instance
+      ..coins = 500
+      ..ownedMelees = {'fist', 'sizzler'}
+      ..melee = 'fist'
+      ..meleeSlot2 = false
+      ..melee2 = null;
+    await save.save();
+    await tester.pumpWidget(const MaterialApp(home: OutplayScreen()));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Carry two melees'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(
+      find.widgetWithText(ElevatedButton, '$kSecondMeleePrice').last,
+    );
+    await tester.pumpAndSettle();
+    expect(save.meleeSlot2, isTrue);
+    expect(save.melee2, 'sizzler');
+    expect(save.coins, 500 - kSecondMeleePrice);
+    expect(find.text('MELEE 2'), findsOneWidget);
+    save.melee2 = null;
+    await save.save();
+    await save.load();
+    expect(save.meleeSlot2, isTrue);
+    save.melee2 = 'sizzler';
+    await save.save();
+    await save.load();
+    expect(save.melee2, 'sizzler');
+  });
+
+  testWidgets('the Sizzler in melee slot 2 has a PULL button', (tester) async {
+    await _phone(tester);
+    final save = OutplaySave.instance
+      ..ownedMelees = {'fist', 'sizzler'}
+      ..melee = 'fist'
+      ..meleeSlot2 = true
+      ..melee2 = 'sizzler';
+    await save.save();
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: OutplayGameScreen(mode: OutplayMode.duel, mapId: 'warehouse'),
+      ),
+    );
+    for (var i = 0; i < 70; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text('PULL'), findsNothing);
+    await tester.tap(find.text('Sizzler'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('PULL'), findsOneWidget);
+    await tester.tap(find.text('PULL'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('PULL'), findsNothing);
+    expect(find.text('4'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('the RPG Mini fires rockets as fast as a minigun', () {
     final rpg = gunById('rpg_mini');
     expect(rpg.kind, ShotKind.ball);

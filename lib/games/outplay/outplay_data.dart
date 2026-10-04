@@ -363,6 +363,7 @@ Melee meleeById(String id) =>
 
 const int kMaxLevel = 5;
 const int kSecondSlotPrice = 400;
+const int kSecondMeleePrice = 300;
 
 /// Each level adds 15% damage and fires 4% faster.
 double levelDamageMul(int level) => 1 + 0.15 * (level - 1);
@@ -656,6 +657,8 @@ class OutplaySave {
   String primary = 'assault_rifle';
   String? secondary;
   String melee = 'fist';
+  bool meleeSlot2 = false;
+  String? melee2;
   int wins = 0;
   int losses = 0;
   String name = ''; // shown to other players online
@@ -692,6 +695,12 @@ class OutplaySave {
       if (!ownedGuns.contains(primary)) primary = 'assault_rifle';
       if (secondary != null && !ownedGuns.contains(secondary)) secondary = null;
       if (!ownedMelees.contains(melee)) melee = 'fist';
+      meleeSlot2 = m['mslot2'] as bool? ?? false;
+      melee2 = m['melee2'] as String?;
+      if (melee2 != null &&
+          (!ownedMelees.contains(melee2) || melee2 == melee)) {
+        melee2 = null;
+      }
       wins = m['wins'] as int? ?? 0;
       losses = m['losses'] as int? ?? 0;
       name = m['name'] as String? ?? '';
@@ -723,6 +732,8 @@ class OutplaySave {
         'primary': primary,
         'secondary': secondary,
         'melee': melee,
+        'mslot2': meleeSlot2,
+        'melee2': melee2,
         'wins': wins,
         'losses': losses,
         'name': name,

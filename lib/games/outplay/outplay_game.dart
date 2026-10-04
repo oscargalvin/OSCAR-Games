@@ -75,7 +75,7 @@ class _Person {
   /// Skins on their weapons (weapon id -> skin id).
   final Map<String, String> skins = {};
   Skin? skinOf(String id) => skinById(skins[id]);
-  String get heldId => gun?.id ?? melee.id;
+  String get heldId => gun?.id ?? held.id;
 
   // Online: someone playing on another phone.
   bool remote = false;
@@ -106,10 +106,19 @@ class _Person {
 
   Color get shirt => look.shirtColour;
   Gun? get gun => slot < 2 ? guns[slot] : null;
+
+  /// A second melee in slot 3, if they unlocked it.
+  Melee? melee2;
+
+  /// The melee in their hand (slot 2 is the first melee, slot 3 the second).
+  Melee get held => slot == 3 && melee2 != null ? melee2! : melee;
+  double pullCooldown = 0; // Sizzler throw
+
+  /// Where an online player's thrown snake is (and whether it bit someone).
+  (Offset, bool)? netHook;
   bool get reloading => reloadingSlot == slot && reloadingSlot >= 0;
   int lvl(String id) => levels[id] ?? 1;
-  double get speedMul =>
-      (gun?.moveMul ?? melee.moveMul) * (slowT > 0 ? 0.5 : 1);
+  double get speedMul => (gun?.moveMul ?? held.moveMul) * (slowT > 0 ? 0.5 : 1);
   bool get grounded => z <= 0;
 
   void respawn(Offset at, double facing) {
@@ -150,6 +159,18 @@ class _Car {
   final Color color;
   _Car(this.x, this.y, this.speed, this.color);
   Offset get pos => Offset(x, y);
+}
+
+/// A thrown Sizzler: flies out, and if it bites someone it drags them back.
+class _Hook {
+  final _Person owner;
+  Offset pos;
+  final Offset dir;
+  double travelled = 0;
+  _Person? target;
+  double pullT = 0;
+  double tickT = 0;
+  _Hook(this.owner, this.pos, this.dir);
 }
 
 class _Kart {
@@ -236,6 +257,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   late final _Person _you;
   final List<_Person> _people = [];
   final List<_Ball> _balls = [];
+  final List<_Hook> _hooks = [];
   final List<_Car> _cars = [];
   final List<_Tracer> _tracers = [];
   final List<_Popup> _popups = [];
@@ -335,6 +357,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       pos: spawns.first,
       angle: -pi / 2,
     );
+    if (_save.meleeSlot2 && _save.melee2 != null) {
+      _you.melee2 = meleeById(_save.melee2!);
+    }
     _you.skins.addAll(_save.equippedSkins);
     _people.add(_you);
     if (_online) _you.team = _room.isTeams ? _room.myTeam : -1;
@@ -455,6 +480,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       }
     }
     _balls.clear();
+    _hooks.clear();
     _cars.clear();
     _clock = 0;
     _phase = _Phase.countdown;
@@ -560,6 +586,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         }
         _separate();
         _updateBalls(dt);
+        _updateHooks(dt);
         _updateHazards(dt);
         _updateGhosts();
         _updateRespawns(dt);
@@ -590,6 +617,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       p.shieldT = max(0, p.shieldT - dt);
       p.ghostT = max(0, p.ghostT - dt);
       p.kartT = max(0, p.kartT - dt);
+      p.pullCooldown = max(0, p.pullCooldown - dt);
       // Sliding after a go-kart or a Sizzler hook.
       if (p.fling != Offset.zero) {
         if (p.alive && !p.remote) _moveBy(p, p.fling * dt);
@@ -715,6 +743,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
 
   void _switchSlot(_Person p, int slot) {
     if (slot < 2 && p.guns[slot] == null) return;
+    if (slot == 3 && p.melee2 == null) return;
     if (p.slot == slot) return;
     p.slot = slot;
     if (p.reloadingSlot != slot) p.reloadingSlot = -1;
@@ -775,7 +804,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }
 
   void _swing(_Person p) {
-    final m = p.melee;
+    final m = p.held;
     p.cooldown = m.cooldown * levelSpeedMul(p.lvl(m.id));
     p.swingT = min(0.22, m.cooldown * 0.9);
     if (p.isYou) SoundService.instance.play(GameSound.tap);
@@ -795,6 +824,79 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
             : Offset.fromDirection(d.direction, m.knockback),
       );
     }
+  }
+
+  static const double _snakeRange = 8;
+  static const double _snakeSpeed = 18;
+  static const double _pullTime = 0.8;
+
+  /// Throws the Sizzler snake: whoever it bites gets pulled in and
+  /// takes damage on the way.
+  void _throwSnake(_Person p) {
+    if (_lobby || _phase != _Phase.fight || !p.alive) return;
+    if (p.gun != null || !p.held.hook || p.pullCooldown > 0) return;
+    if (_hooks.any((h) => identical(h.owner, p))) return;
+    p.pullCooldown = 4;
+    p.swingT = 0.22;
+    final dir = Offset(cos(p.angle), sin(p.angle));
+    _hooks.add(_Hook(p, p.pos + dir * 0.4, dir));
+    if (p.isYou) SoundService.instance.play(GameSound.tap);
+  }
+
+  void _updateHooks(double dt) {
+    for (final h in _hooks) {
+      if (!h.owner.alive) {
+        h.travelled = 99;
+        continue;
+      }
+      final t = h.target;
+      if (t == null) {
+        final step = h.dir * (_snakeSpeed * dt);
+        h.pos += step;
+        h.travelled += step.distance;
+        for (final o in _people) {
+          if (identical(o, h.owner) || !o.alive || _allies(o, h.owner)) {
+            continue;
+          }
+          if ((o.pos - h.pos).distance < _personRadius + 0.3) {
+            // Bite! Yank them towards the thrower.
+            h.target = o;
+            final back = h.owner.pos - o.pos;
+            _damage(
+              o,
+              10 * levelDamageMul(h.owner.lvl(h.owner.held.id)),
+              h.owner,
+              knock: Offset.fromDirection(
+                back.direction,
+                // The fling slows as it slides, so aim a bit long to
+                // land them right in front of you.
+                max(1.2, (back.distance - 0.9) * 1.4),
+              ),
+            );
+            break;
+          }
+        }
+        if (h.target == null &&
+            _map.solidAt(h.pos.dx.floor(), h.pos.dy.floor())) {
+          h.travelled = 99;
+        }
+      } else {
+        h.pullT += dt;
+        h.pos = t.pos;
+        h.tickT -= dt;
+        // More bites while they're being dragged in.
+        if (h.tickT <= 0 && t.alive) {
+          h.tickT = 0.2;
+          _damage(t, 6 * levelDamageMul(h.owner.lvl(h.owner.held.id)), h.owner);
+        }
+      }
+    }
+    _hooks.removeWhere(
+      (h) =>
+          (h.target == null && h.travelled > _snakeRange) ||
+          h.travelled > 50 ||
+          (h.target != null && (h.pullT > _pullTime || !h.target!.alive)),
+    );
   }
 
   void _updateBalls(double dt) {
@@ -1170,6 +1272,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         'g0': _you.guns[0]?.id,
         'g1': _you.guns[1]?.id,
         'm': _you.melee.id,
+        'm2': _you.melee2?.id,
         'x': _you.pos.dx,
         'y': _you.pos.dy,
         'a': _you.angle,
@@ -1178,6 +1281,11 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         'al': _you.alive,
         'sl': _you.slot,
         'sk': _you.skins[_you.heldId],
+        if (_hooks.any((h) => identical(h.owner, _you)))
+          'hk': () {
+            final h = _hooks.firstWhere((h) => identical(h.owner, _you));
+            return [h.pos.dx, h.pos.dy, h.target != null];
+          }(),
         'sw': _you.swingT > 0,
         'fl': _you.flashT > 0,
         'k': _you.kills,
@@ -1227,6 +1335,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                   pos: at,
                   angle: _num(m['a']),
                 )
+                ..melee2 = m['m2'] is String
+                    ? meleeById(m['m2'] as String)
+                    : null
                 ..remote = true
                 ..netId = id;
           _people.add(p);
@@ -1239,14 +1350,19 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         p.vz = 0;
         p.hp = _num(m['hp']);
         p.alive = m['al'] == true;
-        p.slot = ((m['sl'] as int?) ?? 0).clamp(0, 2);
+        p.slot = ((m['sl'] as int?) ?? 0).clamp(0, 3);
         if (p.slot == 1 && p.guns[1] == null) p.slot = 0;
+        if (p.slot == 3 && p.melee2 == null) p.slot = 2;
         final sk = m['sk'];
         if (sk is String && skinById(sk) != null) {
           p.skins[p.heldId] = sk;
         } else {
           p.skins.remove(p.heldId);
         }
+        final hk = m['hk'];
+        p.netHook = hk is List && hk.length == 3
+            ? (Offset(_num(hk[0]), _num(hk[1])), hk[2] == true)
+            : null;
         if (m['sw'] == true && p.swingT <= 0) p.swingT = 0.2;
         if (m['fl'] == true) p.flashT = 0.06;
         p.kills = (m['k'] as int?) ?? p.kills;
@@ -1354,6 +1470,18 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       final gun = b.guns[0]!;
       final wantSlot = dist < 1.3 ? 2 : 0;
       if (b.slot != wantSlot) _switchSlot(b, wantSlot);
+      // Sizzler bots sometimes throw the snake to drag you in.
+      if (b.melee.hook &&
+          b.pullCooldown <= 0 &&
+          dist > 2.5 &&
+          dist < _snakeRange - 1 &&
+          b.reactT > 1.2 &&
+          _angleDiff(b.angle, to.direction).abs() < 0.08 &&
+          _rnd.nextDouble() < dt * 0.6) {
+        _switchSlot(b, 2);
+        _throwSnake(b);
+        if (b.pullCooldown <= 0) _switchSlot(b, 0);
+      }
 
       b.strafeT -= dt;
       if (b.strafeT <= 0) {
@@ -1625,6 +1753,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       if (k == LogicalKeyboardKey.digit1) _switchSlot(_you, 0);
       if (k == LogicalKeyboardKey.digit2) _switchSlot(_you, 1);
       if (k == LogicalKeyboardKey.digit3) _switchSlot(_you, 2);
+      if (k == LogicalKeyboardKey.digit4) _switchSlot(_you, 3);
+      if (k == LogicalKeyboardKey.keyR) _throwSnake(_you);
       if (k == LogicalKeyboardKey.keyR) _startReload(_you);
     } else if (e is KeyUpEvent) {
       _keys.remove(k);
@@ -1726,14 +1856,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           ),
         if (!_lobby) ...[
           // Weapon slots stacked above the fire button.
-          Positioned(
-            right: 20,
-            bottom: 118,
-            child: Column(
-              children: [_slotButton(0), _slotButton(1), _slotButton(2)],
-            ),
-          ),
+          Positioned(right: 20, bottom: 118, child: _slotButtons()),
           Positioned(right: 16, bottom: 20, child: _fireButton()),
+          if (_holdingSizzler)
+            Positioned(right: 112, bottom: 26, child: _pullButton()),
         ],
         Positioned(
           right: _lobby ? 24 : 92,
@@ -1904,17 +2030,76 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              _you.slot == 2
+              _you.slot >= 2
                   ? Icons.back_hand_rounded
                   : Icons.gps_fixed_rounded,
               color: Colors.white,
               size: 34,
             ),
             Text(
-              _you.slot == 2 ? 'HIT' : 'FIRE',
+              _you.slot >= 2 ? 'HIT' : 'FIRE',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _slotButtons() {
+    final slots = [
+      _slotButton(0),
+      _slotButton(1),
+      _slotButton(2),
+      if (_you.melee2 != null) _slotButton(3),
+    ];
+    // Short screens (a phone on its side) get two columns.
+    if (slots.length > 3 && MediaQuery.of(context).size.height < 520) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Column(children: slots.sublist(2)),
+          const SizedBox(width: 6),
+          Column(children: slots.sublist(0, 2)),
+        ],
+      );
+    }
+    return Column(children: slots);
+  }
+
+  bool get _holdingSizzler => _you.alive && _you.gun == null && _you.held.hook;
+
+  Widget _pullButton() {
+    final ready = _you.pullCooldown <= 0;
+    return GestureDetector(
+      onTapDown: (_) => _throwSnake(_you),
+      child: Container(
+        width: 62,
+        height: 62,
+        decoration: BoxDecoration(
+          color: (ready ? const Color(0xFF43A047) : Colors.black54).withValues(
+            alpha: 0.85,
+          ),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white70, width: 3),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.u_turn_left_rounded,
+              color: Colors.white,
+              size: 24,
+            ),
+            Text(
+              ready ? 'PULL' : _you.pullCooldown.ceil().toString(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
                 fontWeight: FontWeight.w900,
               ),
             ),
@@ -1928,11 +2113,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     final gun = slot < 2 ? _you.guns[slot] : null;
     final empty = slot < 2 && gun == null;
     final selected = _you.slot == slot;
+    final slotMelee = slot == 3 ? _you.melee2! : _you.melee;
     String label;
     if (empty) {
       label = '—';
     } else if (gun == null) {
-      label = _you.melee.name.split(' ').first;
+      label = (slot == 3 ? _you.melee2! : _you.melee).name.split(' ').first;
     } else if (_you.reloadingSlot == slot) {
       label = '...';
     } else {
@@ -1963,10 +2149,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                 const Icon(Icons.lock_rounded, color: Colors.white54, size: 18)
               else
                 WeaponIcon(
-                  look: gun?.look ?? _you.melee.look,
-                  color: gun?.color ?? _you.melee.color,
+                  look: gun?.look ?? slotMelee.look,
+                  color: gun?.color ?? slotMelee.color,
                   size: 34,
-                  skin: _you.skinOf(gun?.id ?? _you.melee.id),
+                  skin: _you.skinOf(gun?.id ?? slotMelee.id),
                 ),
               FittedBox(
                 fit: BoxFit.scaleDown,
@@ -3006,6 +3192,7 @@ class _ViewPainter extends CustomPainter {
     _paintRopes(canvas);
     _paintSprites(canvas);
     _paintTracers(canvas);
+    _paintHooks(canvas);
     _paintWeapon(canvas);
     _paintOverlays(canvas);
     _paintMiniMap(canvas);
@@ -3644,8 +3831,8 @@ class _ViewPainter extends CustomPainter {
       final g = p.gun;
       paintWeapon(
         c,
-        g?.look ?? p.melee.look,
-        g?.color ?? p.melee.color,
+        g?.look ?? p.held.look,
+        g?.color ?? p.held.color,
         w * 0.6,
         skin: p.skinOf(p.heldId),
       );
@@ -3909,6 +4096,79 @@ class _ViewPainter extends CustomPainter {
 
   Offset get _muzzle => Offset(_w * 0.47, _h * 0.66);
 
+  /// The thrown Sizzler: a wiggly green snake from the thrower's hand to
+  /// its head, which is biting whoever it caught.
+  void _paintHooks(Canvas canvas) {
+    final hooks = [
+      ...s._hooks,
+      for (final p in s._people)
+        if (p.netHook != null)
+          _Hook(p, p.netHook!.$1, Offset.zero)
+            ..target = p.netHook!.$2 ? p : null,
+    ];
+    for (final h in hooks) {
+      final start = h.owner.isYou ? _muzzle : _project(h.owner.pos, 0.85);
+      final end = _project(h.pos, h.target != null ? 0.75 : 0.85);
+      if (start == null || end == null) continue;
+      final d = end - start;
+      if (d.distance < 2) continue;
+      final side = Offset(-d.dy, d.dx) / d.distance;
+      final wiggle = h.target != null ? 5.0 : 9.0;
+      final path = Path()..moveTo(start.dx, start.dy);
+      const n = 14;
+      for (var i = 1; i <= n; i++) {
+        final f = i / n;
+        final p =
+            start +
+            d * f +
+            side * (sin(f * pi * 4 + s._clock * 18) * wiggle * (1 - f * 0.5));
+        path.lineTo(p.dx, p.dy);
+      }
+      final width = h.owner.isYou ? 14.0 : 6.0;
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFF1B5E20)
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = width + 3,
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFF66BB6A)
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = width,
+      );
+      // Yellow scales down its back.
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFFFFEB3B)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = width * 0.25,
+      );
+      // Head with eyes and a red tongue.
+      final head = max(6.0, width * 0.9);
+      final fwd = d / d.distance;
+      canvas.drawCircle(end, head, Paint()..color = const Color(0xFF2E7D32));
+      for (final sgn in [-1.0, 1.0]) {
+        final eye = end - fwd * head * 0.2 + side * head * 0.45 * sgn;
+        canvas.drawCircle(eye, head * 0.28, Paint()..color = Colors.yellow);
+        canvas.drawCircle(eye, head * 0.12, Paint()..color = Colors.black);
+      }
+      final tip = end + fwd * head * 1.7;
+      canvas.drawLine(
+        end + fwd * head * 0.8,
+        tip,
+        Paint()
+          ..color = Colors.redAccent
+          ..strokeWidth = max(1.5, head * 0.18),
+      );
+    }
+  }
+
   void _paintTracers(Canvas canvas) {
     for (final t in s._tracers) {
       final end = _project(t.end, 0.45) ?? Offset(_w / 2, _horizon);
@@ -3979,9 +4239,10 @@ class _ViewPainter extends CustomPainter {
           Paint()..color = gun.shotColor.withValues(alpha: 0.8),
         );
       }
-    } else {
-      // Melee swings across the screen.
-      final m = you.melee;
+    } else if (!s._hooks.any((h) => identical(h.owner, you))) {
+      // Melee swings across the screen (the Sizzler leaves your hand
+      // while it's thrown).
+      final m = you.held;
       final swing = you.swingT > 0 ? sin(you.swingT / 0.22 * pi) : 0.0;
       canvas.translate(
         _w * (0.72 - swing * 0.25) + bobX,

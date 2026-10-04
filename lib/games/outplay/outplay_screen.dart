@@ -128,8 +128,30 @@ class _OutplayScreenState extends State<OutplayScreen> {
     _commit();
   }
 
-  void _equipMelee(Melee m) {
-    _save.melee = m.id;
+  void _unlockMeleeSlot() {
+    if (!_spend(kSecondMeleePrice)) return;
+    _save.meleeSlot2 = true;
+    for (final id in _save.ownedMelees) {
+      if (id != _save.melee) {
+        _save.melee2 = id;
+        break;
+      }
+    }
+    _commit();
+  }
+
+  void _equipMelee(Melee m, [int slot = 0]) {
+    if (slot == 0) {
+      if (_save.melee2 == m.id) _save.melee2 = _save.melee;
+      _save.melee = m.id;
+    } else {
+      if (_save.melee == m.id) {
+        _save.melee = _save.melee2 ?? 'fist';
+        if (_save.melee == m.id) _save.melee = 'fist';
+      }
+      _save.melee2 = m.id;
+    }
+    if (_save.melee2 == _save.melee) _save.melee2 = null;
     SoundService.instance.play(GameSound.place);
     _commit();
   }
@@ -692,7 +714,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
       else
         _lockedSlotCard(),
       _slotCard(
-        'Melee',
+        _save.meleeSlot2 ? 'Melee 1' : 'Melee',
         melee.name,
         melee.look,
         melee.color,
@@ -701,6 +723,33 @@ class _OutplayScreenState extends State<OutplayScreen> {
         skin: _save.skinOn(melee.id),
         weaponId: melee.id,
       ),
+      if (!_save.meleeSlot2)
+        _lockedSlotCard(
+          slot: 'MELEE 2',
+          blurb: 'Carry two melees',
+          cost: kSecondMeleePrice,
+          onUnlock: _unlockMeleeSlot,
+        )
+      else if (_save.melee2 == null)
+        _slotCard(
+          'Melee 2',
+          'Tap to choose',
+          null,
+          Colors.white24,
+          'Empty',
+          () => setState(() => _tab = 2),
+        )
+      else
+        _slotCard(
+          'Melee 2',
+          meleeById(_save.melee2!).name,
+          meleeById(_save.melee2!).look,
+          meleeById(_save.melee2!).color,
+          'Level ${_save.levelOf(_save.melee2!)}',
+          () => setState(() => _tab = 2),
+          skin: _save.skinOn(_save.melee2!),
+          weaponId: _save.melee2,
+        ),
       const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(14),
@@ -788,7 +837,12 @@ class _OutplayScreenState extends State<OutplayScreen> {
     );
   }
 
-  Widget _lockedSlotCard() {
+  Widget _lockedSlotCard({
+    String slot = 'GUN 2',
+    String blurb = 'Carry two guns',
+    int cost = kSecondSlotPrice,
+    VoidCallback? onUnlock,
+  }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
@@ -804,13 +858,13 @@ class _OutplayScreenState extends State<OutplayScreen> {
             child: Icon(Icons.lock_rounded, color: Colors.white38, size: 30),
           ),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'GUN 2',
-                  style: TextStyle(
+                  slot,
+                  style: const TextStyle(
                     color: Colors.white54,
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
@@ -818,8 +872,8 @@ class _OutplayScreenState extends State<OutplayScreen> {
                   ),
                 ),
                 Text(
-                  'Carry two guns',
-                  style: TextStyle(
+                  blurb,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
@@ -828,7 +882,7 @@ class _OutplayScreenState extends State<OutplayScreen> {
               ],
             ),
           ),
-          _coinButton(kSecondSlotPrice, _unlockSlot, label: 'Unlock'),
+          _coinButton(cost, onUnlock ?? _unlockSlot, label: 'Unlock'),
         ],
       ),
     );
@@ -1103,9 +1157,18 @@ class _OutplayScreenState extends State<OutplayScreen> {
           _coinButton(cost, () => _upgrade(m.id, cost), label: 'Upgrade'),
         );
       }
-      actions.add(
-        _equipChip('Equip', _save.melee == m.id, () => _equipMelee(m)),
-      );
+      if (_save.meleeSlot2) {
+        actions.add(
+          _equipChip('Melee 1', _save.melee == m.id, () => _equipMelee(m)),
+        );
+        actions.add(
+          _equipChip('Melee 2', _save.melee2 == m.id, () => _equipMelee(m, 1)),
+        );
+      } else {
+        actions.add(
+          _equipChip('Equip', _save.melee == m.id, () => _equipMelee(m)),
+        );
+      }
     }
     return _itemCard(
       id: m.id,
