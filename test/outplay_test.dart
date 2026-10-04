@@ -63,7 +63,12 @@ void main() {
           find.text('DEFEAT').evaluate().isNotEmpty;
     }
     expect(finished, isTrue);
-    expect(OutplaySave.instance.coins, greaterThan(coinsBefore));
+    // Coins only come from winning; standing still you usually lose.
+    if (find.text('VICTORY').evaluate().isNotEmpty) {
+      expect(OutplaySave.instance.coins, greaterThan(coinsBefore));
+    } else {
+      expect(OutplaySave.instance.coins, coinsBefore);
+    }
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -77,7 +82,7 @@ void main() {
       );
       // Stand still: the bot (or the lava, or a car) should get you.
       var scored = false;
-      for (var i = 0; i < 90 * 20 && !scored; i++) {
+      for (var i = 0; i < 240 * 20 && !scored; i++) {
         await tester.pump(const Duration(milliseconds: 50));
         scored =
             find.textContaining('You 0 - 1').evaluate().isNotEmpty ||

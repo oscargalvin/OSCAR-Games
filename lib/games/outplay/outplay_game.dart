@@ -280,8 +280,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           pos: spawns[(i + 1) % spawns.length],
           angle: 0,
         );
-        bot.aimError = (0.22 - tier * 0.014).clamp(0.05, 0.22);
-        bot.turnRate = 3.5 + tier * 0.35;
+        bot.aimError = (0.4 - tier * 0.012).clamp(0.25, 0.4);
+        bot.turnRate = 2.4 + tier * 0.15;
         _people.add(bot);
       }
     }
@@ -690,6 +690,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }) {
     if (!p.alive || _phase != _Phase.fight || _lobby) return;
     if (p.shieldT > 0 && _ffa) return;
+    // Bots hit softer so the game stays easy.
+    if (by != null && !by.isYou && p.isYou) amount *= 0.5;
     p.hp -= amount;
     p.hurtT = 0.15;
     if (slow > 0) p.slowT = max(p.slowT, slow);
@@ -711,13 +713,11 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           ? '${p.isYou ? 'You' : p.name} ${cause ?? 'fell in the lava'}'
           : '$killer outplayed $victim',
     );
-    if (by != null && by.isYou && _ffa) _coinsEarned += 5;
 
     if (!_ffa) {
       _lastRoundYours = !p.isYou;
       if (_lastRoundYours) {
         _yourRounds++;
-        _coinsEarned += 15;
       } else {
         _botRounds++;
       }
@@ -739,10 +739,11 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     if (_ffa) {
       final top = _people.map((p) => p.kills).reduce(max);
       _youWon = _you.kills == top && top > 0;
-      _coinsEarned += _youWon ? 50 : 15;
+      // Coins only for winning the whole game.
+      _coinsEarned = _youWon ? 80 : 0;
     } else {
       _youWon = _yourRounds > _botRounds;
-      _coinsEarned += _youWon ? 60 : 20;
+      _coinsEarned = _youWon ? 100 : 0;
     }
     _save.coins += _coinsEarned;
     if (_youWon) {
@@ -806,7 +807,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         b.angle += diff.clamp(-turn, turn);
         final reach = b.slot == 2 ? b.melee.reach + 0.2 : gun.range;
         fire =
-            b.reactT > 0.45 &&
+            b.reactT > 0.9 &&
             diff.abs() < 0.12 + 0.3 / max(dist, 0.5) &&
             dist < reach;
       } else {
@@ -1399,7 +1400,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           : 'Round $_round · ${_map.name}';
     } else {
       big = _lastRoundYours ? 'OUTPLAYED!' : 'You got outplayed';
-      small = _lastRoundYours ? '+15 coins' : 'Get them next round';
+      small = _lastRoundYours ? 'Nice one!' : 'Get them next round';
     }
     return IgnorePointer(
       child: Center(
@@ -1496,12 +1497,17 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                     color: Color(0xFFFFC93C),
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    '+$_coinsEarned coins',
-                    style: const TextStyle(
-                      color: Color(0xFFFFC93C),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
+                  Flexible(
+                    child: Text(
+                      _coinsEarned > 0
+                          ? '+$_coinsEarned coins'
+                          : 'Win to get coins',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFFFFC93C),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ],
