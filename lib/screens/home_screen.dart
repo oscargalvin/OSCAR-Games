@@ -24,7 +24,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-
   late final List<GameInfo> games = [
     GameInfo(
       id: 'fly_or_crash',
@@ -130,7 +129,8 @@ class _HomeScreenState extends State<HomeScreen> {
       id: 'target_shooter',
       title: 'Target Shooter',
       subtitle: '3 Worlds • 20 Levels',
-      description: 'Shoot targets across The Playground, Jupiter & The Backrooms!',
+      description:
+          'Shoot targets across The Playground, Jupiter & The Backrooms!',
       icon: Icons.track_changes_rounded,
       color: AppTheme.danger,
       secondaryColor: AppTheme.warning,
@@ -185,16 +185,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openGame(GameInfo game) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            game.screenBuilder(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        transitionDuration: const Duration(milliseconds: 200),
-      ),
-    ).then((_) => setState(() {}));
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                game.screenBuilder(),
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+            transitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .then((_) => setState(() {}));
   }
 
   @override
@@ -213,7 +216,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisCount: 2,
                   crossAxisSpacing: 14,
                   mainAxisSpacing: 14,
-                  childAspectRatio: 0.8,
+                  // A fixed height (not an aspect ratio) so tiles on narrow
+                  // phones still have room for their text.
+                  mainAxisExtent: 214,
                 ),
                 delegate: SliverChildBuilderDelegate(
                   (context, index) => _buildGameCard(index),
@@ -247,17 +252,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 2),
-              const FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Game Center',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 46,
-                    height: 1.0,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -1.6,
+              // Right padding keeps the title clear of the tilted
+              // "N games" badge on narrow phones.
+              const Padding(
+                padding: EdgeInsets.only(right: 76),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Game Center',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 46,
+                      height: 1.0,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -1.6,
+                    ),
                   ),
                 ),
               ),
@@ -278,8 +288,10 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Transform.rotate(
               angle: 0.12,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFC93C),
                   borderRadius: BorderRadius.circular(10),
@@ -349,10 +361,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   SizedBox(height: 2),
                   Text(
                     'Puzzles, quizzes and racing are next.',
-                    style: TextStyle(
-                      color: Color(0xCCFFFFFF),
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: Color(0xCCFFFFFF), fontSize: 13),
                   ),
                 ],
               ),

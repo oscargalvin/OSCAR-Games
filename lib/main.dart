@@ -27,29 +27,32 @@ class OscarGamesApp extends StatelessWidget {
 
   static const double maxAppWidth = 500;
 
+  /// Centres the app in a phone-width column on wide screens.
+  static Widget frame(Widget? child) {
+    return Container(
+      color: const Color(0xFF15172A),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: maxAppWidth),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: AppTheme.primaryDark,
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'OSCAR Games',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      builder: (context, child) {
-        return Container(
-          color: const Color(0xFF15172A),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: maxAppWidth),
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: AppTheme.primaryDark,
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: child,
-              ),
-            ),
-          ),
-        );
-      },
+      builder: (context, child) => frame(child),
       home: const HomeScreen(),
     );
   }

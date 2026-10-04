@@ -316,7 +316,10 @@ class _WorldSelectScreenState extends State<WorldSelectScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Text(
                               world.name,
@@ -327,7 +330,6 @@ class _WorldSelectScreenState extends State<WorldSelectScreen>
                               ),
                             ),
                             if (world.isNight) ...[
-                              const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 6,
@@ -345,7 +347,6 @@ class _WorldSelectScreenState extends State<WorldSelectScreen>
                               ),
                             ],
                             if (world.diamondMultiplier > 1) ...[
-                              const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 6,

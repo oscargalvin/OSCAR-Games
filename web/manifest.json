@@ -1,11 +1,11 @@
 {
-    "name": "oscar_games",
-    "short_name": "oscar_games",
+    "name": "OSCAR Games",
+    "short_name": "OSCAR Games",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#15172A",
+    "theme_color": "#2A3FD4",
+    "description": "Oscar Galvin's Game Center: quick games to play on your phone.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
