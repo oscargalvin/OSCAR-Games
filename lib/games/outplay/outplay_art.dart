@@ -269,6 +269,400 @@ void _paintReal(
     canvas.drawCircle(at * s, r * s, Paint()..color = c);
   }
 
+  // Stroke a path in alternating colours (candy stripes, dragon belly...).
+  void stripes(Path path, double width, List<Color> colours, double dash) {
+    for (final m in path.computeMetrics()) {
+      var i = 0;
+      for (var d = 0.0; d < m.length; d += dash * s, i++) {
+        canvas.drawPath(
+          m.extractPath(d, min(m.length, d + dash * s + 0.5)),
+          Paint()
+            ..color = colours[i % colours.length]
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = width * s,
+        );
+      }
+    }
+  }
+
+  void stroke(Path path, Color c, double width) => canvas.drawPath(
+    path,
+    Paint()
+      ..color = c
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = width * s,
+  );
+
+  Path pathOf(List<Offset> pts) =>
+      Path()..addPolygon([for (final p in pts) p * s], false);
+
+  // Mythic skins: a completely different weapon shape.
+  switch (skin?.design) {
+    case 'fighter_jet':
+      glow(const Offset(-50, 0), 4, const Color(0xFFFF9100)); // afterburner
+      poly([
+        const Offset(-46, -18),
+        const Offset(-38, -18),
+        const Offset(-28, -4),
+        const Offset(-44, -4),
+      ], const Color(0xFF546E7A)); // tail fin
+      poly(
+        [
+          const Offset(-48, -4),
+          const Offset(-28, -7),
+          const Offset(22, -7),
+          const Offset(50, 0),
+          const Offset(22, 6),
+          const Offset(-28, 6),
+          const Offset(-48, 4),
+        ],
+        const Color(0xFF90A4AE),
+        shine: 0.5,
+      ); // fuselage
+      final canopy = Rect.fromCenter(
+        center: const Offset(14, -7) * s,
+        width: 22 * s,
+        height: 9 * s,
+      );
+      canvas.drawOval(
+        canopy,
+        Paint()
+          ..shader = const LinearGradient(
+            colors: [Color(0xFFB3E5FC), Color(0xFF0277BD)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ).createShader(canopy),
+      );
+      canvas.drawOval(canopy, outline);
+      poly([
+        const Offset(-22, 2),
+        const Offset(12, 2),
+        const Offset(-8, 20),
+        const Offset(-26, 20),
+      ], const Color(0xFF607D8B)); // swept wing
+      // Rockets under the wing.
+      for (final x in [-24.0, -12.0]) {
+        part(x, 20, 16, 4, const Color(0xFFECEFF1), r: 2);
+        part(x + 13, 20, 4, 4, const Color(0xFFE53935), r: 2);
+      }
+      // Star roundel and an intake.
+      canvas.drawCircle(
+        const Offset(-14, 10) * s,
+        4 * s,
+        Paint()..color = const Color(0xFF1565C0),
+      );
+      canvas.drawCircle(
+        const Offset(-14, 10) * s,
+        2 * s,
+        Paint()..color = Colors.white,
+      );
+      part(-6, -2, 10, 6, const Color(0xFF263238), r: 2);
+      line(
+        const Offset(-40, 0),
+        const Offset(30, 0),
+        const Color(0xFF607D8B),
+        0.6,
+      );
+      return;
+    case 'bomber':
+      // A chunky propeller bomber with bombs hanging underneath.
+      poly([
+        const Offset(-48, -16),
+        const Offset(-40, -16),
+        const Offset(-32, -4),
+        const Offset(-46, -4),
+      ], const Color(0xFF556B2F));
+      part(-48, -8, 86, 16, const Color(0xFF6B7B3A), r: 8, shine: 0.4);
+      final nose = Rect.fromCenter(
+        center: const Offset(40, 0) * s,
+        width: 16 * s,
+        height: 15 * s,
+      );
+      canvas.drawOval(nose, Paint()..color = const Color(0xCC81D4FA));
+      canvas.drawOval(nose, outline);
+      for (var i = 0; i < 3; i++) {
+        line(
+          Offset(36.0 + i * 3, -6),
+          Offset(36.0 + i * 3, 6),
+          const Color(0xFF455A64),
+          0.6,
+        );
+      }
+      part(-30, 4, 52, 6, const Color(0xFF4A5530), r: 3); // wing
+      for (final x in [-18.0, 8.0]) {
+        part(x, 2, 12, 9, const Color(0xFF37474F), r: 3); // engines
+        // Spinning propellers.
+        final hub = Offset(x + 13, 6.5) * s;
+        canvas.drawOval(
+          Rect.fromCenter(center: hub, width: 3 * s, height: 22 * s),
+          Paint()..color = const Color(0x8890A4AE),
+        );
+        canvas.drawCircle(
+          hub,
+          1.6 * s,
+          Paint()..color = const Color(0xFF212121),
+        );
+      }
+      for (final x in [-12.0, 2.0, 16.0]) {
+        // Bombs: fat body with tail fins.
+        part(x - 4, 12, 10, 6, const Color(0xFF263238), r: 3);
+        poly([
+          Offset(x - 6, 12),
+          Offset(x - 3, 15),
+          Offset(x - 6, 18),
+        ], const Color(0xFF455A64));
+        part(x - 2, 10, 2, 3, _metalDark, r: 0.5);
+      }
+      // White star on the side.
+      canvas.drawCircle(
+        const Offset(-26, 0) * s,
+        4.5 * s,
+        Paint()..color = Colors.white,
+      );
+      canvas.drawCircle(
+        const Offset(-26, 0) * s,
+        2 * s,
+        Paint()..color = const Color(0xFF1565C0),
+      );
+      return;
+    case 'railgun':
+      // A white space railgun with glowing blue rails.
+      poly(
+        [
+          const Offset(-50, -4),
+          const Offset(-28, -7),
+          const Offset(-26, 6),
+          const Offset(-46, 12),
+        ],
+        const Color(0xFFECEFF1),
+        shine: 0.5,
+      );
+      grip(-18, 5, const Color(0xFF37474F));
+      triggerGuard(-11, 5);
+      part(-28, -9, 30, 15, const Color(0xFFECEFF1), r: 4, shine: 0.6);
+      part(-20, -6, 16, 4, const Color(0xFF29B6F6), r: 2, shine: 0.6);
+      // Twin rails with a glowing gap between them.
+      canvas.drawRect(
+        rr(2, -5, 48, 4),
+        Paint()
+          ..color = const Color(0xFF80D8FF)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 1.6 * s),
+      );
+      part(2, -9, 48, 4, const Color(0xFFCFD8DC), r: 1.5, shine: 0.6);
+      part(2, -1, 48, 4, const Color(0xFFCFD8DC), r: 1.5, shine: 0.6);
+      for (var i = 0; i < 5; i++) {
+        part(
+          6.0 + i * 9,
+          -11,
+          3,
+          14,
+          const Color(0xFF29B6F6),
+          r: 1,
+          shine: 0.6,
+        );
+      }
+      // Hologram scope.
+      part(-16, -20, 22, 8, const Color(0xFFECEFF1), r: 3);
+      canvas.drawRect(
+        rr(-12, -18, 14, 4),
+        Paint()..color = const Color(0x8840C4FF),
+      );
+      glow(const Offset(50, -3), 2.5, const Color(0xFF40C4FF));
+      return;
+    case 'robot_fist':
+      // A chunky metal robot fist with glowing knuckles.
+      part(-38, -12, 18, 24, const Color(0xFF546E7A), r: 3);
+      for (final y in [-8.0, 0.0, 8.0]) {
+        line(Offset(-36, y), Offset(-22, y), _metalDark, 1);
+      }
+      glow(const Offset(-29, 0), 2, const Color(0xFF00E5FF));
+      part(-22, -16, 32, 32, const Color(0xFFB0BEC5), r: 5, shine: 0.6);
+      for (final p in const [
+        Offset(-18, -12),
+        Offset(-18, 12),
+        Offset(6, -12),
+        Offset(6, 12),
+      ]) {
+        canvas.drawCircle(p * s, 1.4 * s, Paint()..color = _metalDark);
+      }
+      for (var i = 0; i < 4; i++) {
+        final y = -16.0 + i * 8;
+        part(8, y, 10, 7.6, const Color(0xFF90A4AE), r: 1.5, shine: 0.6);
+        part(17, y, 9, 7.6, const Color(0xFF90A4AE), r: 2.5, shine: 0.6);
+        glow(Offset(18, y + 3.8), 1, const Color(0xFF00E5FF));
+      }
+      part(-6, 4, 22, 8, const Color(0xFF78909C), r: 2.5, shine: 0.6); // thumb
+      return;
+    case 'candy_cane':
+      // A giant candy cane: hook at the back, stripes all the way.
+      final cane = Path()
+        ..moveTo(50 * s, 2 * s)
+        ..lineTo(-30 * s, 2 * s)
+        ..arcToPoint(
+          Offset(-30 * s, -20 * s),
+          radius: Radius.circular(11 * s),
+          clockwise: true,
+        )
+        ..arcToPoint(
+          Offset(-20 * s, -12 * s),
+          radius: Radius.circular(9 * s),
+          clockwise: true,
+        );
+      stroke(cane, const Color(0xFF07080A), 11);
+      stripes(cane, 8.5, const [Colors.white, Color(0xFFE53935)], 4);
+      line(
+        const Offset(46, -0.5),
+        const Offset(-28, -0.5),
+        Colors.white.withValues(alpha: 0.6),
+        1,
+      );
+      return;
+    case 'guitar':
+      // An electric rock guitar (it still bonks people).
+      part(-54, -5, 10, 10, const Color(0xFF3E2723), r: 2); // headstock
+      for (var i = 0; i < 3; i++) {
+        canvas.drawCircle(
+          Offset(-52.0 + i * 3, -6.5) * s,
+          1 * s,
+          Paint()..color = _metalLight,
+        );
+      }
+      part(-45, -2.5, 46, 5, const Color(0xFF6D4C41), r: 1); // neck
+      for (var i = 0; i < 8; i++) {
+        line(
+          Offset(-42.0 + i * 5.5, -2.5),
+          Offset(-42.0 + i * 5.5, 2.5),
+          const Color(0xFFBDBDBD),
+          0.6,
+        );
+      }
+      final body = Path()
+        ..addOval(
+          Rect.fromCircle(center: const Offset(10, 0) * s, radius: 15 * s),
+        )
+        ..addOval(
+          Rect.fromCircle(center: const Offset(30, 0) * s, radius: 20 * s),
+        );
+      final bodyFill = Path.combine(PathOperation.union, body, Path());
+      canvas.drawPath(
+        bodyFill,
+        shade(bodyFill.getBounds(), const Color(0xFFD32F2F), shine: 0.5),
+      );
+      canvas.drawPath(bodyFill, outline);
+      poly(
+        [
+          const Offset(8, 4),
+          const Offset(26, 4),
+          const Offset(36, 14),
+          const Offset(16, 13),
+        ],
+        Colors.white,
+        shine: 0.1,
+      ); // pickguard
+      for (final x in [16.0, 24.0]) {
+        part(x, -5, 4, 10, const Color(0xFF212121), r: 1); // pickups
+      }
+      part(36, -4, 5, 8, _metalLight, r: 1); // bridge
+      for (final y in [-1.5, 0.0, 1.5]) {
+        line(Offset(-44, y), Offset(38, y), const Color(0xFFE0E0E0), 0.35);
+      }
+      return;
+    case 'dragon':
+      // A red dragon: spiky back, wings and fire coming out of its mouth.
+      final body = Path()..moveTo(-50 * s, 4 * s);
+      for (var i = 0; i < 4; i++) {
+        final x0 = (-50 + i * 18) * s;
+        body.quadraticBezierTo(
+          x0 + 9 * s,
+          (i.isEven ? -12 : 14) * s,
+          x0 + 18 * s,
+          0,
+        );
+      }
+      poly(
+        [
+          const Offset(-20, -4),
+          const Offset(-30, -30),
+          const Offset(-18, -22),
+          const Offset(-10, -32),
+          const Offset(-6, -20),
+          const Offset(2, -26),
+          const Offset(0, -4),
+        ],
+        const Color(0xFFB71C1C),
+        shine: 0.3,
+      ); // wing
+      stroke(body, const Color(0xFF07080A), 13);
+      stroke(body, const Color(0xFFC62828), 10.5);
+      stripes(body, 3, const [Color(0xFFFFB300), Color(0xFFFF8F00)], 3);
+      for (final m in body.computeMetrics()) {
+        for (var d = 6.0 * s; d < m.length - 6 * s; d += 7 * s) {
+          final t = m.getTangentForOffset(d)!;
+          final n = Offset(t.vector.dy, -t.vector.dx);
+          final c = t.position;
+          final spike = Path()
+            ..moveTo(
+              c.dx + n.dx * 4 * s - t.vector.dx * 2 * s,
+              c.dy + n.dy * 4 * s - t.vector.dy * 2 * s,
+            )
+            ..lineTo(c.dx + n.dx * 9 * s, c.dy + n.dy * 9 * s)
+            ..lineTo(
+              c.dx + n.dx * 4 * s + t.vector.dx * 2 * s,
+              c.dy + n.dy * 4 * s + t.vector.dy * 2 * s,
+            )
+            ..close();
+          canvas.drawPath(spike, Paint()..color = const Color(0xFFFFB300));
+        }
+      }
+      // Fire breath.
+      final fire = Path()
+        ..moveTo(42 * s, -1 * s)
+        ..quadraticBezierTo(54 * s, -10 * s, 60 * s, -2 * s)
+        ..quadraticBezierTo(54 * s, 6 * s, 42 * s, 3 * s)
+        ..close();
+      canvas.drawPath(
+        fire,
+        Paint()
+          ..color = const Color(0xFFFF6D00)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 1.2 * s),
+      );
+      canvas.drawPath(fire, Paint()..color = const Color(0xCCFFD180));
+      // Horned head.
+      poly(
+        [
+          const Offset(20, -5),
+          const Offset(30, -9),
+          const Offset(44, -3),
+          const Offset(44, 4),
+          const Offset(30, 8),
+          const Offset(20, 5),
+        ],
+        const Color(0xFFC62828),
+        shine: 0.35,
+      );
+      stroke(
+        pathOf(const [Offset(26, -7), Offset(20, -16)]),
+        const Color(0xFFFFE082),
+        2,
+      );
+      stroke(
+        pathOf(const [Offset(31, -8), Offset(29, -17)]),
+        const Color(0xFFFFE082),
+        2,
+      );
+      canvas.drawOval(
+        rr(32, -5, 5, 3.6),
+        Paint()..color = const Color(0xFFFFEB3B),
+      );
+      canvas.drawOval(
+        rr(34, -4.8, 1, 3.2),
+        Paint()..color = const Color(0xFF07080A),
+      );
+      return;
+  }
+
   switch (look) {
     case WeaponLook.rifle:
       // An AR-style assault rifle.
@@ -493,6 +887,51 @@ void _paintReal(
         Paint()..color = const Color(0x88E1F5FE),
       );
       canvas.drawCircle(const Offset(48, -1) * s, 5 * s, outline);
+      break;
+    case WeaponLook.sniper:
+      // A long bolt-action sniper rifle with a big scope and a bipod.
+      poly([
+        const Offset(-52, -4),
+        const Offset(-30, -6),
+        const Offset(-22, -2),
+        const Offset(-24, 6),
+        const Offset(-36, 4),
+        const Offset(-48, 13),
+        const Offset(-52, 12),
+      ], wood);
+      line(const Offset(-48, 2), const Offset(-32, -2), _woodLight, 1);
+      part(-46, -9, 14, 4, wood, r: 2); // cheek rest
+      grip(-22, 3, wood);
+      triggerGuard(-15, 4);
+      part(-24, -7, 30, 10, metal, r: 2); // action
+      part(-6, -10, 3, 4, _metalLight, r: 1); // bolt
+      canvas.drawCircle(
+        const Offset(-4.5, -11) * s,
+        2 * s,
+        Paint()..color = _metalLight,
+      );
+      part(6, -5, 46, 4, metal, r: 1); // long barrel
+      part(44, -6.5, 10, 7, _metalDark, r: 2); // muzzle brake
+      part(-4, -3, 30, 7, wood, r: 2); // forend
+      // Scope with a shiny lens.
+      part(-18, -20, 34, 8, _metalDark, r: 4);
+      part(-22, -21.5, 7, 11, metal, r: 3);
+      part(12, -22, 8, 12, metal, r: 3);
+      canvas.drawOval(
+        rr(17, -20, 3, 8),
+        Paint()..color = const Color(0xFF4FC3F7),
+      );
+      canvas.drawCircle(
+        const Offset(18.5, -18) * s,
+        1 * s,
+        Paint()..color = Colors.white,
+      );
+      part(-10, -12, 4, 5, _metalDark, r: 0.5);
+      part(4, -12, 4, 5, _metalDark, r: 0.5);
+      // Folded bipod.
+      line(const Offset(22, 2), const Offset(30, 14), _metalLight, 1.6);
+      line(const Offset(24, 2), const Offset(34, 13), _metalLight, 1.6);
+      part(-36, 0, 8, 2.5, accent, r: 1, shine: 0.5);
       break;
     case WeaponLook.rpgMini:
       // A mini rocket launcher built like a minigun: a spinning cluster of

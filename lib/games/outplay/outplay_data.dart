@@ -16,6 +16,7 @@ enum WeaponLook {
   bubble,
   flamer,
   rpgMini,
+  sniper,
   fist,
   knife,
   pan,
@@ -252,6 +253,22 @@ const List<Gun> kGuns = [
     shotColor: Color(0xFFFF7043),
     look: WeaponLook.rpgMini,
   ),
+  Gun(
+    id: 'sniper',
+    name: 'Sniper',
+    blurb: 'One huge shot from really far away. Make it count!',
+    price: 800,
+    damage: 85,
+    fireInterval: 1.25,
+    spread: 0,
+    range: 30,
+    mag: 5,
+    reload: 2.4,
+    moveMul: 0.92,
+    color: Color(0xFF8D6E63),
+    shotColor: Color(0xFFFFFFFF),
+    look: WeaponLook.sniper,
+  ),
 ];
 
 const List<Melee> kMelees = [
@@ -359,13 +376,14 @@ int meleeUpgradeCost(Melee m, int level) =>
 /// Coins, unlocks, upgrade levels and loadout, saved on the device.
 // ---- Skins ---------------------------------------------------------------
 
-enum Rarity { common, rare, epic, legendary }
+enum Rarity { common, rare, epic, legendary, mythic }
 
 const Map<Rarity, String> kRarityNames = {
   Rarity.common: 'Common',
   Rarity.rare: 'Rare',
   Rarity.epic: 'Epic',
   Rarity.legendary: 'Legendary',
+  Rarity.mythic: 'Mythic',
 };
 
 const Map<Rarity, Color> kRarityColours = {
@@ -373,14 +391,16 @@ const Map<Rarity, Color> kRarityColours = {
   Rarity.rare: Color(0xFF42A5F5),
   Rarity.epic: Color(0xFFAB47BC),
   Rarity.legendary: Color(0xFFFFC93C),
+  Rarity.mythic: Color(0xFFFF4081),
 };
 
 /// Chance out of 100 of each rarity coming out of a skin box.
 const Map<Rarity, int> kBoxOdds = {
-  Rarity.common: 50,
+  Rarity.common: 48,
   Rarity.rare: 30,
   Rarity.epic: 15,
   Rarity.legendary: 5,
+  Rarity.mythic: 2,
 };
 
 const int kSkinBoxPrice = 150;
@@ -403,7 +423,16 @@ class Skin {
   final SkinPattern pattern;
   final List<Color> patternColours;
 
+  /// Mythic skins change the weapon's whole shape, so they only fit one
+  /// weapon ([onlyFor]) and are drawn as [design].
+  final String? onlyFor;
+  final String? design;
+
+  bool fits(String weapon) => onlyFor == null || onlyFor == weapon;
+
   const Skin({
+    this.onlyFor,
+    this.design,
     required this.id,
     required this.name,
     required this.rarity,
@@ -501,6 +530,77 @@ const List<Skin> kSkins = [
     pattern: SkinPattern.stars,
     patternColours: [Color(0xFFFFFFFF), Color(0xFFE0F7FA)],
   ),
+  // ---- Mythic: a whole new shape --------------------------------------
+  Skin(
+    id: 'fighter_jet',
+    name: 'Fighter Jet',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFF78909C),
+    grip: Color(0xFF455A64),
+    onlyFor: 'rpg_mini',
+    design: 'fighter_jet',
+  ),
+  Skin(
+    id: 'bomber',
+    name: 'Bomber',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFF6B7B3A),
+    grip: Color(0xFF4A5530),
+    onlyFor: 'rpg_mini',
+    design: 'bomber',
+  ),
+  Skin(
+    id: 'railgun',
+    name: 'Space Railgun',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFFECEFF1),
+    grip: Color(0xFF29B6F6),
+    onlyFor: 'sniper',
+    design: 'railgun',
+  ),
+  Skin(
+    id: 'robot_fist',
+    name: 'Robot Fist',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFFB0BEC5),
+    grip: Color(0xFF546E7A),
+    onlyFor: 'fist',
+    design: 'robot_fist',
+  ),
+  Skin(
+    id: 'candy_cane',
+    name: 'Candy Cane',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFFE53935),
+    grip: Color(0xFFFFFFFF),
+    onlyFor: 'knife',
+    design: 'candy_cane',
+  ),
+  Skin(
+    id: 'guitar',
+    name: 'Rock Guitar',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFFD32F2F),
+    grip: Color(0xFF6D4C41),
+    onlyFor: 'frying_pan',
+    design: 'guitar',
+  ),
+  Skin(
+    id: 'dragon',
+    name: 'Dragon',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFFC62828),
+    grip: Color(0xFFFFB300),
+    onlyFor: 'sizzler',
+    design: 'dragon',
+  ),
 ];
 
 Skin? skinById(String? id) {
@@ -535,11 +635,11 @@ String weaponName(String id) {
     roll -= e.value;
   }
   final pool = kSkins.where((s) => s.rarity == rarity).toList();
+  final skin = pool[rnd.nextInt(pool.length)];
+  // A Mythic skin only fits its own weapon.
+  if (skin.onlyFor != null) return (weapon: skin.onlyFor!, skin: skin);
   final ids = kWeaponIds;
-  return (
-    weapon: ids[rnd.nextInt(ids.length)],
-    skin: pool[rnd.nextInt(pool.length)],
-  );
+  return (weapon: ids[rnd.nextInt(ids.length)], skin: skin);
 }
 
 class OutplaySave {
@@ -600,6 +700,11 @@ class OutplaySave {
       equippedSkins = (m['skinOn'] as Map? ?? {}).map(
         (k, v) => MapEntry(k as String, v as String),
       )..removeWhere((w, sk) => !skins.contains('$w:$sk'));
+      skins.removeWhere((k) {
+        final parts = k.split(':');
+        final skin = parts.length == 2 ? skinById(parts[1]) : null;
+        return skin == null || !skin.fits(parts[0]);
+      });
     } catch (_) {
       // A broken save starts fresh rather than crashing the game.
     }

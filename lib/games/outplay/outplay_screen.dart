@@ -455,8 +455,8 @@ class _OutplayScreenState extends State<OutplayScreen> {
   List<Skin?> _skinOrder(String weapon) => [
     null,
     // Skins you own come first so you can see them.
-    ...kSkins.where((k) => _save.ownsSkin(weapon, k.id)),
-    ...kSkins.where((k) => !_save.ownsSkin(weapon, k.id)),
+    ...kSkins.where((k) => k.fits(weapon) && _save.ownsSkin(weapon, k.id)),
+    ...kSkins.where((k) => k.fits(weapon) && !_save.ownsSkin(weapon, k.id)),
   ];
 
   /// The little skin button's pop-up: switch skins for one weapon.
@@ -1257,8 +1257,8 @@ class _SkinBoxDialogState extends State<_SkinBoxDialog>
         _lastTick = tick;
         final ids = kWeaponIds;
         setState(() {
-          _shownWeapon = ids[_rnd.nextInt(ids.length)];
           _shownSkin = kSkins[_rnd.nextInt(kSkins.length)];
+          _shownWeapon = _shownSkin.onlyFor ?? ids[_rnd.nextInt(ids.length)];
         });
         SoundService.instance.play(GameSound.tap);
       }

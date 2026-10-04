@@ -363,7 +363,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         // Some bots show off a skin too.
         for (final id in [gun.id, bot.melee.id]) {
           if (_rnd.nextDouble() < 0.35) {
-            bot.skins[id] = kSkins[_rnd.nextInt(kSkins.length)].id;
+            final fits = kSkins.where((k) => k.fits(id)).toList();
+            bot.skins[id] = fits[_rnd.nextInt(fits.length)].id;
           }
         }
         // In a team game the first bots are on your team.

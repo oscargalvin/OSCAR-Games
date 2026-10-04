@@ -401,6 +401,8 @@ void main() {
     expect(counts[Rarity.rare]!, greaterThan(counts[Rarity.epic]!));
     expect(counts[Rarity.epic]!, greaterThan(counts[Rarity.legendary]!));
     expect(counts[Rarity.legendary]!, greaterThan(0));
+    expect(counts[Rarity.legendary]!, greaterThan(counts[Rarity.mythic]!));
+    expect(counts[Rarity.mythic]!, greaterThan(0));
   });
 
   test('skins survive saving and loading', () async {
@@ -474,6 +476,16 @@ void main() {
     expect(rpg.kind, ShotKind.ball);
     expect(rpg.splash, greaterThan(0));
     expect(rpg.fireInterval, lessThan(0.1));
+  });
+
+  test('Mythic skins only come for their own weapon', () {
+    final rnd = Random(9);
+    for (var i = 0; i < 3000; i++) {
+      final prize = openSkinBox(rnd);
+      expect(prize.skin.fits(prize.weapon), isTrue);
+    }
+    expect(skinById('fighter_jet')!.fits('rpg_mini'), isTrue);
+    expect(skinById('fighter_jet')!.fits('assault_rifle'), isFalse);
   });
 
   test('avatars survive saving and loading', () async {
