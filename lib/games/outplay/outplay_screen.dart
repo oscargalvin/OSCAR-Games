@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/sound_service.dart';
 import 'outplay_art.dart';
+import 'outplay_avatar.dart';
 import 'outplay_data.dart';
 import 'outplay_game.dart';
 
@@ -31,8 +32,20 @@ class _OutplayScreenState extends State<OutplayScreen> {
     });
   }
 
+  Future<void> _editPlayer() async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const OutplayAvatarScreen()));
+    if (mounted) setState(() {});
+  }
+
   Future<void> _play() async {
     SoundService.instance.play(GameSound.tap);
+    // Everyone needs a name and a player before they can fight.
+    if (_save.name.trim().isEmpty) {
+      await _editPlayer();
+      if (!mounted || _save.name.trim().isEmpty) return;
+    }
     await Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const OutplayGameScreen()));
@@ -236,6 +249,52 @@ class _OutplayScreenState extends State<OutplayScreen> {
     );
   }
 
+  Widget _playerCard() {
+    final named = _save.name.trim().isNotEmpty;
+    return Material(
+      color: _card,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: _editPlayer,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Row(
+            children: [
+              AvatarPreview(avatar: _save.avatar, height: 72),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'MY PLAYER',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      named ? _save.name : 'Tap to make your player',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.edit_rounded, color: _cyan),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   List<Widget> _buildLoadout() {
     final primary = gunById(_save.primary);
     final secondary = _save.secondary == null
@@ -243,6 +302,8 @@ class _OutplayScreenState extends State<OutplayScreen> {
         : gunById(_save.secondary!);
     final melee = meleeById(_save.melee);
     return [
+      _playerCard(),
+      const SizedBox(height: 10),
       Text(
         '${_save.wins} wins  ·  ${_save.losses} losses',
         textAlign: TextAlign.center,

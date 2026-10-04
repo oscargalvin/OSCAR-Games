@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
@@ -5,6 +6,42 @@ import 'outplay_net.dart';
 
 @JS('outplayNet')
 external _JsNet? get _net;
+
+@JS('outplayLobby')
+external _JsLobby? get _lobby;
+
+extension type _JsLobby._(JSObject _) implements JSObject {
+  external void browse(JSFunction onList);
+  external void stopBrowse();
+  external void announce(String room);
+  external void unannounce();
+}
+
+OutplayDirectory? createDirectory() {
+  final lobby = _lobby;
+  final net = _net;
+  if (lobby == null || net == null || !net.available()) return null;
+  return _WebDirectory(lobby);
+}
+
+class _WebDirectory implements OutplayDirectory {
+  final _JsLobby lobby;
+  _WebDirectory(this.lobby);
+
+  @override
+  void browse(void Function(List<RoomInfo>) onList) => lobby.browse(
+    ((JSString text) => onList(RoomInfo.listFrom(text.toDart))).toJS,
+  );
+
+  @override
+  void stopBrowse() => lobby.stopBrowse();
+
+  @override
+  void announce(RoomInfo room) => lobby.announce(jsonEncode(room.toJson()));
+
+  @override
+  void unannounce() => lobby.unannounce();
+}
 
 extension type _JsNet._(JSObject _) implements JSObject {
   external bool available();

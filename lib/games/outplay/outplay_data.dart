@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'outplay_avatar.dart';
+
 /// How a weapon looks in the shop and in your hands.
 enum WeaponLook {
   rifle,
@@ -331,6 +333,7 @@ class OutplaySave {
   int wins = 0;
   int losses = 0;
   String name = ''; // shown to other players online
+  Avatar avatar = const Avatar();
 
   Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -357,6 +360,7 @@ class OutplaySave {
       wins = m['wins'] as int? ?? 0;
       losses = m['losses'] as int? ?? 0;
       name = m['name'] as String? ?? '';
+      avatar = Avatar.fromList(m['avatar']);
     } catch (_) {
       // A broken save starts fresh rather than crashing the game.
     }
@@ -378,6 +382,7 @@ class OutplaySave {
         'wins': wins,
         'losses': losses,
         'name': name,
+        'avatar': avatar.toList(),
       }),
     );
     await _prefs!.setInt('highscore_outplay', wins);

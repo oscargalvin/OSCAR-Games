@@ -98,4 +98,162 @@
       conns = [];
     },
   };
+
+  // ---- The Join list --------------------------------------------------
+  // Whoever is first to look for rooms becomes the "lobby": everyone else
+  // connects to them, rooms tell the lobby they're waiting, and the lobby
+  // shares the list. If the lobby leaves, someone else takes over.
+  const LOBBY = 'outplay-lobby-v1';
+  const lobby = {
+    peer: null,
+    conn: null,
+    isLobby: false,
+    guests: [],
+    rooms: new Map(),
+    mine: null,
+    onList: null,
+    retry: null,
+  };
+
+  function lobbyWanted() {
+    return !!(lobby.onList || lobby.mine);
+  }
+
+  function roomList() {
+    const now = Date.now();
+    const out = [];
+    if (lobby.mine) out.push(lobby.mine);
+    for (const [code, v] of lobby.rooms) {
+      if (now - v.seen > 10000) lobby.rooms.delete(code);
+      else if (!lobby.mine || code !== lobby.mine.code) out.push(v.room);
+    }
+    return out;
+  }
+
+  function lobbyStart() {
+    if (lobby.peer || !lobbyWanted() || typeof Peer === 'undefined') return;
+    const p = new Peer(LOBBY, options());
+    lobby.peer = p;
+    p.on('open', () => {
+      lobby.isLobby = true;
+      lobbyTick();
+    });
+    p.on('connection', (c) => {
+      c.on('open', () => {
+        lobby.guests.push(c);
+        c.send(JSON.stringify({ t: 'list', rooms: roomList() }));
+      });
+      c.on('data', (d) => {
+        try {
+          const m = JSON.parse(d);
+          if (m.t === 'room' && m.room && m.room.code) {
+            lobby.rooms.set(m.room.code, { room: m.room, conn: c, seen: Date.now() });
+          } else if (m.t === 'gone') {
+            lobby.rooms.delete(m.code);
+          }
+        } catch (e) {}
+      });
+      c.on('close', () => {
+        lobby.guests = lobby.guests.filter((g) => g !== c);
+        for (const [code, v] of lobby.rooms) if (v.conn === c) lobby.rooms.delete(code);
+      });
+    });
+    p.on('error', (e) => {
+      if (lobby.peer !== p) return;
+      if (e && e.type === 'unavailable-id') {
+        // Someone else is already the lobby: connect to them.
+        lobby.peer = null;
+        try { p.destroy(); } catch (err) {}
+        lobbyConnect();
+      } else {
+        lobbyRetry();
+      }
+    });
+  }
+
+  function lobbyConnect() {
+    const p = new Peer(options());
+    lobby.peer = p;
+    p.on('open', () => {
+      const c = p.connect(LOBBY, { reliable: true });
+      lobby.conn = c;
+      c.on('open', () => {
+        if (lobby.mine) c.send(JSON.stringify({ t: 'room', room: lobby.mine }));
+      });
+      c.on('data', (d) => {
+        try {
+          const m = JSON.parse(d);
+          if (m.t === 'list' && lobby.onList) lobby.onList(JSON.stringify(m.rooms));
+        } catch (e) {}
+      });
+      c.on('close', () => {
+        if (lobby.peer === p) lobbyRetry();
+      });
+    });
+    // No lobby yet (or it just left): try to become it.
+    p.on('error', () => {
+      if (lobby.peer === p) lobbyRetry();
+    });
+  }
+
+  function lobbyStop() {
+    const p = lobby.peer;
+    lobby.peer = null;
+    lobby.conn = null;
+    lobby.isLobby = false;
+    lobby.guests = [];
+    lobby.rooms.clear();
+    clearTimeout(lobby.retry);
+    try { if (p) p.destroy(); } catch (e) {}
+  }
+
+  function lobbyRetry() {
+    lobbyStop();
+    lobby.retry = setTimeout(lobbyStart, 300 + Math.random() * 1500);
+  }
+
+  function lobbyTick() {
+    if (!lobby.peer) return;
+    if (lobby.isLobby) {
+      const rooms = roomList();
+      const text = JSON.stringify({ t: 'list', rooms: rooms });
+      for (const c of lobby.guests) if (c.open) c.send(text);
+      call2(lobby.onList, JSON.stringify(rooms));
+    } else if (lobby.conn && lobby.conn.open && lobby.mine) {
+      lobby.conn.send(JSON.stringify({ t: 'room', room: lobby.mine }));
+    }
+  }
+  setInterval(lobbyTick, 2000);
+
+  function call2(fn, arg) {
+    try {
+      if (fn) fn(arg);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  window.outplayLobby = {
+    browse(onList) {
+      lobby.onList = onList;
+      lobbyStart();
+      lobbyTick();
+    },
+    stopBrowse() {
+      lobby.onList = null;
+      if (!lobbyWanted()) lobbyStop();
+    },
+    announce(text) {
+      lobby.mine = JSON.parse(text);
+      lobbyStart();
+    },
+    unannounce() {
+      const mine = lobby.mine;
+      lobby.mine = null;
+      if (mine && lobby.conn && lobby.conn.open) {
+        lobby.conn.send(JSON.stringify({ t: 'gone', code: mine.code }));
+      }
+      if (!lobbyWanted()) setTimeout(() => { if (!lobbyWanted()) lobbyStop(); }, 300);
+    },
+  };
 })();

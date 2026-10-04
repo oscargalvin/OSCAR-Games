@@ -20,6 +20,7 @@ import 'package:oscar_games/games/board_game/board_game_screen.dart';
 import 'package:oscar_games/games/boat_fishing/boat_fishing_screen.dart';
 import 'package:oscar_games/games/fly_or_crash/fly_or_crash_screen.dart';
 import 'package:oscar_games/games/memory_match/memory_match_screen.dart';
+import 'package:oscar_games/games/outplay/outplay_avatar.dart';
 import 'package:oscar_games/games/outplay/outplay_game.dart';
 import 'package:oscar_games/games/outplay/outplay_screen.dart';
 import 'package:oscar_games/games/reaction/reaction_screen.dart';
@@ -41,6 +42,14 @@ final _screens = <String, Widget Function()>{
   'attendant': () => const AttendantScreen(destination: _paris),
   'outplay': () => const OutplayScreen(),
   'outplay_zone': () => const OutplayGameScreen(),
+  'outplay_player': () => const OutplayAvatarScreen(),
+  'outplay_mansion': () => const OutplayGameScreen(
+    mode: OutplayMode.freeForAll,
+    mapId: 'mansion',
+    bots: 5,
+  ),
+  'outplay_crocs': () =>
+      const OutplayGameScreen(mode: OutplayMode.duel, mapId: 'crocs'),
   'outplay_duel': () =>
       const OutplayGameScreen(mode: OutplayMode.duel, mapId: 'volcano'),
   'outplay_ffa': () => const OutplayGameScreen(

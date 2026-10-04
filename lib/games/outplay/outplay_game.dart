@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../../services/sound_service.dart';
 import 'outplay_art.dart';
+import 'outplay_avatar.dart';
 import 'outplay_data.dart';
 import 'outplay_maps.dart';
 import 'outplay_net.dart';
@@ -37,8 +38,7 @@ const List<Color> _shirts = [
 class _Person {
   final String name;
   final bool isYou;
-  final Color shirt;
-  final Color skin;
+  Avatar look;
   final List<Gun?> guns;
   final Melee melee;
   final Map<String, int> levels;
@@ -60,6 +60,7 @@ class _Person {
   double flashT = 0;
   double walkCycle = 0;
   double shieldT = 0; // can't be hurt just after coming back
+  double ghostT = 0; // a ghost just got them
   int kills = 0;
   int deaths = 0;
 
@@ -82,8 +83,7 @@ class _Person {
   _Person({
     required this.name,
     required this.isYou,
-    required this.shirt,
-    required this.skin,
+    required this.look,
     required this.guns,
     required this.melee,
     required this.levels,
@@ -91,6 +91,7 @@ class _Person {
     required this.angle,
   }) : ammo = [guns[0]?.mag ?? 0, guns[1]?.mag ?? 0];
 
+  Color get shirt => look.shirtColour;
   Gun? get gun => slot < 2 ? guns[slot] : null;
   bool get reloading => reloadingSlot == slot && reloadingSlot >= 0;
   int lvl(String id) => levels[id] ?? 1;
@@ -180,6 +181,7 @@ class OutplayGameScreen extends StatefulWidget {
 
   /// Makes online links; tests swap in a pretend one.
   final OutplayLink? Function() makeLink;
+  final OutplayDirectory? Function() makeDirectory;
 
   const OutplayGameScreen({
     super.key,
@@ -188,6 +190,7 @@ class OutplayGameScreen extends StatefulWidget {
     this.bots = 1,
     this.room,
     this.makeLink = createLink,
+    this.makeDirectory = createDirectory,
   });
 
   @override
@@ -251,13 +254,19 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   // Online games use the free-for-all rules.
   bool get _ffa => widget.mode == OutplayMode.freeForAll || _online;
   OutplayRoom get _room => widget.room!;
+  bool get _duelOnline => _online && _room.kind == 'duel';
+  int get _killsToWin => _duelOnline ? 5 : _ffaKillsToWin;
   double _sendT = 0;
   bool _hostLeft = false;
   bool _closedEarly = false;
 
   // The Find Players panel.
-  final _nameBox = TextEditingController();
   final _codeBox = TextEditingController();
+  OutplayDirectory? _browser;
+  bool _browsing = false;
+  List<RoomInfo>? _waitingRooms;
+  OutplayDirectory? _lister; // puts your room on the Join list
+  double _listT = 0;
   bool _netBusy = false;
   String? _netError;
 
@@ -269,10 +278,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     _you = _Person(
       name: 'You',
       isYou: true,
-      shirt: _online
-          ? _shirts[_rnd.nextInt(_shirts.length)]
-          : const Color(0xFF4FC3F7),
-      skin: const Color(0xFFFFCC80),
+      look: _save.avatar,
       guns: [
         gunById(_save.primary),
         _save.secondSlot && _save.secondary != null
@@ -285,7 +291,6 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       angle: -pi / 2,
     );
     _people.add(_you);
-    _nameBox.text = _save.name;
     if (!_lobby && !_online) {
       final tier = _save.wins.clamp(0, 12);
       final names = [..._botNames]..shuffle(_rnd);
@@ -297,13 +302,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               names[i % names.length] +
               (i >= names.length ? '${i ~/ names.length + 1}' : ''),
           isYou: false,
-          shirt: _shirts[_rnd.nextInt(_shirts.length)],
-          skin: [
-            const Color(0xFFFFCC80),
-            const Color(0xFFD7A27A),
-            const Color(0xFF8D5524),
-            const Color(0xFFF1C27D),
-          ][_rnd.nextInt(4)],
+          look: Avatar.random(_rnd),
           guns: [gun, null],
           melee: kMelees[_rnd.nextInt(kMelees.length)],
           levels: {gun.id: level},
@@ -318,6 +317,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     _startRound();
     if (_online) {
       _you.netId = _room.myId;
+      if (_room.isHost) _lister = widget.makeDirectory();
       if (!_room.started) {
         _phase = _Phase.waiting;
       } else if (_room.joinClock > 2.4) {
@@ -333,8 +333,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   void dispose() {
     _ticker.dispose();
     _focus.dispose();
-    _nameBox.dispose();
     _codeBox.dispose();
+    _browser?.stopBrowse();
+    _lister?.unannounce();
     widget.room?.close();
     super.dispose();
   }
@@ -408,6 +409,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
 
     switch (_phase) {
       case _Phase.waiting:
+        if (_duelOnline && _room.isHost && _people.length >= 2) {
+          _hostStart();
+          break;
+        }
         _look(dt);
         _updatePerson(_you, dt, _yourMove(), false);
         _separate();
@@ -429,6 +434,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         _separate();
         _updateBalls(dt);
         _updateHazards(dt);
+        _updateGhosts();
         _updateRespawns(dt);
         if (_lobby) _checkPads();
         if (_ffa && _clock >= _ffaTimeLimit) _finishMatch();
@@ -455,6 +461,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       p.slowT = max(0, p.slowT - dt);
       p.flashT = max(0, p.flashT - dt);
       p.shieldT = max(0, p.shieldT - dt);
+      p.ghostT = max(0, p.ghostT - dt);
       // Jumping and falling.
       if (p.z > 0 || p.vz > 0) {
         p.vz -= _gravity * dt;
@@ -559,7 +566,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }
 
   void _jump(_Person p) {
-    if (p.alive && p.grounded) p.vz = _jumpSpeed;
+    if (!p.alive || !p.grounded) return;
+    // The squishy croc footbed throws you higher.
+    p.vz = _jumpSpeed * (_map.hazard == MapHazard.bouncy ? 1.45 : 1);
   }
 
   void _startReload(_Person p) {
@@ -733,6 +742,38 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     }
   }
 
+  /// Where ghost [i] is. They float along fixed loops based on the clock,
+  /// so in online games everyone sees them in the same place.
+  List<Offset> get _ghosts {
+    if (_map.hazard != MapHazard.ghosts) return const [];
+    final c = _map.centre;
+    final ax = _map.width / 2 - 1.6, ay = _map.height / 2 - 1.6;
+    return [
+      for (var i = 0; i < 4; i++)
+        Offset(
+          c.dx + ax * sin(_clock * (0.13 + i * 0.03) + i * 1.7),
+          c.dy + ay * sin(_clock * (0.17 + i * 0.025) + i * 2.9),
+        ),
+    ];
+  }
+
+  void _updateGhosts() {
+    for (final g in _ghosts) {
+      for (final p in _people) {
+        if (!p.alive || p.ghostT > 0 || (p.pos - g).distance > 0.55) continue;
+        p.ghostT = 1.2;
+        _damage(
+          p,
+          12,
+          null,
+          quiet: true,
+          cause: 'got spooked by a ghost',
+          slow: 1,
+        );
+      }
+    }
+  }
+
   void _updateRespawns(double dt) {
     if (!_ffa) return;
     for (final p in _people) {
@@ -828,7 +869,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       }
       _phase = _Phase.roundOver;
       _phaseT = 0;
-    } else if (by != null && by.kills >= _ffaKillsToWin) {
+    } else if (by != null && by.kills >= _killsToWin) {
       _finishMatch();
     }
   }
@@ -841,6 +882,8 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
 
   void _finishMatch() {
     if (_phase == _Phase.matchOver) return;
+    _lister?.unannounce();
+    _lister = null;
     if (_ffa) {
       final top = _people.map((p) => p.kills).reduce(max);
       _youWon = _you.kills == top && top > 0;
@@ -886,6 +929,21 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         p.walkCycle += gap.distance * min(1.0, dt * 12) * 3;
       }
     }
+    _listT -= dt;
+    if (_lister != null && _listT <= 0) {
+      _listT = 2;
+      _lister!.announce(
+        RoomInfo(
+          code: _room.code,
+          name: _myName,
+          avatar: _you.look.toList(),
+          mapId: _map.id,
+          players: _people.length,
+          playing: _phase != _Phase.waiting,
+          kind: _room.kind,
+        ),
+      );
+    }
     _sendT -= dt;
     if (_sendT <= 0) {
       _sendT = 1 / 15;
@@ -893,8 +951,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         't': 's',
         'id': _you.netId,
         'n': _myName,
-        'sh': _you.shirt.toARGB32(),
-        'sk': _you.skin.toARGB32(),
+        'av': _you.look.toList(),
         'g0': _you.guns[0]?.id,
         'g1': _you.guns[1]?.id,
         'm': _you.melee.id,
@@ -943,8 +1000,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               _Person(
                   name: (m['n'] as String?) ?? 'Player',
                   isYou: false,
-                  shirt: Color((m['sh'] as int?) ?? 0xFFEF5350),
-                  skin: Color((m['sk'] as int?) ?? 0xFFFFCC80),
+                  look: Avatar.fromList(m['av']),
                   guns: [
                     gunById((m['g0'] as String?) ?? ''),
                     g1 == null ? null : gunById(g1),
@@ -972,7 +1028,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         if (m['fl'] == true) p.flashT = 0.06;
         p.kills = (m['k'] as int?) ?? p.kills;
         p.deaths = (m['d'] as int?) ?? p.deaths;
-        if (_phase == _Phase.fight && p.kills >= _ffaKillsToWin) {
+        if (_phase == _Phase.fight && p.kills >= _killsToWin) {
           _finishMatch();
         }
         break;
@@ -1001,7 +1057,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               ? '${victim.name} ${(m['c'] as String?) ?? 'fell in the lava'}'
               : '${killer.isYou ? 'You' : killer.name} outplayed ${victim.name}',
         );
-        if (killer != null && killer.kills >= _ffaKillsToWin) _finishMatch();
+        if (killer != null && killer.kills >= _killsToWin) _finishMatch();
         break;
       case 'ball':
         final owner = _byNetId(m['id']);
@@ -1287,7 +1343,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
   }
 
   Future<void> _launchWith(OutplayGameScreen game) async {
-    setState(() => _panel = null);
+    _closePanel();
     _ticker.stop();
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => game));
     if (!mounted) return;
@@ -1496,7 +1552,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     if (_phase == _Phase.waiting) {
       return Padding(
         padding: const EdgeInsets.only(top: 10),
-        child: Text('ROOM ${_room.code}', style: style),
+        child: const Text('ONLINE', style: style),
       );
     }
     String line;
@@ -1504,7 +1560,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       final top = _people.map((p) => p.kills).reduce(max);
       final left = max(0, (_ffaTimeLimit - _clock).ceil());
       line =
-          'KOs ${_you.kills}  ·  Top $top/$_ffaKillsToWin  ·  '
+          'KOs ${_you.kills}  ·  Top $top/$_killsToWin  ·  '
           '${left ~/ 60}:${(left % 60).toString().padLeft(2, '0')}';
     } else {
       line = 'You $_yourRounds - $_botRounds ${_people[1].name}';
@@ -1702,7 +1758,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       final left = 3 - (_phaseT / 0.6).floor();
       big = left > 0 ? '$left' : 'FIGHT!';
       small = _ffa
-          ? '${_online ? 'Online' : 'Free-for-all'} · ${_map.name} · first to $_ffaKillsToWin KOs'
+          ? '${_duelOnline ? 'Online 1v1' : (_online ? 'Online' : 'Free-for-all')} · ${_map.name} · first to $_killsToWin KOs'
           : 'Round $_round · ${_map.name}';
     } else {
       big = _lastRoundYours ? 'OUTPLAYED!' : 'You got outplayed';
@@ -1841,6 +1897,11 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
 
   Widget _buildWaiting() {
     final others = _people.length - 1;
+    final names = [
+      _myName,
+      for (final p in _people)
+        if (p.remote) p.name,
+    ];
     return Positioned(
       left: 16,
       right: 16,
@@ -1856,29 +1917,41 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Room code',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
               Text(
-                _room.code,
+                others > 0
+                    ? 'Players here'
+                    : (_duelOnline
+                          ? 'Looking for someone…'
+                          : 'Waiting for players…'),
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 40,
-                  letterSpacing: 6,
+                  fontSize: 22,
                   fontWeight: FontWeight.w900,
                 ),
               ),
+              const SizedBox(height: 4),
               Text(
                 others == 0
-                    ? 'Tell your friends this code so they can join.'
-                    : '${others + 1} players here: ${[_myName, for (final p in _people)
-                        if (p.remote) p.name].join(', ')}',
+                    ? 'People pressing Join can see you and jump in. '
+                          'Or tell a friend your room code:'
+                    : names.join(', '),
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white),
               ),
+              if (others == 0)
+                Text(
+                  _room.code,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 34,
+                    letterSpacing: 6,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
               const SizedBox(height: 10),
-              if (_room.isHost)
+              if (_duelOnline)
+                const SizedBox.shrink()
+              else if (_room.isHost)
                 ElevatedButton(
                   onPressed: others > 0 ? _hostStart : null,
                   style: ElevatedButton.styleFrom(
@@ -1888,7 +1961,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
                       vertical: 12,
                     ),
                   ),
-                  child: Text(others > 0 ? 'START' : 'Waiting for players…'),
+                  child: Text(others > 0 ? 'START' : 'Nobody here yet'),
                 )
               else
                 const Text(
@@ -1903,19 +1976,94 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
     );
   }
 
-  Future<void> _goOnline({required bool host}) async {
+  // ---- Find Players panel -------------------------------------------------
+
+  void _closePanel() {
+    _stopBrowsing();
+    setState(() {
+      _panel = null;
+      _netError = null;
+    });
+  }
+
+  void _startBrowsing() {
+    final dir = widget.makeDirectory();
+    if (dir == null) {
+      setState(() => _netError = 'Online play only works on the website.');
+      return;
+    }
+    _stopBrowsing();
+    _browser = dir;
+    setState(() {
+      _browsing = true;
+      _netError = null;
+      _waitingRooms = null;
+    });
+    dir.browse((rooms) {
+      if (mounted) setState(() => _waitingRooms = rooms);
+    });
+  }
+
+  void _stopBrowsing() {
+    _browser?.stopBrowse();
+    _browser = null;
+    _browsing = false;
+  }
+
+  Future<void> _editPlayer() async {
+    _stopBrowsing();
+    _ticker.stop();
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const OutplayAvatarScreen()));
+    if (!mounted) return;
+    _you.look = _save.avatar;
+    _last = Duration.zero;
+    _keys.clear();
+    _ticker.start();
+    setState(() {});
+  }
+
+  /// Quick Play against a human: join someone looking for a 1v1, or make
+  /// a 1v1 room and wait for someone to find you.
+  Future<void> _quickMatch() async {
+    if (_save.name.trim().isEmpty) {
+      await _editPlayer();
+      if (_save.name.trim().isEmpty || !mounted) return;
+    }
+    final dir = widget.makeDirectory();
+    if (dir == null || widget.makeLink() == null) {
+      setState(() => _netError = 'Online play only works on the website.');
+      return;
+    }
+    setState(() {
+      _netBusy = true;
+      _netError = null;
+    });
+    var rooms = const <RoomInfo>[];
+    dir.browse((r) => rooms = r);
+    await Future<void>.delayed(
+      Duration(milliseconds: 2500 + _rnd.nextInt(1000)),
+    );
+    dir.stopBrowse();
+    if (!mounted) return;
+    setState(() => _netBusy = false);
+    final open = rooms
+        .where((r) => r.kind == 'duel' && !r.playing && r.players < 2)
+        .toList();
+    if (open.isNotEmpty) {
+      await _goOnline(joinCode: open[_rnd.nextInt(open.length)].code);
+      if (!mounted || _netError == null) return;
+    }
+    await _goOnline(kind: 'duel');
+  }
+
+  Future<void> _goOnline({String? joinCode, String kind = 'ffa'}) async {
     final make = widget.makeLink;
     if (make() == null) {
-      setState(() => _netError = "Online play only works on the website.");
+      setState(() => _netError = 'Online play only works on the website.');
       return;
     }
-    final code = _codeBox.text.trim().toUpperCase();
-    if (!host && code.length != 4) {
-      setState(() => _netError = 'Type the 4 letter room code first.');
-      return;
-    }
-    _save.name = _nameBox.text.trim();
-    _save.save();
     setState(() {
       _netBusy = true;
       _netError = null;
@@ -1926,9 +2074,9 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         : _pickMap;
     OutplayRoom room;
     try {
-      room = host
-          ? await OutplayRoom.host(() => make()!, mapId)
-          : await OutplayRoom.join(() => make()!, code);
+      room = joinCode == null
+          ? await OutplayRoom.host(() => make()!, mapId, kind: kind)
+          : await OutplayRoom.join(() => make()!, joinCode);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -1942,230 +2090,342 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       room.close();
       return;
     }
+    _stopBrowsing();
     setState(() => _netBusy = false);
-    _launchWith(
+    await _launchWith(
       OutplayGameScreen(
         mode: OutplayMode.online,
         mapId: room.mapId,
         room: room,
+        makeLink: widget.makeLink,
+        makeDirectory: widget.makeDirectory,
       ),
     );
   }
 
-  Widget _buildPadPanel() {
-    final pad = _panel!;
-    final String title, text;
-    final Color color;
-    switch (pad) {
-      case 'Q':
-        title = 'Quick Play';
-        text = '1v1 against an AI player. First to 5 rounds wins.';
-        color = const Color(0xFF66BB6A);
-        break;
-      case 'F':
-        title = 'Free-for-all';
-        text = 'Everyone against everyone. First to $_ffaKillsToWin KOs wins.';
-        color = const Color(0xFFFFA726);
-        break;
-      default:
-        title = 'Find Players';
-        text =
-            'Play real people online! Make a room and tell your friends '
-            'the code, or type a friend\'s code to join their room.';
-        color = const Color(0xFF42A5F5);
-    }
-    Widget mapChip(String id, String name) => ChoiceChip(
-      label: Text(name),
-      selected: _pickMap == id,
-      onSelected: (_) => setState(() => _pickMap = id),
-    );
-    return Container(
-      color: Colors.black45,
-      alignment: Alignment.bottomCenter,
-      child: SafeArea(
-        child: Container(
-          margin: const EdgeInsets.all(12),
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: const Color(0xFF262E4F),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: color, width: 2),
+  Widget _panelShell(Color color, List<Widget> children) => Container(
+    color: Colors.black45,
+    alignment: Alignment.bottomCenter,
+    child: SafeArea(
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF262E4F),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color, width: 2),
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
           ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+      ),
+    ),
+  );
+
+  Widget _panelTitle(String title, String text, Color color) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        title,
+        style: TextStyle(
+          color: color,
+          fontSize: 22,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(text, style: const TextStyle(color: Colors.white70)),
+    ],
+  );
+
+  Widget _mapPicker() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const SizedBox(height: 12),
+      const Text(
+        'Map',
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final (id, name) in [
+            ('random', 'Random'),
+            for (final m in kArenaMaps) (m.id, m.name),
+          ])
+            ChoiceChip(
+              label: Text(name),
+              selected: _pickMap == id,
+              onSelected: (_) => setState(() => _pickMap = id),
+            ),
+        ],
+      ),
+    ],
+  );
+
+  Widget _netStatus() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      if (_netBusy)
+        const Padding(
+          padding: EdgeInsets.only(top: 10),
+          child: Text('Connecting…', style: TextStyle(color: Colors.white70)),
+        ),
+      if (_netError != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Text(
+            _netError!,
+            style: const TextStyle(color: Color(0xFFFF8A80)),
+          ),
+        ),
+    ],
+  );
+
+  Widget _buildOnlinePanel() {
+    const color = Color(0xFF42A5F5);
+    final hasPlayer = _save.name.trim().isNotEmpty;
+    final me = Row(
+      children: [
+        AvatarPreview(avatar: _save.avatar, height: 64),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            hasPlayer ? _save.name : 'No player yet',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        TextButton.icon(
+          onPressed: _editPlayer,
+          icon: const Icon(Icons.edit_rounded, size: 18),
+          label: Text(hasPlayer ? 'Change' : 'Make'),
+        ),
+      ],
+    );
+
+    if (!hasPlayer) {
+      return _panelShell(color, [
+        _panelTitle(
+          'Find Players',
+          'First pick a name and make your player, so everyone knows '
+              'who they are fighting!',
+          color,
+        ),
+        const SizedBox(height: 12),
+        me,
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _editPlayer,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: color,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            child: const Text('MAKE MY PLAYER'),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _closePanel,
+            child: const Text('Close'),
+          ),
+        ),
+      ]);
+    }
+
+    if (_browsing) {
+      final rooms = _waitingRooms;
+      return _panelShell(color, [
+        _panelTitle(
+          'People waiting',
+          'Tap someone to play against them.',
+          color,
+        ),
+        const SizedBox(height: 10),
+        if (rooms == null)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (rooms.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              'Nobody is waiting right now. Go back and make a room, '
+              'then people can find you here!',
+              style: TextStyle(color: Colors.white),
+            ),
+          )
+        else
+          for (final r in rooms) _roomTile(r),
+        _netStatus(),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _netBusy ? null : () => setState(_stopBrowsing),
+            child: const Text('Back'),
+          ),
+        ),
+      ]);
+    }
+
+    return _panelShell(color, [
+      _panelTitle(
+        'Find Players',
+        'Play real people online! Make a room and wait for someone, '
+            'or press Join to see who is waiting.',
+        color,
+      ),
+      const SizedBox(height: 12),
+      me,
+      _mapPicker(),
+      const SizedBox(height: 14),
+      Row(
+        children: [
+          Expanded(
+            child: ElevatedButton(
+              onPressed: _netBusy ? null : () => _goOnline(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: color,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('MAKE A ROOM'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ElevatedButton(
+              onPressed: _netBusy ? null : _startBrowsing,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF66BB6A),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('JOIN'),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _codeBox,
+              maxLength: 4,
+              textCapitalization: TextCapitalization.characters,
+              style: const TextStyle(
+                color: Colors.white,
+                letterSpacing: 4,
+                fontWeight: FontWeight.w800,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Got a room code?',
+                counterText: '',
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton(
+            onPressed: _netBusy ? null : _joinByCode,
+            child: const Text('GO'),
+          ),
+        ],
+      ),
+      _netStatus(),
+      const SizedBox(height: 10),
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton(
+          onPressed: _closePanel,
+          child: const Text('Close'),
+        ),
+      ),
+    ]);
+  }
+
+  void _joinByCode() {
+    final code = _codeBox.text.trim().toUpperCase();
+    if (code.length != 4) {
+      setState(() => _netError = 'Room codes have 4 letters.');
+      return;
+    }
+    _goOnline(joinCode: code);
+  }
+
+  Widget _roomTile(RoomInfo r) {
+    final map = mapById(r.mapId);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: const Color(0xFF1B2138),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: _netBusy ? null : () => _goOnline(joinCode: r.code),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+            child: Row(
               children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(text, style: const TextStyle(color: Colors.white70)),
-                if (pad == 'O') ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _nameBox,
-                    maxLength: 12,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Your name',
-                      counterText: '',
-                      isDense: true,
-                    ),
-                  ),
-                ],
-                ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Map',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
+                AvatarPreview(avatar: Avatar.fromList(r.avatar), height: 56),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      mapChip('random', 'Random'),
-                      for (final m in kArenaMaps) mapChip(m.id, m.name),
-                    ],
-                  ),
-                ],
-                if (pad == 'F') ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Players',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: _pickBots > 1
-                            ? () => setState(() => _pickBots--)
-                            : null,
-                        icon: const Icon(
-                          Icons.remove_circle_outline_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
                       Text(
-                        '${_pickBots + 1}',
+                        r.name,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 20,
+                          fontSize: 16,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      IconButton(
-                        onPressed: _pickBots < 19
-                            ? () => setState(() => _pickBots++)
-                            : null,
-                        icon: const Icon(
-                          Icons.add_circle_outline_rounded,
-                          color: Colors.white,
-                        ),
+                      Text(
+                        '${map.name} · ${r.players} '
+                        '${r.players == 1 ? 'player' : 'players'}',
+                        style: const TextStyle(color: Colors.white70),
                       ),
                     ],
                   ),
-                ],
-                if (pad == 'O') ...[
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _netBusy ? null : () => _goOnline(host: true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: color,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: const Text('MAKE A ROOM'),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: r.playing
+                        ? const Color(0xFFFFA726)
+                        : const Color(0xFF66BB6A),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    r.playing
+                        ? 'PLAYING'
+                        : (r.kind == 'duel' ? '1V1' : 'WAITING'),
+                    style: const TextStyle(
+                      color: kOutplayInk,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _codeBox,
-                          maxLength: 4,
-                          textCapitalization: TextCapitalization.characters,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            letterSpacing: 4,
-                            fontWeight: FontWeight.w800,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Room code',
-                            counterText: '',
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      ElevatedButton(
-                        onPressed: _netBusy
-                            ? null
-                            : () => _goOnline(host: false),
-                        child: const Text('JOIN'),
-                      ),
-                    ],
-                  ),
-                  if (_netBusy)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 10),
-                      child: Text(
-                        'Connecting…',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ),
-                  if (_netError != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: Text(
-                        _netError!,
-                        style: const TextStyle(color: Color(0xFFFF8A80)),
-                      ),
-                    ),
-                ],
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => setState(() => _panel = null),
-                        child: Text(pad == 'O' ? 'Close' : 'Not now'),
-                      ),
-                    ),
-                    if (pad != 'O') ...[
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () => _launch(
-                            pad == 'Q'
-                                ? OutplayMode.duel
-                                : OutplayMode.freeForAll,
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: color,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
-                          child: const Text('PLAY'),
-                        ),
-                      ),
-                    ],
-                  ],
                 ),
               ],
             ),
@@ -2173,6 +2433,144 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         ),
       ),
     );
+  }
+
+  Widget _buildPadPanel() {
+    final pad = _panel!;
+    if (pad == 'O') return _buildOnlinePanel();
+    final quick = pad == 'Q';
+    final color = quick ? const Color(0xFF66BB6A) : const Color(0xFFFFA726);
+    return _panelShell(color, [
+      quick
+          ? _panelTitle(
+              'Quick Play',
+              '1v1! Fight an AI, or a real person online.',
+              color,
+            )
+          : _panelTitle(
+              'Free-for-all',
+              'Everyone against everyone. First to $_ffaKillsToWin KOs wins.',
+              color,
+            ),
+      _mapPicker(),
+      if (!quick) ...[
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Players',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: _pickBots > 1
+                  ? () => setState(() => _pickBots--)
+                  : null,
+              icon: const Icon(
+                Icons.remove_circle_outline_rounded,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              '${_pickBots + 1}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            IconButton(
+              onPressed: _pickBots < 19
+                  ? () => setState(() => _pickBots++)
+                  : null,
+              icon: const Icon(
+                Icons.add_circle_outline_rounded,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ],
+      const SizedBox(height: 14),
+      if (quick) ...[
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _netBusy ? null : () => _launch(OutplayMode.duel),
+                icon: const Icon(Icons.smart_toy_rounded),
+                label: const Text('AI'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: color,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _netBusy ? null : _quickMatch,
+                icon: const Icon(Icons.person_rounded),
+                label: const Text('HUMAN'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF42A5F5),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_netBusy)
+          const Padding(
+            padding: EdgeInsets.only(top: 10),
+            child: Text(
+              'Looking for someone to fight…',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        if (_netError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(
+              _netError!,
+              style: const TextStyle(color: Color(0xFFFF8A80)),
+            ),
+          ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _netBusy ? null : _closePanel,
+            child: const Text('Not now'),
+          ),
+        ),
+      ] else
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _closePanel,
+                child: const Text('Not now'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () => _launch(OutplayMode.freeForAll),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: color,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: const Text('PLAY'),
+              ),
+            ),
+          ],
+        ),
+    ]);
   }
 }
 
@@ -2334,6 +2732,14 @@ class _ViewPainter extends CustomPainter {
         return const Color(0xFFB98A55);
       case 'K':
         return const Color(0xFF4E3B36);
+      case 'W':
+        return const Color(0xFF4A2C5E);
+      case 'D':
+        return const Color(0xFF5D4037);
+      case 'X':
+        return const Color(0xFF7CB342);
+      case 'J':
+        return const Color(0xFFFFCA28);
       default:
         return const Color(0xFF8A93A8);
     }
@@ -2367,6 +2773,48 @@ class _ViewPainter extends CustomPainter {
       paint.color = color;
       final x = i * _colW;
       canvas.drawRect(Rect.fromLTRB(x, top, x + _colW + 0.6, bottom), paint);
+      final wallH = bottom - top;
+      if (hit.cell == 'W' && (hit.wallX * 6).floor().isEven) {
+        // Stripy old wallpaper.
+        edge.color = Color.lerp(color, Colors.white, 0.08)!;
+        canvas.drawRect(Rect.fromLTRB(x, top, x + _colW + 0.6, bottom), edge);
+      }
+      if (hit.cell == 'D') {
+        // Bookshelves: shelves with coloured books.
+        for (var r = 0; r < 4; r++) {
+          final y0 = top + wallH * (0.08 + r * 0.23);
+          final book = ((hit.wallX * 9).floor() + r * 3) % 4;
+          edge.color = Color.lerp(
+            const [
+              Color(0xFFC62828),
+              Color(0xFF2E7D32),
+              Color(0xFF1565C0),
+              Color(0xFFF9A825),
+            ][book],
+            map.skyBottom,
+            (perp / 16).clamp(0.0, 0.65),
+          )!;
+          canvas.drawRect(
+            Rect.fromLTWH(x, y0, _colW + 0.6, wallH * 0.18),
+            edge,
+          );
+        }
+      }
+      if (hit.cell == 'X' || hit.cell == 'J') {
+        // The holes in a croc.
+        edge.color = Color.lerp(color, Colors.black, 0.45)!;
+        final dx = ((hit.wallX * 3) % 1 - 0.5) / 0.3;
+        if (dx.abs() < 1) {
+          final half = sqrt(1 - dx * dx) * wallH * 0.09;
+          for (final hy in [0.3, 0.62]) {
+            final cy = top + wallH * hy;
+            canvas.drawRect(
+              Rect.fromLTRB(x, cy - half, x + _colW + 0.6, cy + half),
+              edge,
+            );
+          }
+        }
+      }
       // Brick and crate details.
       if (hit.cell == 'R' || hit.cell == 'C') {
         edge.color = Color.lerp(color, Colors.black, 0.25)!;
@@ -2454,6 +2902,11 @@ class _ViewPainter extends CustomPainter {
     for (final car in s._cars) {
       billboard(car.pos, 0, 0.72, 1.5, (c, r, scale) => _drawCar(c, car, r));
     }
+    final ghosts = s._ghosts;
+    for (var i = 0; i < ghosts.length; i++) {
+      final bob = 0.25 + 0.12 * sin(s._clock * 2 + i);
+      billboard(ghosts[i], bob, 0.75, 0.6, (c, r, scale) => _drawGhost(c, r));
+    }
     for (final b in s._balls) {
       final size = b.gun.look == WeaponLook.bubble ? 0.42 : 0.24;
       billboard(b.pos, 0.38, size, size, (c, r, scale) {
@@ -2515,13 +2968,6 @@ class _ViewPainter extends CustomPainter {
 
   void _drawPerson(Canvas c, _Person p, Rect r, double scale) {
     final w = r.width, h = r.height;
-    final ink = Paint()
-      ..color = kOutplayInk
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = max(1, w * 0.04);
-    final pants = Paint()..color = const Color(0xFF37474F);
-    final shirt = Paint()..color = p.hurtT > 0 ? Colors.white : p.shirt;
-    final skin = Paint()..color = p.hurtT > 0 ? Colors.white : p.skin;
     final step = sin(p.walkCycle) * w * 0.08;
 
     // Which way are they facing compared to you?
@@ -2529,53 +2975,12 @@ class _ViewPainter extends CustomPainter {
     final facing =
         cos(_OutplayGameScreenState._angleDiff(p.angle, toYou)) > -0.2;
 
-    // Legs.
-    final legW = w * 0.2;
-    for (final dx in [-1, 1]) {
-      final lx = r.center.dx + dx * w * 0.13 - legW / 2 + dx * step;
-      final leg = RRect.fromRectAndRadius(
-        Rect.fromLTWH(lx, r.top + h * 0.6, legW, h * 0.4),
-        Radius.circular(legW * 0.3),
-      );
-      c.drawRRect(leg, pants);
-      c.drawRRect(leg, ink);
-    }
-    // Body and arms.
+    paintAvatar(c, p.look, r, facing: facing, step: step, hurt: p.hurtT > 0);
     final body = RRect.fromRectAndRadius(
       Rect.fromLTWH(r.left + w * 0.18, r.top + h * 0.3, w * 0.64, h * 0.34),
       Radius.circular(w * 0.12),
     );
-    for (final dx in [-1, 1]) {
-      final arm = RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          r.center.dx + dx * w * 0.38 - w * 0.08,
-          r.top + h * 0.32,
-          w * 0.16,
-          h * 0.26,
-        ),
-        Radius.circular(w * 0.08),
-      );
-      c.drawRRect(arm, shirt);
-      c.drawRRect(arm, ink);
-    }
-    c.drawRRect(body, shirt);
-    c.drawRRect(body, ink);
-    // Head.
-    final head = Offset(r.center.dx, r.top + h * 0.17);
-    final hr = w * 0.24;
-    c.drawCircle(head, hr, skin);
-    c.drawCircle(head, hr, ink);
     if (facing) {
-      final eye = Paint()..color = kOutplayInk;
-      c.drawCircle(head + Offset(-hr * 0.38, -hr * 0.05), hr * 0.13, eye);
-      c.drawCircle(head + Offset(hr * 0.38, -hr * 0.05), hr * 0.13, eye);
-      c.drawArc(
-        Rect.fromCircle(center: head + Offset(0, hr * 0.25), radius: hr * 0.35),
-        0.2,
-        pi - 0.4,
-        false,
-        ink,
-      );
       // What they're holding, pointed at you.
       c.save();
       c.translate(r.center.dx, r.top + h * 0.5);
@@ -2595,14 +3000,6 @@ class _ViewPainter extends CustomPainter {
           Paint()..color = const Color(0xDDFFF176),
         );
       }
-    } else {
-      c.drawArc(
-        Rect.fromCircle(center: head, radius: hr),
-        pi,
-        pi,
-        true,
-        Paint()..color = const Color(0xFF4E342E),
-      );
     }
     if (p.slowT > 0) {
       c.drawRRect(body, Paint()..color = const Color(0x6681D4FA));
@@ -2627,6 +3024,58 @@ class _ViewPainter extends CustomPainter {
     c.drawRect(
       Rect.fromLTWH(bar.left, bar.top, bar.width * p.hp / 100, bar.height),
       Paint()..color = const Color(0xFFEF5350),
+    );
+  }
+
+  void _drawGhost(Canvas c, Rect r) {
+    final w = r.width, h = r.height;
+    final body = Path()
+      ..moveTo(r.left, r.bottom)
+      ..lineTo(r.left, r.top + w / 2)
+      ..arcToPoint(
+        Offset(r.right, r.top + w / 2),
+        radius: Radius.circular(w / 2),
+      )
+      ..lineTo(r.right, r.bottom);
+    // Wavy bottom edge.
+    for (var i = 1; i <= 4; i++) {
+      final x = r.right - w * i / 4;
+      body.lineTo(x + w / 8, r.bottom - h * (i.isOdd ? 0.12 : 0));
+      body.lineTo(x, r.bottom);
+    }
+    body.close();
+    c.drawPath(body, Paint()..color = const Color(0xCCF3E5F5));
+    c.drawPath(
+      body,
+      Paint()
+        ..color = const Color(0x88311B92)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = max(1, w * 0.04),
+    );
+    final eye = Paint()..color = const Color(0xFF1A1033);
+    c.drawOval(
+      Rect.fromCenter(
+        center: Offset(r.center.dx - w * 0.17, r.top + h * 0.33),
+        width: w * 0.15,
+        height: h * 0.14,
+      ),
+      eye,
+    );
+    c.drawOval(
+      Rect.fromCenter(
+        center: Offset(r.center.dx + w * 0.17, r.top + h * 0.33),
+        width: w * 0.15,
+        height: h * 0.14,
+      ),
+      eye,
+    );
+    c.drawOval(
+      Rect.fromCenter(
+        center: Offset(r.center.dx, r.top + h * 0.55),
+        width: w * 0.2,
+        height: h * 0.16,
+      ),
+      eye,
     );
   }
 
@@ -2902,6 +3351,13 @@ class _ViewPainter extends CustomPainter {
           );
         }
       }
+    }
+    for (final g in s._ghosts) {
+      canvas.drawCircle(
+        origin + g * cell,
+        cell * 0.6,
+        Paint()..color = const Color(0xCCE1BEE7),
+      );
     }
     if (map.hazard == MapHazard.cars) {
       canvas.drawRect(

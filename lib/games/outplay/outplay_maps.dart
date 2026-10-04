@@ -2,10 +2,11 @@ import 'dart:math';
 import 'dart:ui';
 
 /// What makes a map special.
-enum MapHazard { none, lava, cars }
+enum MapHazard { none, lava, cars, ghosts, bouncy }
 
 /// A map drawn as rows of characters:
-///   `#` stone wall, `R` red brick, `B` blue panel, `C` crate, `K` dark rock
+///   `#` stone wall, `R` red brick, `B` blue panel, `C` crate, `K` dark rock,
+///   `W` spooky wallpaper, `D` bookshelf, `X` croc rubber, `J` croc charm
 ///   `.` floor, `S` a place people can start
 ///   `Q` `F` `O` (Duel Zone only) the quick play, free-for-all and online pads
 class OutplayMap {
@@ -42,7 +43,15 @@ class OutplayMap {
   bool solidAt(int x, int y) => isSolid(cell(x, y));
 
   static bool isSolid(String c) =>
-      c == '#' || c == 'R' || c == 'B' || c == 'C' || c == 'K';
+      c == '#' ||
+      c == 'R' ||
+      c == 'B' ||
+      c == 'C' ||
+      c == 'K' ||
+      c == 'W' ||
+      c == 'D' ||
+      c == 'X' ||
+      c == 'J';
 
   Offset get centre => Offset(width / 2, height / 2);
 
@@ -211,6 +220,62 @@ const List<OutplayMap> kArenaMaps = [
     skyBottom: Color(0xFF90CAF9),
     floorA: Color(0xFF8D8270),
     floorB: Color(0xFF9A8F7C),
+  ),
+  OutplayMap(
+    id: 'mansion',
+    name: 'Haunted Mansion',
+    blurb: 'Spooky rooms and ghosts. Don\'t touch the ghosts!',
+    hazard: MapHazard.ghosts,
+    rows: [
+      'WWWWWWWWWWWWWWWWWWWW',
+      'WS.....W.....W....SW',
+      'W......W.....W.....W',
+      'W..DD......S....DD.W',
+      'W..................W',
+      'WWW..WWWW..WWWW..WWW',
+      'W..................W',
+      'W.S..D........D..S.W',
+      'W....D...WW...D....W',
+      'W........WW........W',
+      'WWW..WWWW..WWWW..WWW',
+      'W..................W',
+      'W..DD.....S.....DD.W',
+      'W......W.....W.....W',
+      'WS.....W.....W....SW',
+      'WWWWWWWWWWWWWWWWWWWW',
+    ],
+    skyTop: Color(0xFF0D0221),
+    skyBottom: Color(0xFF3A1C5C),
+    floorA: Color(0xFF3E2723),
+    floorB: Color(0xFF4E342E),
+  ),
+  OutplayMap(
+    id: 'crocs',
+    name: 'Crazy Crocs',
+    blurb:
+        'Fight inside a giant croc shoe. The squishy floor makes you jump higher!',
+    hazard: MapHazard.bouncy,
+    rows: [
+      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      'XXXXX.......S....XXXXXXXXXXXXXXX',
+      'XXX...S.................SXXXXXXX',
+      'XX......J............J.......XXX',
+      'X..............................X',
+      'X..............................X',
+      'X..S........S..J..S........J.S.X',
+      'X..............................X',
+      'X..............................X',
+      'XX......J............J.......XXX',
+      'XXX...S.................SXXXXXXX',
+      'XXXXX.......S....XXXXXXXXXXXXXXX',
+      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+    ],
+    skyTop: Color(0xFF1E88E5),
+    skyBottom: Color(0xFFB3E5FC),
+    floorA: Color(0xFFAED581),
+    floorB: Color(0xFFA5CF76),
   ),
 ];
 

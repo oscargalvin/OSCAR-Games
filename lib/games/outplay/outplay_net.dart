@@ -35,6 +35,83 @@ abstract class OutplayLink {
 /// The real link in a browser, or null where online play can't work.
 OutplayLink? createLink() => platform.createLink();
 
+/// A room someone made, as shown in the Join list.
+class RoomInfo {
+  final String code;
+  final String name;
+  final List<int> avatar;
+  final String mapId;
+  final int players;
+  final bool playing;
+
+  /// 'duel' for a 1v1 from Quick Play, 'ffa' for everyone against everyone.
+  final String kind;
+
+  const RoomInfo({
+    this.kind = 'ffa',
+    required this.code,
+    required this.name,
+    required this.avatar,
+    required this.mapId,
+    required this.players,
+    required this.playing,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'code': code,
+    'name': name,
+    'av': avatar,
+    'map': mapId,
+    'players': players,
+    'playing': playing,
+    'kind': kind,
+  };
+
+  static RoomInfo? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final code = raw['code'];
+    if (code is! String) return null;
+    return RoomInfo(
+      code: code,
+      name: (raw['name'] as String?) ?? 'Player',
+      avatar: [
+        for (final v in (raw['av'] as List?) ?? const [])
+          (v as num?)?.toInt() ?? 0,
+      ],
+      mapId: (raw['map'] as String?) ?? '',
+      players: (raw['players'] as num?)?.toInt() ?? 1,
+      playing: raw['playing'] == true,
+      kind: raw['kind'] == 'duel' ? 'duel' : 'ffa',
+    );
+  }
+
+  static List<RoomInfo> listFrom(String text) {
+    try {
+      final raw = jsonDecode(text);
+      if (raw is! List) return const [];
+      return [
+        for (final r in raw)
+          if (fromJson(r) case final RoomInfo info) info,
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+}
+
+/// The list of rooms people have made, so you can join without a code.
+abstract class OutplayDirectory {
+  /// Calls [onList] every time the list changes.
+  void browse(void Function(List<RoomInfo> rooms) onList);
+  void stopBrowse();
+
+  /// Puts your room on the list (call again to update it).
+  void announce(RoomInfo room);
+  void unannounce();
+}
+
+OutplayDirectory? createDirectory() => platform.createDirectory();
+
 const _codeLetters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 String newRoomCode([Random? rnd]) {
@@ -54,6 +131,11 @@ class OutplayRoom {
   String mapId;
   bool started = false;
 
+  /// 'duel' rooms are 1v1 and start by themselves; 'ffa' rooms wait for Start.
+  String kind = 'ffa';
+  int _guests = 0;
+  bool get full => kind == 'duel' && _guests >= 1;
+
   /// For someone joining late: how far into the game it already is.
   double joinClock = 0;
 
@@ -67,11 +149,12 @@ class OutplayRoom {
   static Future<OutplayRoom> host(
     OutplayLink Function() makeLink,
     String mapId, {
+    String kind = 'ffa',
     Duration timeout = const Duration(seconds: 15),
   }) async {
     for (var tries = 0; ; tries++) {
       final link = makeLink();
-      final room = OutplayRoom._(link, true, newRoomCode(), mapId);
+      final room = OutplayRoom._(link, true, newRoomCode(), mapId)..kind = kind;
       final done = Completer<OutplayRoom>();
       link.host(
         room.code,
@@ -81,13 +164,25 @@ class OutplayRoom {
             if (!done.isCompleted) done.complete(room);
           },
           message: room._receive,
-          joined: (id) => room.send({
-            't': 'welcome',
-            'map': room.mapId,
-            'started': room.started,
-            'clock': room._sinceStart.elapsedMilliseconds / 1000,
-          }),
-          left: (id) => room._receive(jsonEncode({'t': 'bye', 'id': id})),
+          joined: (id) {
+            if (room.full) {
+              room.send({'t': 'full', 'to': id});
+              return;
+            }
+            room._guests++;
+            room.send({
+              't': 'welcome',
+              'to': id,
+              'map': room.mapId,
+              'kind': room.kind,
+              'started': room.started,
+              'clock': room._sinceStart.elapsedMilliseconds / 1000,
+            });
+          },
+          left: (id) {
+            room._guests = max(0, room._guests - 1);
+            room._receive(jsonEncode({'t': 'bye', 'id': id}));
+          },
           error: (e) {
             if (!done.isCompleted) done.completeError(e);
           },
@@ -120,8 +215,15 @@ class OutplayRoom {
         message: (text) {
           final m = _decode(text);
           if (m == null) return;
-          if (m['t'] == 'welcome' && !done.isCompleted) {
+          if (m['t'] == 'full' && m['to'] == room.myId && !done.isCompleted) {
+            done.completeError('full');
+            return;
+          }
+          if (m['t'] == 'welcome' &&
+              (m['to'] == null || m['to'] == room.myId) &&
+              !done.isCompleted) {
             room.mapId = m['map'] as String;
+            room.kind = m['kind'] == 'duel' ? 'duel' : 'ffa';
             room.started = m['started'] == true;
             room.joinClock = (m['clock'] as num?)?.toDouble() ?? 0;
             done.complete(room);
@@ -140,6 +242,7 @@ class OutplayRoom {
       return await done.future.timeout(timeout);
     } catch (e) {
       link.close();
+      if (e == 'full') throw 'That game is already full. Pick someone else!';
       if (e is TimeoutException || e == 'peer-unavailable') {
         throw 'No room with the code ${room.code}. Check the code and try again.';
       }
@@ -207,6 +310,55 @@ class LoopbackHub {
   int _next = 0;
 
   OutplayLink makeLink() => LoopbackLink._(this);
+
+  final Map<String, RoomInfo> _listed = {};
+  final List<void Function(List<RoomInfo>)> _browsers = [];
+
+  OutplayDirectory makeDirectory() => _LoopbackDirectory(this);
+
+  void _changed() {
+    final rooms = _listed.values.toList();
+    for (final b in [..._browsers]) {
+      b(rooms);
+    }
+  }
+}
+
+class _LoopbackDirectory implements OutplayDirectory {
+  final LoopbackHub hub;
+  void Function(List<RoomInfo>)? _onList;
+  String? _mine;
+
+  _LoopbackDirectory(this.hub);
+
+  @override
+  void browse(void Function(List<RoomInfo>) onList) {
+    stopBrowse();
+    _onList = onList;
+    hub._browsers.add(onList);
+    onList(hub._listed.values.toList());
+  }
+
+  @override
+  void stopBrowse() {
+    if (_onList != null) hub._browsers.remove(_onList);
+    _onList = null;
+  }
+
+  @override
+  void announce(RoomInfo room) {
+    _mine = room.code;
+    hub._listed[room.code] = room;
+    hub._changed();
+  }
+
+  @override
+  void unannounce() {
+    if (_mine == null) return;
+    hub._listed.remove(_mine);
+    _mine = null;
+    hub._changed();
+  }
 }
 
 class LoopbackLink implements OutplayLink {
