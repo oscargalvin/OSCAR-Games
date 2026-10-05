@@ -600,6 +600,8 @@ void main() {
     }
     expect(skinById('fighter_jet')!.fits('rpg_mini'), isTrue);
     expect(skinById('fighter_jet')!.fits('assault_rifle'), isFalse);
+    expect(skinById('rock_machine')!.fits('slapper_machine'), isTrue);
+    expect(skinById('rock_machine')!.fits('fist'), isFalse);
   });
 
   test('avatars survive saving and loading', () async {

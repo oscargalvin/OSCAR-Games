@@ -593,6 +593,16 @@ const List<Skin> kSkins = [
     design: 'guitar',
   ),
   Skin(
+    id: 'rock_machine',
+    name: 'Rock Machine',
+    rarity: Rarity.mythic,
+    price: 1500,
+    metal: Color(0xFF8D8D8D),
+    grip: Color(0xFF6D4C41),
+    onlyFor: 'slapper_machine',
+    design: 'rock_machine',
+  ),
+  Skin(
     id: 'dragon',
     name: 'Dragon',
     rarity: Rarity.mythic,

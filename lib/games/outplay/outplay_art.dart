@@ -495,6 +495,95 @@ void _paintReal(
       }
       part(-6, 4, 22, 8, const Color(0xFF78909C), r: 2.5, shine: 0.6); // thumb
       return;
+    case 'rock_machine':
+      // A slapper carved out of stone: a boulder motor, a log piston and
+      // a giant rock hand, with moss and cracks.
+      const stone = Color(0xFF8D8D8D);
+      const stoneDark = Color(0xFF5D5D5D);
+      const moss = Color(0xFF7CB342);
+      final crack = Paint()
+        ..color = const Color(0xFF3A3A3A)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.9 * s
+        ..strokeCap = StrokeCap.round;
+      // Boulder motor.
+      poly([
+        const Offset(-54, -8),
+        const Offset(-46, -17),
+        const Offset(-30, -18),
+        const Offset(-18, -10),
+        const Offset(-17, 8),
+        const Offset(-26, 17),
+        const Offset(-44, 16),
+        const Offset(-55, 7),
+      ], stone);
+      poly([
+        const Offset(-46, -17),
+        const Offset(-30, -18),
+        const Offset(-24, -14),
+        const Offset(-44, -12),
+      ], moss);
+      canvas.drawPath(
+        pathOf(const [
+          Offset(-48, -4),
+          Offset(-40, 0),
+          Offset(-42, 7),
+          Offset(-34, 11),
+        ]),
+        crack,
+      );
+      canvas.drawPath(
+        pathOf(const [Offset(-30, -9), Offset(-26, -2), Offset(-29, 4)]),
+        crack,
+      );
+      glow(const Offset(-36, -4), 2, const Color(0xFFFF6D00)); // lava core
+      // Log piston with bark lines.
+      part(-19, -4.5, 26, 9, const Color(0xFF6D4C41), r: 4, shine: 0.25);
+      for (var i = 0; i < 4; i++) {
+        line(
+          Offset(-16.0 + i * 6, -3),
+          Offset(-13.0 + i * 6, 3),
+          const Color(0xFF4E342E),
+          0.8,
+        );
+      }
+      // Rock hand: chunky palm, stubby stone fingers and a thumb.
+      poly([
+        const Offset(5, -13),
+        const Offset(12, -16),
+        const Offset(25, -15),
+        const Offset(27, 14),
+        const Offset(14, 17),
+        const Offset(4, 12),
+      ], stone);
+      for (var i = 0; i < 4; i++) {
+        final y = -15.5 + i * 7.6;
+        final len = 16 - (i - 1.5).abs() * 2;
+        poly([
+          Offset(24, y + 0.3),
+          Offset(24 + len - 2, y - 0.4),
+          Offset(24 + len, y + 3.4),
+          Offset(24 + len - 2.5, y + 7),
+          Offset(24, y + 6.8),
+        ], i.isEven ? stone : stoneDark);
+      }
+      poly([
+        const Offset(9, -14),
+        const Offset(13, -24),
+        const Offset(18, -23),
+        const Offset(18, -13),
+      ], stoneDark); // thumb
+      poly([
+        const Offset(12, 10),
+        const Offset(20, 9),
+        const Offset(24, 15),
+        const Offset(14, 17),
+      ], moss);
+      canvas.drawPath(
+        pathOf(const [Offset(10, -8), Offset(16, -2), Offset(13, 6)]),
+        crack,
+      );
+      return;
     case 'candy_cane':
       // A giant candy cane: hook at the back, stripes all the way.
       final cane = Path()
