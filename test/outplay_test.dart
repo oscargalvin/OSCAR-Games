@@ -87,6 +87,7 @@ void main() {
     'arena',
     'lake',
     'goat_karts',
+    'leaf_maze',
   ]) {
     testWidgets('the bot wins rounds on $map', (tester) async {
       await _phone(tester);
@@ -260,6 +261,8 @@ void main() {
     await tester.tap(find.text('HARD'));
     await tester.pump();
     expect(find.text('Quick Play 1v1 · AI · Hard'), findsOneWidget);
+    await tester.ensureVisible(find.text('PLAY'));
+    await tester.pump();
     await tester.tap(find.text('PLAY'));
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 50));
@@ -318,6 +321,8 @@ void main() {
     await tester.tap(find.text('HUMAN'));
     await tester.pump();
     await tester.tap(find.text('Crazy Crocs'));
+    await tester.pump();
+    await tester.ensureVisible(find.text('PLAY'));
     await tester.pump();
     await tester.tap(find.text('PLAY'));
     for (var i = 0; i < 100; i++) {
@@ -414,6 +419,26 @@ void main() {
     for (final s in lake.spawnPoints()) {
       expect(lake.isWater(s), isFalse, reason: '$s');
     }
+  });
+
+  test('every path in the Leaf Maze joins up', () {
+    final maze = mapById('leaf_maze');
+    final open = <(int, int)>{
+      for (var y = 0; y < maze.height; y++)
+        for (var x = 0; x < maze.width; x++)
+          if (!maze.solidAt(x, y)) (x, y),
+    };
+    final start = open.first;
+    final reached = {start};
+    final todo = [start];
+    while (todo.isNotEmpty) {
+      final (x, y) = todo.removeLast();
+      for (final n in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]) {
+        if (open.contains(n) && reached.add(n)) todo.add(n);
+      }
+    }
+    expect(reached.length, open.length);
+    expect(maze.spawnPoints().length, greaterThanOrEqualTo(8));
   });
 
   test('the goat karts stay on the race track', () {

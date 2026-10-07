@@ -3247,6 +3247,7 @@ class _ViewPainter extends CustomPainter {
     _paintSprites(canvas);
     _paintTracers(canvas);
     _paintHooks(canvas);
+    if (map.id == 'leaf_maze') _paintFallingLeaves(canvas);
     _paintWeapon(canvas);
     _paintOverlays(canvas);
     _paintMiniMap(canvas);
@@ -3294,13 +3295,53 @@ class _ViewPainter extends CustomPainter {
     } else if (map.hazard == MapHazard.cars ||
         map.hazard == MapHazard.water ||
         map.hazard == MapHazard.karts ||
-        map.id == 'courtyard') {
+        map.id == 'courtyard' ||
+        map.id == 'leaf_maze') {
       final x = ((0.3 - s._you.angle / (2 * pi)) % 1) * _w * 2 - _w * 0.5;
       canvas.drawCircle(
         Offset(x, _horizon * 0.3),
         26,
         Paint()..color = const Color(0xFFFFF59D),
       );
+    }
+  }
+
+  /// Leaves drifting down past you in the Leaf Maze.
+  void _paintFallingLeaves(Canvas canvas) {
+    const colours = [
+      Color(0xFF66BB6A),
+      Color(0xFF9CCC65),
+      Color(0xFFFFB300),
+      Color(0xFFEF6C00),
+    ];
+    final t = s._clock;
+    final turn = s._you.angle / (2 * pi);
+    for (var i = 0; i < 18; i++) {
+      final speed = 0.06 + (i % 5) * 0.015;
+      final fall = (t * speed + i * 0.137) % 1;
+      final x = ((i * 0.618 - turn * 1.5) % 1) * _w + sin(t * 1.3 + i) * 18;
+      final y = fall * _h;
+      final size = 5.0 + (i % 3) * 2.5;
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate(t * (1 + i % 3) + i);
+      final leaf = Path()
+        ..moveTo(-size, 0)
+        ..quadraticBezierTo(0, -size * 0.7, size, 0)
+        ..quadraticBezierTo(0, size * 0.7, -size, 0)
+        ..close();
+      canvas.drawPath(
+        leaf,
+        Paint()..color = colours[i % colours.length].withValues(alpha: 0.85),
+      );
+      canvas.drawLine(
+        Offset(-size, 0),
+        Offset(size, 0),
+        Paint()
+          ..color = Colors.black26
+          ..strokeWidth = 0.8,
+      );
+      canvas.restore();
     }
   }
 
