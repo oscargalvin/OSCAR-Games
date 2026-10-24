@@ -24,6 +24,16 @@ const double kMaxBoost = 100;
 const double kKickoffTime = 3;
 const double kGoalPause = 3;
 
+/// In Winner Wall the goals sit this high up the end walls, just above the
+/// curved ramp. Each match sets [goalLift]; it is 0 in every other mode.
+const double kWallGoalLift = kRampR + 2.5;
+double goalLift = 0;
+
+/// Whether height [z] is inside the goal mouth (between the floor of the
+/// goal and its crossbar), with [pad] of extra room.
+bool inGoalHeight(double z, [double pad = 0]) =>
+    z > goalLift - pad && z < goalLift + kGoalH + pad;
+
 /// What a player (or a bot) is pressing this frame.
 class CarInput {
   /// Which way to drive, in pitch directions (length 0 to 1). Bots use this.
@@ -173,6 +183,7 @@ class BoostBallMatch {
   }) : rnd = random ?? Random(),
        clock = length {
     cars.addAll(players);
+    goalLift = mode == BoostMode.winnerWall ? kWallGoalLift : 0;
     if (mode != BoostMode.noBoost) {
       for (final x in [10.0, kFieldW - 10]) {
         for (final y in [16.0, kFieldL - 16]) {
@@ -202,7 +213,8 @@ class BoostBallMatch {
   /// The match is over once a goal like this one has gone in.
   bool get _goalEnds => switch (mode) {
     BoostMode.classic ||
-    BoostMode.noBoost => overtime || (clock <= 0 && leader != null),
+    BoostMode.noBoost ||
+    BoostMode.winnerWall => overtime || (clock <= 0 && leader != null),
     BoostMode.suddenDeath => true,
     BoostMode.firstTo5 => score[0] >= 5 || score[1] >= 5,
     BoostMode.freePlay => false,
@@ -428,12 +440,16 @@ class BoostBallMatch {
     f = _flat(f, axis);
     c.boosting = inp.boost && c.boost > 0;
     if (c.boosting) c.boost = max(0, c.boost - 33 * dt);
+    final extreme = _isBot(c) && c.difficulty == 3;
+    if (extreme && mode != BoostMode.noBoost) {
+      c.boost = min(kMaxBoost, c.boost + 0 * dt); // extreme bots top up
+    }
 
     if (c.grounded) {
       final left = _cross(n, f);
       var along = c.vx * f.$1 + c.vy * f.$2 + c.vz * f.$3;
       var side = c.vx * left.$1 + c.vy * left.$2 + c.vz * left.$3;
-      final top = c.spec.speed * (c.boosting ? 1.5 : 1);
+      final top = c.spec.speed * (c.boosting ? 1.5 : 1) * (extreme ? 1.0 : 1);
       final push = (c.spec.accel * throttle + (c.boosting ? 32 : 0)) * dt;
       if (along > top) {
         along = max(top, along - 40 * dt); // too fast (e.g. down a wall)
@@ -744,6 +760,7 @@ class BoostBallMatch {
     var power = max(0.0, rel) * 1.15 * c.spec.hit + 5;
     final flipped = c.flipT > 0;
     if (flipped) power *= 1.35;
+    if (_isBot(c) && c.difficulty == 3) power *= 1.25; // extreme bots hit hard
     b.vx += nx * power + c.vx * 0.25;
     b.vy += ny * power + c.vy * 0.25;
     // Hits pop the ball up off whatever the car is on (on a wall, that
@@ -752,6 +769,7 @@ class BoostBallMatch {
     b.vx += c.grounded ? c.upX * pop : 0;
     b.vy += c.grounded ? c.upY * pop : 0;
     b.vz += nz * power + c.vz * 0.25 + (c.grounded ? c.upZ * pop : pop);
+    if (_isBot(c)) _aimShot(c);
     c.vx -= nx * max(0.0, rel) * 0.25;
     c.vy -= ny * max(0.0, rel) * 0.25;
     c.vz -= nz * max(0.0, rel) * 0.25;
@@ -761,6 +779,35 @@ class BoostBallMatch {
     kphT = 1.8;
     c.topKph = max(c.topKph, lastKph);
     events.add(power > 30 ? MatchEvent.bigHit : MatchEvent.hit);
+  }
+
+  /// Better bots bend their shots towards the goal (and in Winner Wall
+  /// lob them up to it). Extreme bots are the best at it.
+  void _aimShot(Car c) {
+    final help = const [0.0, 0.15, 0.3, 0.6][c.difficulty];
+    if (help == 0) return;
+    final b = ball;
+    final tx = kFieldW / 2 - b.x;
+    final ty = (c.team == 0 ? kFieldL + 2 : -2.0) - b.y;
+    final td = sqrt(tx * tx + ty * ty);
+    final h = sqrt(b.vx * b.vx + b.vy * b.vy);
+    if (h < 8) return;
+    if (b.vx * tx + b.vy * ty <= 0) {
+      // Heading back towards our own goal: clear it out to the side.
+      final side = b.x < kFieldW / 2 ? -1.0 : 1.0;
+      final clear = c.difficulty == 3 ? 1.0 : help;
+      b.vx += (side * h - b.vx) * clear;
+      b.vy *= 1 - clear;
+      return;
+    }
+    b.vx += (tx / td * h - b.vx) * help;
+    b.vy += (ty / td * h - b.vy) * help;
+    if (goalLift > 0 && b.vy.abs() > 1) {
+      final t = ty / b.vy; // seconds until it reaches the wall
+      if (t <= 0 || t > 3) return;
+      final want = (goalLift + kGoalH / 2 - b.z + 0.5 * kGravity * t * t) / t;
+      b.vz += (want - b.vz) * help;
+    }
   }
 
   bool _checkGoal() {
@@ -790,7 +837,7 @@ class BoostBallMatch {
       ..vy = 0
       ..vz = 0
       ..y = scorer == 1 ? -kGoalDepth / 2 : kFieldL + kGoalDepth / 2
-      ..z = kBallR;
+      ..z = goalLift + kBallR;
     return true;
   }
 
@@ -806,7 +853,7 @@ class BoostBallMatch {
   ]) {
     if (y < 0 || y > kFieldL) return null;
     const c = kFieldW / 2;
-    final mouth = (x - c).abs() < kGoalW / 2 + 1 && z < kGoalH + 0.5;
+    final mouth = (x - c).abs() < kGoalW / 2 + 1 && inGoalHeight(z, 0.5);
     var best = kRampR;
     (double, double, double)? out;
     void plane(double nx, double ny, double d) {
@@ -888,9 +935,13 @@ class BoostBallMatch {
         );
       }
     }
-    if (z < r) return (x: x, y: y, z: r, nx: 0, ny: 0, nz: 1);
-    if (z > kCeiling - r - 0.01) {
-      return (x: x, y: y, z: min(z, kCeiling - r), nx: 0, ny: 0, nz: -1);
+    // Inside a goal the floor and roof are the goal's own.
+    final inGoal = y < 0 || y > kFieldL;
+    final bottom = inGoal ? goalLift : 0.0;
+    final top = inGoal ? goalLift + kGoalH : kCeiling;
+    if (z < bottom + r) return (x: x, y: y, z: bottom + r, nx: 0, ny: 0, nz: 1);
+    if (z > top - r - 0.01) {
+      return (x: x, y: y, z: min(z, top - r), nx: 0, ny: 0, nz: -1);
     }
     return null;
   }
@@ -907,7 +958,7 @@ class BoostBallMatch {
     double bounce,
   ) {
     const c = kFieldW / 2;
-    final inMouth = (x - c).abs() < kGoalW / 2 && z < kGoalH;
+    final inMouth = (x - c).abs() < kGoalW / 2 && inGoalHeight(z);
     final planes = <(double, double, double)>[]; // nx, ny, d: n·p >= d + r
     if (y < 0 && inMouth || y < -0.01 && (x - c).abs() < kGoalW / 2) {
       planes.addAll([
@@ -972,7 +1023,8 @@ class BoostBallMatch {
     final dist = toBall.distance;
 
     if (c.thinkT <= 0) {
-      c.thinkT = const [0.35, 0.18, 0.06][level] + rnd.nextDouble() * 0.05;
+      c.thinkT =
+          const [0.35, 0.18, 0.06, 0.03][level] + rnd.nextDouble() * 0.05;
       // Where will the ball be when I get there?
       final t = (dist / 28).clamp(0.0, 1.2);
       var future = Offset(b.x + b.vx * t, b.y + b.vy * t);
@@ -998,7 +1050,24 @@ class BoostBallMatch {
         c.wantBoost = (c.aim - c.pos).distance > 30 && c.boost > 50;
       } else {
         final behind = (b.y - c.y) * dir > -1;
-        if (behind) {
+        final foes = cars.where((o) => o.team != c.team && o.alive);
+        final foeDist = foes.isEmpty
+            ? 999.0
+            : foes.map((o) => (o.pos - b.pos).distance).reduce(min);
+        final ourHalf = (b.y - ownGoal.dy) * dir < kFieldL / 2;
+        if (level == 3 && ourHalf && foeDist < dist * 0.6 && dist > 12) {
+          // Extreme: they will get there first, so sit between the ball
+          // and our goal instead of chasing.
+          final back = ownGoal - b.pos;
+          c.aim = b.pos + back / back.distance * min(14, back.distance * 0.5);
+        } else if (behind && level == 3) {
+          // Extreme: swing out wide to get properly lined up first.
+          final dirTo = toBall / max(dist, 0.01);
+          final miss = 1 - (dirTo.dx * g.dx + dirTo.dy * g.dy);
+          c.aim = dist < 9 && miss < 0.3
+              ? future + g * 2
+              : future - g * (4 + 8 * miss);
+        } else if (behind) {
           // Line up behind the ball, then drive through it at the goal.
           c.aim = dist < 9 ? future + g * 2 : future - g * 4;
         } else if (b.vy * dir < -12) {
@@ -1014,13 +1083,13 @@ class BoostBallMatch {
         }
         final aligned =
             _angleDiff(c.heading, (c.aim - c.pos).direction).abs() < 0.3;
-        final boosty = const [0.15, 0.5, 0.9][level];
+        final boosty = const [0.15, 0.5, 0.9, 0.9][level];
         c.wantBoost = aligned && c.boost > 10 && rnd.nextDouble() < boosty;
       }
       // Easy bots wobble about.
-      final wobble = const [0.5, 0.18, 0.04][level];
+      final wobble = const [0.5, 0.18, 0.04, 0.0][level];
       final a = (c.aim - c.pos).direction + (rnd.nextDouble() - 0.5) * wobble;
-      final speed = const [0.75, 0.92, 1.0][level];
+      final speed = const [0.75, 0.92, 1.0, 1.0][level];
       inp.stick = Offset.fromDirection(a, speed);
       inp.boost = c.wantBoost;
 
@@ -1034,23 +1103,23 @@ class BoostBallMatch {
           b.z > 3.5 &&
           b.z < 3 + c.spec.jump * 0.45 &&
           facing &&
-          rnd.nextDouble() < const [0.3, 0.6, 0.9][level]) {
+          rnd.nextDouble() < const [0.3, 0.6, 0.9, 0.9][level]) {
         inp.jump = true;
       } else if (!c.grounded &&
           c.canFlip &&
           flat < 5 &&
           goodHit &&
           level >= 1 &&
-          rnd.nextDouble() < (level == 2 ? 0.8 : 0.3)) {
+          rnd.nextDouble() < const [0.0, 0.3, 0.8, 0.8][level]) {
         inp.stick = Offset.fromDirection(toBall.direction);
         inp.jump = true;
       } else if (c.grounded &&
-          level == 2 &&
+          level >= 2 &&
           flat < 5 &&
           b.z < 4 &&
           facing &&
           goodHit &&
-          rnd.nextDouble() < 0.25) {
+          rnd.nextDouble() < (level == 3 ? 0.25 : 0.25)) {
         inp.jump = true; // first half of a flip
       }
     }

@@ -56,7 +56,8 @@ void main() {
       ..wins = 0
       ..losses = 0
       ..goals = 0
-      ..vip = false;
+      ..vip = false
+      ..name = '';
     await save.save();
   });
 
@@ -469,7 +470,11 @@ void main() {
     for (final m in BoostMode.values) {
       expect(find.text(m.title), findsOneWidget);
     }
-    await tester.ensureVisible(find.text('PEOPLE'));
+    await tester.scrollUntilVisible(
+      find.text('PEOPLE'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('PEOPLE'));
     await tester.pumpAndSettle();
@@ -536,5 +541,115 @@ void main() {
     // ignore: avoid_print
     print('hard $hard - easy $easy');
     expect(hard, greaterThan(easy));
+  });
+
+  test('extreme bots beat hard bots', () {
+    var extreme = 0, hard = 0;
+    for (var seed = 0; seed < 6; seed++) {
+      final cars = [
+        Car(team: 0, name: 'Extreme', spec: kCars.first, difficulty: 3),
+        Car(team: 1, name: 'Hard', spec: kCars.first, difficulty: 2),
+      ];
+      final m = BoostBallMatch(
+        teamSize: 1,
+        players: cars,
+        random: Random(seed),
+      );
+      for (var i = 0; i < 60 * 150 && m.phase != MatchPhase.over; i++) {
+        m.step(1 / 60);
+      }
+      extreme += m.score[0];
+      hard += m.score[1];
+    }
+    // ignore: avoid_print
+    print('extreme $extreme - hard $hard');
+    expect(extreme, greaterThan(hard));
+  });
+
+  group('winner wall', () {
+    BoostBallMatch ballOnly(double z, double vz) {
+      final m = _botMatch(1, 1, 3, mode: BoostMode.winnerWall);
+      m.cars.clear();
+      m.phase = MatchPhase.play;
+      m.ball
+        ..x = kFieldW / 2
+        ..y = 8
+        ..z = z
+        ..vx = 0
+        ..vy = -30
+        ..vz = vz;
+      return m;
+    }
+
+    test('a ball along the floor does not go in', () {
+      final m = ballOnly(kBallR, 0);
+      for (var i = 0; i < 120; i++) {
+        m.step(1 / 60);
+      }
+      expect(m.score, [0, 0]);
+    });
+
+    test('a ball up at the goal on the wall scores', () {
+      final m = ballOnly(goalLift + kGoalH / 2, 4);
+      for (var i = 0; i < 120 && m.phase == MatchPhase.play; i++) {
+        m.step(1 / 60);
+      }
+      expect(m.score, [0, 1]);
+      expect(m.ball.z, greaterThan(goalLift));
+    });
+
+    test('bots still score in winner wall', () {
+      var goals = 0;
+      for (var seed = 0; seed < 3; seed++) {
+        final m = _botMatch(1, 2, seed, mode: BoostMode.winnerWall);
+        for (var i = 0; i < 60 * 150 && m.phase != MatchPhase.over; i++) {
+          m.step(1 / 60);
+        }
+        goals += m.score[0] + m.score[1];
+      }
+      expect(goals, greaterThan(0));
+    });
+
+    test('other modes keep the goals on the floor', () {
+      _botMatch(1, 1, 3);
+      expect(goalLift, 0);
+    });
+  });
+
+  testWidgets('looking for people when nobody is online offers bots', (
+    tester,
+  ) async {
+    await _phone(tester);
+    final hub = LoopbackHub();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BoostBallScreen(
+          makeLink: hub.makeLink,
+          makeDirectory: hub.makeDirectory,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('PEOPLE'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('PEOPLE'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('FIND PLAYERS 1v1'));
+    await tester.tap(find.text('FIND PLAYERS 1v1'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Oscar');
+    await tester.tap(find.text('OK'));
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(find.text('Nobody is online'), findsOneWidget);
+    await tester.tap(find.text('PLAY BOTS'));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text('JUMP'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 }

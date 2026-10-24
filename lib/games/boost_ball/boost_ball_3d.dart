@@ -225,9 +225,16 @@ class Stadium {
   final List<Face> lines = [];
   final List<Face> solid = [];
 
-  static final Stadium instance = Stadium._();
+  /// How high the goals are (see [goalLift]).
+  final double lift;
 
-  Stadium._() {
+  static final Map<double, Stadium> _built = {};
+
+  /// The stadium for the current match's goal height.
+  static Stadium get instance =>
+      _built.putIfAbsent(goalLift, () => Stadium._(goalLift));
+
+  Stadium._(this.lift) {
     _buildFloor();
     _buildLines();
     _buildWalls();
@@ -286,13 +293,14 @@ class Stadium {
       (-kGoalDepth, kBlueTeam3d),
       (kFieldL, kOrangeTeam3d),
     ]) {
-      floor.add(
+      // Raised goals are sorted with the walls so they hide properly.
+      (lift > 0 ? solid : floor).add(
         Face(
           [
-            V3(kFieldW / 2 - kGoalW / 2, y0, 0),
-            V3(kFieldW / 2 + kGoalW / 2, y0, 0),
-            V3(kFieldW / 2 + kGoalW / 2, y0 + kGoalDepth, 0),
-            V3(kFieldW / 2 - kGoalW / 2, y0 + kGoalDepth, 0),
+            V3(kFieldW / 2 - kGoalW / 2, y0, lift),
+            V3(kFieldW / 2 + kGoalW / 2, y0, lift),
+            V3(kFieldW / 2 + kGoalW / 2, y0 + kGoalDepth, lift),
+            V3(kFieldW / 2 - kGoalW / 2, y0 + kGoalDepth, lift),
           ],
           Color.lerp(const Color(0xFF263238), c, 0.35)!,
           lit: false,
@@ -408,8 +416,16 @@ class Stadium {
         for (var k = 0; k < prof.length - 1; k++) {
           final (d0, z0) = prof[k];
           final (d1, z1) = prof[k + 1];
-          // The goal mouth is open below the crossbar.
-          if (mouth && z1 <= kGoalH + 0.01) continue;
+          // The goal mouth is a hole between the goal floor and crossbar.
+          final hole0 = lift, hole1 = lift + kGoalH;
+          final parts = <(double, double)>[];
+          if (!mouth || z1 <= hole0 + 0.01 || z0 >= hole1 - 0.01) {
+            parts.add((z0, z1));
+          } else {
+            if (z0 < hole0 - 0.01) parts.add((z0, hole0));
+            if (z1 > hole1 + 0.01) parts.add((hole1, z1));
+          }
+          if (parts.isEmpty) continue;
           final ramp = k < 5;
           final Color c;
           if (ramp) {
@@ -430,24 +446,28 @@ class Stadium {
               0.15 + 0.08 * (k % 2),
             )!;
           }
-          final lo = mouth ? max(z0, kGoalH) : z0;
-          solid.add(
-            Face(
-              [
-                at(p0, m0, d0, lo),
-                at(p1, m1, d0, lo),
-                at(p1, m1, d1, z1),
-                at(p0, m0, d1, z1),
-              ],
-              c,
-              lit: ramp || k >= 5,
-            ),
-          );
+          double dAt(double z) =>
+              z1 == z0 ? d0 : d0 + (d1 - d0) * (z - z0) / (z1 - z0);
+          for (final (lo, hi) in parts) {
+            solid.add(
+              Face(
+                [
+                  at(p0, m0, dAt(lo), lo),
+                  at(p1, m1, dAt(lo), lo),
+                  at(p1, m1, dAt(hi), hi),
+                  at(p0, m0, dAt(hi), hi),
+                ],
+                c,
+                lit: ramp || k >= 5,
+              ),
+            );
+          }
         }
         // The crowd behind the glass, in rows going up and back.
         for (var row = 0; row < 4; row++) {
           final d0 = -1.0 - row * 7, d1 = d0 - 7;
           final z0 = kRampR + 2.5 + row * 6.0, z1 = z0 + 6;
+          if (mouth && z0 < lift + kGoalH - 1) continue; // the goal is here
           solid.add(
             Face(
               [
@@ -508,57 +528,51 @@ class Stadium {
     ]) {
       final post = Color.lerp(c, const Color(0xFFFFFFFF), 0.45)!;
       const t = 0.5;
-      _box(solid, l - t, l, y - t / 2, y + t / 2, 0, kGoalH, post);
-      _box(solid, r, r + t, y - t / 2, y + t / 2, 0, kGoalH, post);
-      _box(solid, l - t, r + t, y - t / 2, y + t / 2, kGoalH, kGoalH + t, post);
+      final lo = lift, hi = lift + kGoalH;
+      _box(solid, l - t, l, y - t / 2, y + t / 2, lo, hi, post);
+      _box(solid, r, r + t, y - t / 2, y + t / 2, lo, hi, post);
+      _box(solid, l - t, r + t, y - t / 2, y + t / 2, hi, hi + t, post);
+      if (lift > 0) {
+        _box(solid, l - t, r + t, y - t / 2, y + t / 2, lo - t, lo, post);
+      }
       // The net: see-through sides, back and roof.
       final net = c.withValues(alpha: 0.28);
       solid.add(
         Face(
-          [
-            V3(l, back, 0),
-            V3(r, back, 0),
-            V3(r, back, kGoalH),
-            V3(l, back, kGoalH),
-          ],
+          [V3(l, back, lo), V3(r, back, lo), V3(r, back, hi), V3(l, back, hi)],
           net,
           lit: false,
         ),
       );
       solid.add(
         Face(
-          [V3(l, y, 0), V3(l, back, 0), V3(l, back, kGoalH), V3(l, y, kGoalH)],
+          [V3(l, y, lo), V3(l, back, lo), V3(l, back, hi), V3(l, y, hi)],
           net,
           lit: false,
         ),
       );
       solid.add(
         Face(
-          [V3(r, y, 0), V3(r, back, 0), V3(r, back, kGoalH), V3(r, y, kGoalH)],
+          [V3(r, y, lo), V3(r, back, lo), V3(r, back, hi), V3(r, y, hi)],
           net,
           lit: false,
         ),
       );
       solid.add(
         Face(
-          [
-            V3(l, y, kGoalH),
-            V3(r, y, kGoalH),
-            V3(r, back, kGoalH),
-            V3(l, back, kGoalH),
-          ],
+          [V3(l, y, hi), V3(r, y, hi), V3(r, back, hi), V3(l, back, hi)],
           net,
           lit: false,
         ),
       );
       // A glowing strip along the goal line.
-      lines.add(
+      (lift > 0 ? solid : lines).add(
         Face(
           [
-            V3(l, y - 0.3, 0.04),
-            V3(r, y - 0.3, 0.04),
-            V3(r, y + 0.3, 0.04),
-            V3(l, y + 0.3, 0.04),
+            V3(l, y - 0.3, lo + 0.04),
+            V3(r, y - 0.3, lo + 0.04),
+            V3(r, y + 0.3, lo + 0.04),
+            V3(l, y + 0.3, lo + 0.04),
           ],
           c,
           lit: false,

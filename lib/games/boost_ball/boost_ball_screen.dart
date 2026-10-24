@@ -54,6 +54,10 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
   Future<void> _play() async {
     SoundService.instance.play(GameSound.tap);
     if (_online) return _playOnline();
+    await _playBots();
+  }
+
+  Future<void> _playBots() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => BoostBallGameScreen(
@@ -105,6 +109,29 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
     await _save.save();
     return true;
   }
+
+  /// Shown when you look for real people and nobody is online.
+  Future<String?> _nobodyOnline() => showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Nobody is online'),
+      content: Text(
+        'No one else is looking for a ${_size}v$_size ${_mode.title} '
+        'match right now. Play against bots, or wait for someone to '
+        'join you.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop('wait'),
+          child: const Text('WAIT'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.of(context).pop('bots'),
+          child: const Text('PLAY BOTS'),
+        ),
+      ],
+    ),
+  );
 
   Future<String?> _askCode() async {
     final ctrl = TextEditingController();
@@ -191,6 +218,14 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
           } catch (_) {
             // Gone or full: try the next one.
           }
+        }
+        if (room == null && open.isEmpty) {
+          // Nobody else is playing: let them pick bots or waiting.
+          setState(() => _busy = null);
+          final pick = await _nobodyOnline();
+          if (!mounted || pick == null) return;
+          if (pick == 'bots') return await _playBots();
+          setState(() => _busy = 'Making a room...');
         }
         room ??= await OutplayRoom.host(() => make()!, map, teamSize: _size);
       }
@@ -469,6 +504,7 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                             Color(0xFF66BB6A),
                             Color(0xFFFFB300),
                             Color(0xFFE53935),
+                            Color(0xFF8E24AA),
                           ],
                         ),
                       ],
@@ -687,12 +723,16 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                       width: 2,
                     ),
                   ),
-                  child: Text(
-                    names[i].toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      names[i].toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
                     ),
                   ),
                 ),

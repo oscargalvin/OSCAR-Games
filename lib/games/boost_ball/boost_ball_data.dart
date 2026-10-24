@@ -200,9 +200,9 @@ const int kVipPrice = 1000;
 const int kVipCars = 7;
 
 /// Coins for winning a match, by how hard the bots were.
-const List<int> kWinCoins = [25, 40, 60];
+const List<int> kWinCoins = [25, 40, 60, 100];
 
-const List<String> kDifficultyNames = ['Easy', 'Medium', 'Hard'];
+const List<String> kDifficultyNames = ['Easy', 'Medium', 'Hard', 'Extreme'];
 
 /// The different ways to play a match.
 enum BoostMode {
@@ -210,6 +210,10 @@ enum BoostMode {
   suddenDeath('Sudden Death', 'No clock. The first goal wins the match.'),
   firstTo5('First to 5', 'No clock. First team to score 5 goals wins.'),
   noBoost('No Boost', 'A normal match, but nobody gets any boost.'),
+  winnerWall(
+    'Winner Wall',
+    'The goals are high up on the end walls. Climb the wall to score!',
+  ),
   freePlay('Free Play', 'Just you and the ball. Practise your shots!');
 
   final String title;
@@ -217,7 +221,7 @@ enum BoostMode {
   const BoostMode(this.title, this.blurb);
 
   /// Modes with a match clock (the others end on goals).
-  bool get timed => this == classic || this == noBoost;
+  bool get timed => this == classic || this == noBoost || this == winnerWall;
 
   static BoostMode byName(String? name) => BoostMode.values.firstWhere(
     (m) => m.name == name,
