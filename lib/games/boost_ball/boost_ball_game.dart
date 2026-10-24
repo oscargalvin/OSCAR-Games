@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -66,6 +67,7 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   // Touch controls.
   int? _stickPointer;
+  bool _touchHelp = false; // playing on a touch screen
   Offset? _stickStart;
   Offset _stickNow = Offset.zero;
   bool _boostHeld = false;
@@ -205,6 +207,9 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
       if (d.distance > 6) {
         steer = (d.dx / 50).clamp(-1.0, 1.0);
         throttle = (-d.dy / 50).clamp(-1.0, 1.0);
+        // Touch help: any drag that isn't pulling back drives forward, so
+        // you only have to think about steering.
+        if (_touchHelp && d.dy < 20) throttle = max(throttle, 0.9);
       }
     }
     if (_keys.contains(LogicalKeyboardKey.arrowLeft) ||
@@ -402,6 +407,12 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: (e) {
+                      if (e.kind == PointerDeviceKind.touch && !_touchHelp) {
+                        _touchHelp = true;
+                        // Shots get a nudge towards the goal (not online,
+                        // where it wouldn't be fair).
+                        _you.assist = !_online;
+                      }
                       if (_stickPointer == null &&
                           e.localPosition.dx < _size.width * 0.55) {
                         _stickPointer = e.pointer;

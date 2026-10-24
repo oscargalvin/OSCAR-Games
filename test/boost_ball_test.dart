@@ -743,4 +743,32 @@ void main() {
     expect(save.name, 'Speedy');
     expect(find.text('Speedy'), findsOneWidget);
   });
+
+  test('touch help bends your shots towards the goal', () {
+    double shotAim(bool assist) {
+      final c = Car(team: 0, name: 'You', spec: kCars.first, isYou: true)
+        ..assist = assist;
+      final m = BoostBallMatch(teamSize: 1, players: [c], random: Random(8));
+      m.phase = MatchPhase.play;
+      c
+        ..x = kFieldW / 2 - 14
+        ..y = kFieldL / 2 - 6
+        ..heading = pi / 2
+        ..vx = 0
+        ..vy = 30;
+      c.input.relative = true;
+      m.ball
+        ..x = kFieldW / 2 - 14
+        ..y = kFieldL / 2;
+      for (var i = 0; i < 30 && m.lastKph == 0; i++) {
+        m.step(1 / 60);
+      }
+      // How far the ball is heading away from the goal's middle.
+      final b = m.ball;
+      final t = (kFieldL - b.y) / b.vy;
+      return (b.x + b.vx * t - kFieldW / 2).abs();
+    }
+
+    expect(shotAim(true), lessThan(shotAim(false)));
+  });
 }

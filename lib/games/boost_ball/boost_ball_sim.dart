@@ -29,6 +29,10 @@ const double kGoalPause = 3;
 const double kWallGoalLift = kRampR + 2.5;
 double goalLift = 0;
 
+/// How much your shots bend towards the goal when you play on a touch
+/// screen (driving with a thumb is harder than with keys).
+const double kTouchAssist = 0.4;
+
 /// Whether height [z] is inside the goal mouth (between the floor of the
 /// goal and its crossbar), with [pad] of extra room.
 bool inGoalHeight(double z, [double pad = 0]) =>
@@ -102,6 +106,7 @@ class Car {
   double demoT = 0; // > 0 while waiting to come back after a demolition
   int goals = 0;
   int demos = 0; // cars this one has demolished
+  bool assist = false; // touch-screen help: shots bend towards the goal
   final CarInput input = CarInput();
 
   // Bot brain.
@@ -771,7 +776,11 @@ class BoostBallMatch {
     b.vx += c.grounded ? c.upX * pop : 0;
     b.vy += c.grounded ? c.upY * pop : 0;
     b.vz += nz * power + c.vz * 0.25 + (c.grounded ? c.upZ * pop : pop);
-    if (_isBot(c)) _aimShot(c);
+    if (_isBot(c)) {
+      _aimShot(c, const [0.0, 0.15, 0.3, 0.6][c.difficulty]);
+    } else if (c.assist) {
+      _aimShot(c, kTouchAssist);
+    }
     c.vx -= nx * max(0.0, rel) * 0.25;
     c.vy -= ny * max(0.0, rel) * 0.25;
     c.vz -= nz * max(0.0, rel) * 0.25;
@@ -785,8 +794,7 @@ class BoostBallMatch {
 
   /// Better bots bend their shots towards the goal (and in Winner Wall
   /// lob them up to it). Extreme bots are the best at it.
-  void _aimShot(Car c) {
-    final help = const [0.0, 0.15, 0.3, 0.6][c.difficulty];
+  void _aimShot(Car c, double help) {
     if (help == 0) return;
     final b = ball;
     final tx = kFieldW / 2 - b.x;
@@ -797,7 +805,7 @@ class BoostBallMatch {
     if (b.vx * tx + b.vy * ty <= 0) {
       // Heading back towards our own goal: clear it out to the side.
       final side = b.x < kFieldW / 2 ? -1.0 : 1.0;
-      final clear = c.difficulty == 3 ? 1.0 : help;
+      final clear = _isBot(c) && c.difficulty == 3 ? 1.0 : help;
       b.vx += (side * h - b.vx) * clear;
       b.vy *= 1 - clear;
       return;
