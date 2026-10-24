@@ -5,6 +5,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/sound_service.dart';
+import 'boost_ball_3d.dart';
 import 'boost_ball_data.dart';
 import 'boost_ball_sim.dart';
 
@@ -24,58 +25,9 @@ const List<String> _botNames = [
   'Gizmo',
 ];
 
-/// Where the pitch sits on screen. On a tall screen the pitch runs up the
-/// screen (you attack upwards); on a wide screen it runs left to right.
-class _View {
-  final bool landscape;
-  final double scale;
-  final Offset centre;
-
-  _View(this.landscape, this.scale, this.centre);
-
-  factory _View.of(Size size) {
-    final landscape = size.width > size.height;
-    const long = kFieldL + kGoalDepth * 2 + 4;
-    const wide = kFieldW + 4;
-    if (landscape) {
-      const top = 54.0, bottom = 6.0;
-      final s = min(size.width / long, (size.height - top - bottom) / wide);
-      return _View(
-        true,
-        s,
-        Offset(size.width / 2, top + (size.height - top - bottom) / 2),
-      );
-    }
-    const top = 64.0, bottom = 176.0;
-    final s = min(size.width / wide, (size.height - top - bottom) / long);
-    return _View(
-      false,
-      s,
-      Offset(size.width / 2, top + (size.height - top - bottom) / 2),
-    );
-  }
-
-  /// A point on the pitch (at height [z]) to the screen.
-  Offset at(double x, double y, [double z = 0]) {
-    final dx = x - kFieldW / 2, dy = y - kFieldL / 2;
-    final p = landscape
-        ? centre + Offset(dy, dx) * scale
-        : centre + Offset(dx, -dy) * scale;
-    return p - Offset(0, z * scale * 0.55);
-  }
-
-  /// A direction on the pitch to a direction on screen.
-  Offset dirToScreen(Offset d) =>
-      landscape ? Offset(d.dy, d.dx) : Offset(d.dx, -d.dy);
-
-  /// A direction on screen (like the joystick) to a pitch direction.
-  Offset dirToPitch(Offset d) =>
-      landscape ? Offset(d.dy, d.dx) : Offset(d.dx, -d.dy);
-}
-
 class _Spark {
-  Offset pos; // screen
-  Offset vel;
+  V3 pos;
+  V3 vel;
   final Color colour;
   double life;
   _Spark(this.pos, this.vel, this.colour, this.life);
@@ -117,6 +69,14 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
   final Set<LogicalKeyboardKey> _keys = {};
 
   final List<_Spark> _sparks = [];
+
+  // The camera follows behind your car, looking at the ball (ball cam) or
+  // straight ahead.
+  bool _ballCam = true;
+  double _camYaw = pi / 2;
+  V3 _camPos = const V3(kFieldW / 2, 10, 5);
+  double _camPitch = -0.1;
+  Rot _spin = Rot();
   double _shake = 0;
   int _lastCount = -1;
   bool _paid = false;
@@ -134,6 +94,7 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
       spec: carById(_save.car),
       colour: _save.colour,
     );
+    _you.input.relative = true;
     final cars = <Car>[_you];
     for (var i = 1; i < widget.teamSize; i++) {
       cars.add(
@@ -180,9 +141,15 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
     _match.step(dt);
     _handleEvents();
     _shake = max(0, _shake - dt * 3);
+    _updateCamera(dt);
+    final b = _match.ball;
+    final roll = Offset(b.vx, b.vy).distance;
+    if (roll > 0.1) {
+      _spin = _spin.turned(V3(-b.vy, b.vx, 0), roll * dt / kBallR);
+    }
     for (final s in _sparks) {
       s.pos += s.vel * dt;
-      s.vel = Offset(s.vel.dx * 0.96, s.vel.dy * 0.96 + 300 * dt);
+      s.vel = V3(s.vel.x * 0.97, s.vel.y * 0.97, s.vel.z - 20 * dt);
       s.life -= dt;
     }
     _sparks.removeWhere((s) => s.life <= 0);
@@ -199,37 +166,80 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   void _readControls() {
     final inp = _you.input;
-    var stick = Offset.zero;
+    var steer = 0.0, throttle = 0.0;
     if (_stickStart != null) {
       final d = _stickNow - _stickStart!;
-      stick = d.distance < 6 ? Offset.zero : d / max(d.distance, 50);
+      if (d.distance > 6) {
+        steer = (d.dx / 50).clamp(-1.0, 1.0);
+        throttle = (-d.dy / 50).clamp(-1.0, 1.0);
+      }
     }
-    var kx = 0.0, ky = 0.0;
     if (_keys.contains(LogicalKeyboardKey.arrowLeft) ||
         _keys.contains(LogicalKeyboardKey.keyA)) {
-      kx -= 1;
+      steer = -1;
     }
     if (_keys.contains(LogicalKeyboardKey.arrowRight) ||
         _keys.contains(LogicalKeyboardKey.keyD)) {
-      kx += 1;
+      steer = 1;
     }
     if (_keys.contains(LogicalKeyboardKey.arrowUp) ||
         _keys.contains(LogicalKeyboardKey.keyW)) {
-      ky -= 1;
+      throttle = 1;
     }
     if (_keys.contains(LogicalKeyboardKey.arrowDown) ||
         _keys.contains(LogicalKeyboardKey.keyS)) {
-      ky += 1;
+      throttle = -1;
     }
-    if (kx != 0 || ky != 0) {
-      stick = Offset(kx, ky) / Offset(kx, ky).distance;
+    inp
+      ..steer = steer
+      ..throttle = throttle
+      ..boost =
+          _boostHeld ||
+          _keys.contains(LogicalKeyboardKey.shiftLeft) ||
+          _keys.contains(LogicalKeyboardKey.shiftRight);
+  }
+
+  void _updateCamera(double dt) {
+    final c = _you;
+    final b = _match.ball;
+    final toBall = Offset(b.x - c.x, b.y - c.y);
+    final wantYaw = _ballCam && toBall.distance > 2
+        ? toBall.direction
+        : c.heading;
+    var d = (wantYaw - _camYaw) % (2 * pi);
+    if (d > pi) d -= 2 * pi;
+    _camYaw += d * min(1.0, dt * 5);
+    final dir = V3(cos(_camYaw), sin(_camYaw), 0);
+    var want = V3(c.x, c.y, c.z * 0.6) - dir * 11 + const V3(0, 0, 4.6);
+    want = V3(
+      want.x.clamp(1.5, kFieldW - 1.5),
+      want.y.clamp(1.5, kFieldL - 1.5),
+      max(want.z, BoostBallMatch.floorHeight(want.x, want.y) + 1.5),
+    );
+    final k = min(1.0, dt * 8);
+    _camPos = _camPos + (want - _camPos) * k;
+    var pitch = -0.14;
+    if (_ballCam) {
+      final to = V3(b.x, b.y, b.z) - _camPos;
+      final flat = sqrt(to.x * to.x + to.y * to.y);
+      pitch = (atan2(to.z, max(flat, 1)) * 0.8 - 0.06).clamp(-0.4, 0.5);
     }
-    final view = _View.of(_size);
-    inp.stick = view.dirToPitch(stick);
-    inp.boost =
-        _boostHeld ||
-        _keys.contains(LogicalKeyboardKey.shiftLeft) ||
-        _keys.contains(LogicalKeyboardKey.shiftRight);
+    _camPitch += (pitch - _camPitch) * min(1.0, dt * 6);
+  }
+
+  Camera _camera(Size size) {
+    final landscape = size.width > size.height;
+    final focal = max(size.width, size.height) * (landscape ? 0.5 : 0.56);
+    final centre = Offset(
+      size.width / 2,
+      size.height * (landscape ? 0.5 : 0.44),
+    );
+    final look = V3(
+      cos(_camYaw) * cos(_camPitch),
+      sin(_camYaw) * cos(_camPitch),
+      sin(_camPitch),
+    );
+    return Camera.lookAt(_camPos, _camPos + look, focal, centre);
   }
 
   void _jump() {
@@ -265,20 +275,20 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
   }
 
   void _goalSparks() {
-    final view = _View.of(_size);
     final b = _match.ball;
-    final at = view.at(b.x, b.y, b.z);
+    final at = V3(b.x, b.y, b.z);
     final team = _match.lastScorerTeam ?? 0;
     final colours = team == 0
         ? const [kBlueTeam, Colors.white, Color(0xFF90CAF9)]
         : const [kOrangeTeam, Colors.white, Color(0xFFFFCC80)];
     for (var i = 0; i < 90; i++) {
       final a = _rnd.nextDouble() * 2 * pi;
-      final sp = 80 + _rnd.nextDouble() * 320;
+      final up = _rnd.nextDouble();
+      final sp = 6 + _rnd.nextDouble() * 18;
       _sparks.add(
         _Spark(
           at,
-          Offset(cos(a), sin(a)) * sp - const Offset(0, 120),
+          V3(cos(a) * sp, sin(a) * sp, 6 + up * 16),
           colours[i % colours.length],
           0.8 + _rnd.nextDouble() * 1.2,
         ),
@@ -366,6 +376,11 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                   ),
                 ),
                 Positioned(
+                  left: 8,
+                  top: 64,
+                  child: SafeArea(child: _ballCamButton()),
+                ),
+                Positioned(
                   right: 18,
                   bottom: landscape ? 16 : 24,
                   child: _jumpButton(),
@@ -381,7 +396,7 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                     bottom: landscape ? 20 : 54,
                     child: const IgnorePointer(
                       child: Text(
-                        'Drag here to drive',
+                        'Drag here: up to go, sideways to steer',
                         style: TextStyle(
                           color: Colors.white54,
                           fontWeight: FontWeight.w700,
@@ -457,6 +472,35 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
               ),
             ),
             box('${_match.score[1]}', kOrangeTeam),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _ballCamButton() {
+    return GestureDetector(
+      onTap: () => setState(() => _ballCam = !_ballCam),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: _ballCam ? const Color(0xCC2196F3) : Colors.black45,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white54),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.videocam_rounded, color: Colors.white, size: 16),
+            const SizedBox(width: 4),
+            Text(
+              _ballCam ? 'BALL CAM' : 'CAR CAM',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ],
         ),
       ),
@@ -653,22 +697,13 @@ class _PitchPainter extends CustomPainter {
   final _BoostBallGameScreenState s;
   _PitchPainter(this.s);
 
-  late _View v;
+  late Camera cam;
 
   BoostBallMatch get m => s._match;
 
   @override
   void paint(Canvas canvas, Size size) {
-    v = _View.of(size);
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E1A2B), Color(0xFF1C2E4A)],
-        ).createShader(Offset.zero & size),
-    );
+    cam = s._camera(size);
     canvas.save();
     if (s._shake > 0) {
       final r = s._rnd;
@@ -677,235 +712,122 @@ class _PitchPainter extends CustomPainter {
         (r.nextDouble() - 0.5) * 10 * s._shake,
       );
     }
-    _paintPitch(canvas);
-    _paintPads(canvas);
-    _paintShadows(canvas);
-    // Draw low things first so jumping cars and high balls sit on top.
-    final things = <(double, void Function())>[
-      for (final c in m.cars)
-        if (c.alive) (c.z, () => _paintCar(canvas, c)),
-      (m.ball.z - kBallR, () => _paintBall(canvas)),
-    ]..sort((a, b) => a.$1.compareTo(b.$1));
-    for (final t in things) {
-      t.$2();
+    _paintSky(canvas, size);
+    final r = Renderer(cam);
+    final stadium = Stadium.instance;
+    for (final f in stadium.floor) {
+      r.addFace(f, floor: true);
     }
-    _paintGoalFrames(canvas);
-    canvas.restore();
+    for (final f in stadium.lines) {
+      r.addFace(f, floor: true);
+    }
+    _addPads(r);
+    for (final c in m.cars) {
+      if (c.alive) drawShadow(r, c.x, c.y, 2.4, c.z);
+    }
+    drawShadow(r, m.ball.x, m.ball.y, kBallR, m.ball.z - kBallR);
+    for (final f in stadium.solid) {
+      r.addFace(f);
+    }
+    for (final c in m.cars) {
+      if (!c.alive) continue;
+      final team = c.team == 0 ? kBlueTeam : kOrangeTeam;
+      drawCar(
+        r,
+        CarModel.of(c.spec.body),
+        Pose.ofCar(c),
+        carPaint(_paintOf(c), team),
+        boosting: c.boosting,
+        rnd: s._rnd,
+      );
+    }
+    drawBall(r, m.ball, s._spin);
+    r.draw(canvas);
+    _paintLabels(canvas);
     for (final sp in s._sparks) {
+      final c = cam.toCam(sp.pos);
+      if (c.z < 0.5) continue;
       canvas.drawCircle(
-        sp.pos,
-        3,
+        cam.screen(c),
+        max(1.5, 14 / c.z),
         Paint()..color = sp.colour.withValues(alpha: sp.life.clamp(0, 1)),
       );
     }
+    canvas.restore();
+    _paintMiniMap(canvas, size);
     _paintStick(canvas);
     _paintMessages(canvas, size);
   }
 
-  Path _pitchPath() {
-    final pts = [
-      const Offset(kCorner, 0),
-      const Offset(kFieldW / 2 - kGoalW / 2, 0),
-      const Offset(kFieldW / 2 - kGoalW / 2, -kGoalDepth),
-      const Offset(kFieldW / 2 + kGoalW / 2, -kGoalDepth),
-      const Offset(kFieldW / 2 + kGoalW / 2, 0),
-      const Offset(kFieldW - kCorner, 0),
-      const Offset(kFieldW, kCorner),
-      const Offset(kFieldW, kFieldL - kCorner),
-      const Offset(kFieldW - kCorner, kFieldL),
-      const Offset(kFieldW / 2 + kGoalW / 2, kFieldL),
-      const Offset(kFieldW / 2 + kGoalW / 2, kFieldL + kGoalDepth),
-      const Offset(kFieldW / 2 - kGoalW / 2, kFieldL + kGoalDepth),
-      const Offset(kFieldW / 2 - kGoalW / 2, kFieldL),
-      const Offset(kCorner, kFieldL),
-      const Offset(0, kFieldL - kCorner),
-      const Offset(0, kCorner),
-    ];
-    return Path()..addPolygon([for (final p in pts) v.at(p.dx, p.dy)], true);
-  }
-
-  void _paintPitch(Canvas canvas) {
-    final pitch = _pitchPath();
-    canvas.drawPath(
-      pitch,
+  void _paintSky(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
       Paint()
-        ..color = Colors.black45
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF070B1E), Color(0xFF1B2551), Color(0xFF3A3F7A)],
+        ).createShader(Offset.zero & size),
     );
-    canvas.save();
-    canvas.clipPath(pitch);
-    // Mown stripes.
-    for (var i = -1; i < 11; i++) {
-      final a = v.at(-5, i * 10.0), b = v.at(kFieldW + 5, i * 10.0 + 10);
-      canvas.drawRect(
-        Rect.fromPoints(a, b),
-        Paint()
-          ..color = i.isEven
-              ? const Color(0xFF2E7D32)
-              : const Color(0xFF388E3C),
-      );
-    }
-    // The goals, in team colours.
-    for (final (y0, c) in [(-kGoalDepth, kBlueTeam), (kFieldL, kOrangeTeam)]) {
-      final r = Rect.fromPoints(
-        v.at(kFieldW / 2 - kGoalW / 2, y0),
-        v.at(kFieldW / 2 + kGoalW / 2, y0 + kGoalDepth),
-      );
-      canvas.drawRect(r, Paint()..color = c.withValues(alpha: 0.35));
-      final net = Paint()
-        ..color = Colors.white24
-        ..strokeWidth = 1;
-      for (var x = r.left; x < r.right; x += 6) {
-        canvas.drawLine(Offset(x, r.top), Offset(x, r.bottom), net);
-      }
-      for (var y = r.top; y < r.bottom; y += 6) {
-        canvas.drawLine(Offset(r.left, y), Offset(r.right, y), net);
-      }
-    }
-    final line = Paint()
-      ..color = Colors.white.withValues(alpha: 0.8)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = max(1.5, v.scale * 0.35);
-    canvas.drawLine(v.at(0, kFieldL / 2), v.at(kFieldW, kFieldL / 2), line);
-    canvas.drawCircle(v.at(kFieldW / 2, kFieldL / 2), 9 * v.scale, line);
-    canvas.drawCircle(
-      v.at(kFieldW / 2, kFieldL / 2),
-      v.scale * 0.8,
-      Paint()..color = Colors.white,
-    );
-    for (final (y0, y1) in [(0.0, 14.0), (kFieldL, kFieldL - 14)]) {
-      canvas.drawRect(
-        Rect.fromPoints(v.at(kFieldW / 2 - 16, y0), v.at(kFieldW / 2 + 16, y1)),
-        line,
-      );
-    }
-    // Team-coloured ends of the pitch.
-    for (final (y0, y1, c) in [
-      (0.0, 3.0, kBlueTeam),
-      (kFieldL - 3, kFieldL, kOrangeTeam),
-    ]) {
-      canvas.drawRect(
-        Rect.fromPoints(v.at(-5, y0), v.at(kFieldW + 5, y1)),
-        Paint()..color = c.withValues(alpha: 0.25),
-      );
-    }
-    canvas.restore();
-    // The walls round the outside.
-    canvas.drawPath(
-      pitch,
-      Paint()
-        ..color = const Color(0xFFB0BEC5)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = max(3, v.scale * 0.9)
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-
-  void _paintGoalFrames(Canvas canvas) {
-    for (final (y, c) in [(0.0, kBlueTeam), (kFieldL, kOrangeTeam)]) {
-      final postL = v.at(kFieldW / 2 - kGoalW / 2, y);
-      final postR = v.at(kFieldW / 2 + kGoalW / 2, y);
-      final barL = v.at(kFieldW / 2 - kGoalW / 2, y, kGoalH);
-      final barR = v.at(kFieldW / 2 + kGoalW / 2, y, kGoalH);
-      final p = Paint()
-        ..color = Color.lerp(c, Colors.white, 0.4)!
-        ..strokeWidth = max(2.5, v.scale * 0.7)
-        ..strokeCap = StrokeCap.round;
-      canvas.drawLine(postL, barL, p);
-      canvas.drawLine(postR, barR, p);
-      canvas.drawLine(barL, barR, p);
+    // Stars that turn with the camera.
+    final star = Paint()..color = Colors.white70;
+    final rnd = Random(3);
+    for (var i = 0; i < 60; i++) {
+      final a = rnd.nextDouble() * 2 * pi;
+      final h = rnd.nextDouble();
+      var dx = (a - s._camYaw) % (2 * pi);
+      if (dx > pi) dx -= 2 * pi;
+      final x = size.width / 2 - dx / 1.2 * size.width;
+      final y =
+          cam.centre.dy -
+          (0.2 + h * 0.9) * size.height * 0.6 +
+          s._camPitch * cam.focal;
+      if (x < 0 || x > size.width || y < 0) continue;
+      canvas.drawCircle(Offset(x, y), 1 + rnd.nextDouble(), star);
     }
   }
 
-  void _paintPads(Canvas canvas) {
+  void _addPads(Renderer r) {
     for (final p in m.pads) {
-      final at = v.at(p.pos.dx, p.pos.dy);
-      final r = (p.big ? 1.6 : 0.8) * v.scale;
-      if (!p.ready) {
-        canvas.drawCircle(at, r, Paint()..color = Colors.black26);
-        continue;
+      final rad = p.big ? 1.6 : 0.85;
+      const n = 6;
+      final ready = p.ready;
+      r.add(
+        [
+          for (var i = 0; i < n; i++)
+            V3(
+              p.pos.dx + cos(i / n * 2 * pi) * rad,
+              p.pos.dy + sin(i / n * 2 * pi) * rad,
+              0.06,
+            ),
+        ],
+        ready
+            ? (p.big ? const Color(0xFFFF9100) : const Color(0xFFFFD54F))
+            : const Color(0xFF1B3A1E),
+        lit: false,
+        floor: true,
+      );
+      if (p.big && ready) {
+        // A glowing orb hovers over full-boost pads.
+        final bob = 1.4 + 0.25 * sin(m.phaseT * 3 + p.pos.dx);
+        final c = V3(p.pos.dx, p.pos.dy, bob);
+        const pts = [
+          V3(0.7, 0, 0),
+          V3(0, 0.7, 0),
+          V3(-0.7, 0, 0),
+          V3(0, -0.7, 0),
+        ];
+        for (var i = 0; i < 4; i++) {
+          for (final tip in const [V3(0, 0, 0.9), V3(0, 0, -0.9)]) {
+            r.add(
+              [c + pts[i], c + pts[(i + 1) % 4], c + tip],
+              i.isEven ? const Color(0xFFFFC400) : const Color(0xFFFF6D00),
+              lit: false,
+            );
+          }
+        }
       }
-      final glow = 0.6 + 0.4 * sin(m.phaseT * 4 + p.pos.dx);
-      canvas.drawCircle(
-        at,
-        r * 1.8,
-        Paint()
-          ..color = const Color(0xFFFFB300).withValues(alpha: 0.25 * glow)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
-      );
-      canvas.drawCircle(
-        at,
-        r,
-        Paint()
-          ..color = p.big ? const Color(0xFFFF9100) : const Color(0xFFFFD54F),
-      );
     }
-  }
-
-  void _paintShadows(Canvas canvas) {
-    final shade = Paint()
-      ..color = Colors.black.withValues(alpha: 0.3)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
-    for (final c in m.cars) {
-      if (!c.alive) continue;
-      final r = kCarR * v.scale * (1 - min(0.4, c.z / 20));
-      canvas.drawOval(
-        Rect.fromCenter(
-          center: v.at(c.x, c.y),
-          width: r * 2.2,
-          height: r * 1.4,
-        ),
-        shade,
-      );
-    }
-    final b = m.ball;
-    final r = kBallR * v.scale * (1 - min(0.5, (b.z - kBallR) / 25));
-    canvas.drawOval(
-      Rect.fromCenter(center: v.at(b.x, b.y), width: r * 2, height: r * 1.3),
-      shade,
-    );
-    if (b.z > kBallR + 3) {
-      // A ring on the grass shows where a high ball is.
-      canvas.drawCircle(
-        v.at(b.x, b.y),
-        kBallR * v.scale,
-        Paint()
-          ..color = Colors.white38
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
-      );
-    }
-  }
-
-  void _paintBall(Canvas canvas) {
-    final b = m.ball;
-    final at = v.at(b.x, b.y, b.z);
-    final r = kBallR * v.scale * (1 + (b.z - kBallR) * 0.02);
-    canvas.drawCircle(
-      at,
-      r,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.4, -0.5),
-          colors: const [Colors.white, Color(0xFFCFD8DC), Color(0xFF78909C)],
-        ).createShader(Rect.fromCircle(center: at, radius: r)),
-    );
-    // Spinning hexagon patches.
-    final patch = Paint()..color = const Color(0xFF37474F);
-    for (var i = 0; i < 5; i++) {
-      final a = b.spin + i * 2 * pi / 5;
-      final p = at + Offset(cos(a), sin(a) * 0.8) * r * 0.55;
-      canvas.drawCircle(p, r * 0.2, patch);
-    }
-    canvas.drawCircle(at, r * 0.22, patch);
-    canvas.drawCircle(
-      at,
-      r,
-      Paint()
-        ..color = Colors.black54
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2,
-    );
   }
 
   Color _paintOf(Car c) {
@@ -916,212 +838,62 @@ class _PitchPainter extends CustomPainter {
     return shades[c.name.length % shades.length];
   }
 
-  void _paintCar(Canvas canvas, Car c) {
-    final at = v.at(c.x, c.y, c.z);
-    final dir = v.dirToScreen(c.forward);
-    final grow = 1 + c.z * 0.03;
-    final u =
-        v.scale * grow * 1.2; // cars drawn a bit big so they're easy to see
-    canvas.save();
-    canvas.translate(at.dx, at.dy);
-    canvas.rotate(dir.direction);
-    if (c.flipT > 0) {
-      // Spin round during a flip.
-      canvas.rotate((0.5 - c.flipT) / 0.5 * 2 * pi);
-    }
-    final team = c.team == 0 ? kBlueTeam : kOrangeTeam;
-    final body = _paintOf(c);
-
-    // Boost flame out the back.
-    if (c.boosting) {
-      final flick = 0.7 + s._rnd.nextDouble() * 0.6;
-      final flame = Path()
-        ..moveTo(-2.2 * u, -0.7 * u)
-        ..lineTo(-(3.6 + 1.8 * flick) * u, 0)
-        ..lineTo(-2.2 * u, 0.7 * u)
-        ..close();
-      canvas.drawPath(flame, Paint()..color = const Color(0xFFFF6D00));
-      canvas.drawPath(
-        flame,
-        Paint()
-          ..color = const Color(0xFFFFEB3B)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.3 * u,
-      );
-    }
-
-    // Glow in your team colour so you can tell who's who.
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset.zero, width: 5.2 * u, height: 3.2 * u),
-        Radius.circular(1 * u),
-      ),
-      Paint()
-        ..color = team.withValues(alpha: 0.55)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 0.6 * u),
-    );
-
-    final tyre = Paint()..color = const Color(0xFF212121);
-    void wheels(double len, double wide, double w, double h) {
-      for (final x in [-len, len]) {
-        for (final y in [-wide, wide]) {
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                center: Offset(x * u, y * u),
-                width: w * u,
-                height: h * u,
-              ),
-              Radius.circular(0.3 * u),
-            ),
-            tyre,
-          );
-        }
-      }
-    }
-
-    RRect box(double x, double y, double w, double h, double r) =>
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(x * u, y * u, w * u, h * u),
-          Radius.circular(r * u),
-        );
-    final paintBody = Paint()..color = body;
-    final dark = Paint()..color = const Color(0xFF102027);
-    final edge = Paint()
-      ..color = Colors.black54
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.15 * u;
-
-    switch (c.spec.body) {
-      case CarBody.sport:
-        wheels(1.4, 1.15, 1.1, 0.6);
-        canvas.drawRRect(box(-2.3, -1.15, 4.6, 2.3, 0.8), paintBody);
-        canvas.drawRRect(box(-2.3, -1.15, 4.6, 2.3, 0.8), edge);
-        canvas.drawRRect(box(0.2, -0.9, 1.0, 1.8, 0.3), dark); // windscreen
-        canvas.drawRRect(box(-1.4, -0.85, 0.9, 1.7, 0.3), dark);
-        canvas.drawRect(
-          Rect.fromLTWH(-2.6 * u, -1.2 * u, 0.4 * u, 2.4 * u),
-          dark,
-        ); // spoiler
-        canvas.drawRect(
-          Rect.fromLTWH(-2.3 * u, -0.2 * u, 4.6 * u, 0.4 * u),
-          Paint()..color = Colors.white70,
-        );
-      case CarBody.hornet:
-        wheels(1.5, 1.0, 1.0, 0.5);
-        final p = Path()
-          ..moveTo(2.8 * u, 0)
-          ..lineTo(0.8 * u, -1.0 * u)
-          ..lineTo(-2.3 * u, -1.0 * u)
-          ..lineTo(-2.3 * u, 1.0 * u)
-          ..lineTo(0.8 * u, 1.0 * u)
-          ..close();
-        canvas.drawPath(p, paintBody);
-        canvas.drawPath(p, edge);
-        for (final x in [-1.6, -0.6]) {
-          canvas.drawRect(
-            Rect.fromLTWH(x * u, -1.0 * u, 0.4 * u, 2.0 * u),
-            Paint()..color = const Color(0xFFFFD600),
-          );
-        }
-        canvas.drawRRect(box(0.1, -0.6, 0.9, 1.2, 0.3), dark);
-      case CarBody.truck:
-        wheels(1.5, 1.25, 1.2, 0.7);
-        canvas.drawRRect(box(-2.5, -1.3, 5.0, 2.6, 0.3), paintBody);
-        canvas.drawRRect(box(-2.5, -1.3, 5.0, 2.6, 0.3), edge);
-        canvas.drawRRect(box(0.6, -1.1, 1.6, 2.2, 0.2), dark); // cab roof
-        canvas.drawRect(
-          Rect.fromLTWH(-2.2 * u, -1.0 * u, 2.4 * u, 2.0 * u),
-          Paint()..color = Colors.black26,
-        ); // truck bed
-        canvas.drawRect(
-          Rect.fromLTWH(2.4 * u, -1.2 * u, 0.3 * u, 2.4 * u),
-          Paint()..color = const Color(0xFFB0BEC5),
-        ); // bull bar
-      case CarBody.goatKart:
-        wheels(1.3, 1.1, 0.9, 0.55);
-        canvas.drawRRect(box(-1.9, -0.8, 3.8, 1.6, 0.6), paintBody);
-        canvas.drawRRect(box(-1.9, -0.8, 3.8, 1.6, 0.6), edge);
-        // The goat driver.
-        canvas.drawCircle(
-          Offset(-0.2 * u, 0),
-          0.75 * u,
-          Paint()..color = Colors.white,
-        );
-        canvas.drawCircle(
-          Offset(0.5 * u, 0),
-          0.45 * u,
-          Paint()..color = const Color(0xFFEEEEEE),
-        );
-        final horn = Paint()
-          ..color = const Color(0xFF8D6E63)
-          ..strokeWidth = 0.25 * u
-          ..strokeCap = StrokeCap.round;
-        canvas.drawLine(
-          Offset(-0.3 * u, -0.4 * u),
-          Offset(-0.9 * u, -0.9 * u),
-          horn,
-        );
-        canvas.drawLine(
-          Offset(-0.3 * u, 0.4 * u),
-          Offset(-0.9 * u, 0.9 * u),
-          horn,
-        );
-        canvas.drawCircle(Offset(0.15 * u, -0.3 * u), 0.12 * u, dark);
-        canvas.drawCircle(Offset(0.15 * u, 0.3 * u), 0.12 * u, dark);
-      case CarBody.monster:
-        wheels(1.5, 1.5, 1.6, 1.0);
-        canvas.drawRRect(box(-2.2, -1.1, 4.4, 2.2, 0.6), paintBody);
-        canvas.drawRRect(box(-2.2, -1.1, 4.4, 2.2, 0.6), edge);
-        canvas.drawRRect(box(-0.4, -0.8, 1.4, 1.6, 0.3), dark);
-        final flameDecal = Paint()..color = const Color(0xFFFFC107);
-        canvas.drawPath(
-          Path()
-            ..moveTo(1.8 * u, -0.9 * u)
-            ..lineTo(1.0 * u, -0.5 * u)
-            ..lineTo(1.6 * u, -0.3 * u)
-            ..lineTo(0.9 * u, 0)
-            ..lineTo(1.9 * u, 0.2 * u)
-            ..close(),
-          flameDecal,
-        );
-    }
-    // Headlights.
-    final nose = c.spec.body == CarBody.hornet ? 2.0 : 2.1;
-    for (final y in [-0.7, 0.7]) {
-      canvas.drawCircle(
-        Offset(nose * u, y * u),
-        0.22 * u,
-        Paint()..color = const Color(0xFFFFF9C4),
-      );
-    }
-    canvas.restore();
-
-    // Your car gets an arrow over it.
-    if (c.isYou) {
-      final tip = at - Offset(0, 3.4 * u);
-      final arrow = Path()
-        ..moveTo(tip.dx, tip.dy)
-        ..lineTo(tip.dx - 7, tip.dy - 10)
-        ..lineTo(tip.dx + 7, tip.dy - 10)
-        ..close();
-      canvas.drawPath(arrow, Paint()..color = Colors.white);
-      canvas.drawPath(
-        arrow,
-        Paint()
-          ..color = kBlueTeam
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2,
-      );
-    } else if (v.scale > 3) {
+  void _paintLabels(Canvas canvas) {
+    for (final c in m.cars) {
+      if (!c.alive || c.isYou) continue;
+      final at = cam.toCam(V3(c.x, c.y, c.z + 3.2));
+      if (at.z < 1 || at.z > 70) continue;
       _text(
         canvas,
         c.name,
-        at - Offset(0, 3.6 * u),
-        10,
+        cam.screen(at),
+        11,
         c.team == 0 ? const Color(0xFFBBDEFB) : const Color(0xFFFFCCBC),
       );
     }
+  }
+
+  void _paintMiniMap(Canvas canvas, Size size) {
+    final landscape = size.width > size.height;
+    const w = 58.0, h = w * kFieldL / kFieldW;
+    final box = Rect.fromLTWH(size.width - w - 10, landscape ? 60 : 64, w, h);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(box.inflate(3), const Radius.circular(6)),
+      Paint()..color = Colors.black45,
+    );
+    canvas.drawRect(box, Paint()..color = const Color(0xAA2E7D32));
+    Offset at(double x, double y) =>
+        Offset(box.left + x / kFieldW * w, box.bottom - y / kFieldL * h);
+    canvas.drawRect(
+      Rect.fromPoints(
+        at(kFieldW / 2 - kGoalW / 2, 0),
+        at(kFieldW / 2 + kGoalW / 2, -2),
+      ),
+      Paint()..color = kBlueTeam,
+    );
+    canvas.drawRect(
+      Rect.fromPoints(
+        at(kFieldW / 2 - kGoalW / 2, kFieldL),
+        at(kFieldW / 2 + kGoalW / 2, kFieldL + 2),
+      ),
+      Paint()..color = kOrangeTeam,
+    );
+    for (final c in m.cars) {
+      if (!c.alive) continue;
+      canvas.drawCircle(
+        at(c.x, c.y),
+        c.isYou ? 3.5 : 2.6,
+        Paint()
+          ..color = c.isYou
+              ? Colors.white
+              : (c.team == 0 ? kBlueTeam : kOrangeTeam),
+      );
+    }
+    canvas.drawCircle(
+      at(m.ball.x, m.ball.y),
+      2.6,
+      Paint()..color = const Color(0xFFFFEB3B),
+    );
   }
 
   void _paintStick(Canvas canvas) {
@@ -1148,7 +920,7 @@ class _PitchPainter extends CustomPainter {
   }
 
   void _paintMessages(Canvas canvas, Size size) {
-    final mid = Offset(size.width / 2, v.centre.dy - 20);
+    final mid = Offset(size.width / 2, size.height * 0.3);
     switch (m.phase) {
       case MatchPhase.kickoff:
         final n = (kKickoffTime - m.phaseT).ceil();

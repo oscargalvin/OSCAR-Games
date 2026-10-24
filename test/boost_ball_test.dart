@@ -46,6 +46,67 @@ void main() {
     await save.save();
   });
 
+  test('a ball rolled at the side wall rides up it and comes back', () {
+    final m = _botMatch(1, 1, 3);
+    m.cars.clear();
+    m.phase = MatchPhase.play;
+    m.ball
+      ..x = kFieldW / 2
+      ..y = kFieldL / 2
+      ..z = kBallR
+      ..vx = 40
+      ..vy = 0
+      ..vz = 0;
+    var highest = 0.0;
+    for (var i = 0; i < 60 * 3; i++) {
+      m.step(1 / 60);
+      highest = max(highest, m.ball.z);
+    }
+    expect(highest, greaterThan(kRampR));
+    expect(m.ball.x, lessThan(kFieldW - 3)); // it rolled back down
+  });
+
+  test('a car can drive up the curved wall', () {
+    final car = Car(team: 0, name: 'You', spec: kCars.first, isYou: true);
+    final m = BoostBallMatch(teamSize: 1, players: [car], random: Random(1));
+    m.phase = MatchPhase.play;
+    car
+      ..x = 20
+      ..y = 30
+      ..heading = pi;
+    car.input
+      ..relative = true
+      ..throttle = 1
+      ..boost = true;
+    var highest = 0.0;
+    var tilted = false;
+    for (var i = 0; i < 60 * 3; i++) {
+      m.step(1 / 60);
+      highest = max(highest, car.z);
+      if (car.grounded && car.upZ < 0.8) tilted = true;
+    }
+    expect(highest, greaterThan(2));
+    expect(tilted, isTrue);
+  });
+
+  test('steering right turns the car right', () {
+    final car = Car(team: 0, name: 'You', spec: kCars.first, isYou: true);
+    final m = BoostBallMatch(teamSize: 1, players: [car], random: Random(1));
+    m.phase = MatchPhase.play;
+    car
+      ..x = 32
+      ..y = 20
+      ..heading = pi / 2; // facing up the pitch
+    car.input
+      ..relative = true
+      ..throttle = 1
+      ..steer = 1;
+    for (var i = 0; i < 20; i++) {
+      m.step(1 / 60);
+    }
+    expect(car.x, greaterThan(32)); // went right
+  });
+
   test('cars and paint survive saving and loading', () async {
     final save = BoostBallSave.instance
       ..coins = 123
