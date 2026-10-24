@@ -233,6 +233,31 @@ class Stadium {
     _buildWalls();
     _buildGoals();
     _buildLights();
+    _buildRoof();
+  }
+
+  /// A see-through roof you can drive along.
+  void _buildRoof() {
+    const tileX = 12.0, tileY = 14.0;
+    for (var j = 0; j < (kFieldL / tileY).ceil(); j++) {
+      for (var i = 0; i < (kFieldW / tileX).ceil(); i++) {
+        final quad = [
+          V3(i * tileX, j * tileY, kCeiling),
+          V3((i + 1) * tileX, j * tileY, kCeiling),
+          V3((i + 1) * tileX, (j + 1) * tileY, kCeiling),
+          V3(i * tileX, (j + 1) * tileY, kCeiling),
+        ];
+        final poly = _clipToPitch(quad);
+        if (poly.length < 3) continue;
+        solid.add(
+          Face(
+            poly,
+            (i + j).isEven ? const Color(0x6637474F) : const Color(0x55546E7A),
+            lit: false,
+          ),
+        );
+      }
+    }
   }
 
   void _buildFloor() {
@@ -334,7 +359,12 @@ class Stadium {
         kRampR - kRampR * cos(i / 5 * pi / 2),
       ),
     (0, kRampR + 2.5),
-    (0, kWallH),
+    // The straight wall, then the curve over into the roof.
+    for (var i = 0; i <= 5; i++)
+      (
+        kTopR - kTopR * cos(i / 5 * pi / 2),
+        kCeiling - kTopR + kTopR * sin(i / 5 * pi / 2),
+      ),
   ];
 
   void _buildWalls() {
@@ -390,8 +420,15 @@ class Stadium {
             )!;
           } else if (k == 5) {
             c = Color.lerp(const Color(0xFF263238), tint, 0.55)!; // boards
+          } else if (k == 6) {
+            c = Color.lerp(const Color(0x55B3E5FC), tint, 0.1)!; // glass
           } else {
-            c = Color.lerp(const Color(0x33B3E5FC), tint, 0.08)!; // glass
+            // The curve into the roof: tinted glass with stripes.
+            c = Color.lerp(
+              const Color(0x8890A4AE),
+              tint,
+              0.15 + 0.08 * (k % 2),
+            )!;
           }
           final lo = mouth ? max(z0, kGoalH) : z0;
           solid.add(
@@ -403,23 +440,14 @@ class Stadium {
                 at(p0, m0, d1, z1),
               ],
               c,
-              lit: ramp || k == 5,
+              lit: ramp || k >= 5,
             ),
           );
         }
-        // Top rail.
-        solid.add(
-          Face([
-            at(p0, m0, 0, kWallH),
-            at(p1, m1, 0, kWallH),
-            at(p1, m1, -0.8, kWallH + 0.4),
-            at(p0, m0, -0.8, kWallH + 0.4),
-          ], const Color(0xFFCFD8DC)),
-        );
-        // The crowd, in rows going up and back.
-        for (var row = 0; row < 3; row++) {
-          final d0 = -1.0 - row * 9, d1 = d0 - 9;
-          final z0 = kWallH + row * 6.0, z1 = z0 + 6;
+        // The crowd behind the glass, in rows going up and back.
+        for (var row = 0; row < 4; row++) {
+          final d0 = -1.0 - row * 7, d1 = d0 - 7;
+          final z0 = kRampR + 2.5 + row * 6.0, z1 = z0 + 6;
           solid.add(
             Face(
               [
@@ -729,6 +757,135 @@ class CarModel {
         _box(0.75, 0.85, -0.55, 0.55, 0.9, 1.0, Part.dark); // steering wheel
         _box(-1.9, -1.6, -0.6, 0.6, 0.62, 1.0, Part.accent); // rear wing
         _lights(2.1, 0.5, 0.42, 0.5, -1.88);
+      case CarBody.hatchback:
+        _everyday(
+          wheelX: 1.3,
+          wheelY: 1.0,
+          wheelR: 0.42,
+          body: const [
+            (-1.95, 0.35),
+            (1.95, 0.35),
+            (2.05, 0.75),
+            (1.3, 0.95),
+            (-1.95, 1.0),
+          ],
+          bodyW: 1.0,
+          bodyLo: 0.35,
+          bodyHi: 1.0,
+          cabin: const [(-1.95, 0.95), (1.0, 0.95), (0.2, 1.68), (-1.75, 1.68)],
+          cabinW: 0.94,
+          roof: 1.68,
+          front: 2.05,
+          back: -1.95,
+        );
+      case CarBody.saloon:
+        _everyday(
+          wheelX: 1.55,
+          wheelY: 1.05,
+          wheelR: 0.44,
+          body: const [
+            (-2.4, 0.35),
+            (2.3, 0.35),
+            (2.42, 0.72),
+            (1.3, 0.96),
+            (-2.4, 1.0),
+          ],
+          bodyW: 1.05,
+          bodyLo: 0.35,
+          bodyHi: 1.0,
+          cabin: const [(-1.35, 0.95), (1.0, 0.95), (0.2, 1.6), (-0.85, 1.6)],
+          cabinW: 0.98,
+          roof: 1.6,
+          front: 2.42,
+          back: -2.4,
+        );
+      case CarBody.estate:
+        _everyday(
+          wheelX: 1.55,
+          wheelY: 1.05,
+          wheelR: 0.44,
+          body: const [
+            (-2.4, 0.35),
+            (2.3, 0.35),
+            (2.42, 0.72),
+            (1.3, 0.96),
+            (-2.4, 1.0),
+          ],
+          bodyW: 1.05,
+          bodyLo: 0.35,
+          bodyHi: 1.0,
+          cabin: const [(-2.38, 0.95), (1.0, 0.95), (0.2, 1.62), (-2.3, 1.62)],
+          cabinW: 0.98,
+          roof: 1.62,
+          front: 2.42,
+          back: -2.4,
+        );
+        // Roof bars.
+        for (final y in [-0.65, 0.65]) {
+          _box(-1.9, 0.0, y - 0.06, y + 0.06, 1.62, 1.72, Part.chrome);
+        }
+      case CarBody.suv:
+        _everyday(
+          wheelX: 1.5,
+          wheelY: 1.15,
+          wheelR: 0.55,
+          body: const [
+            (-2.3, 0.5),
+            (2.3, 0.5),
+            (2.4, 1.0),
+            (1.6, 1.3),
+            (-2.3, 1.32),
+          ],
+          bodyW: 1.2,
+          bodyLo: 0.5,
+          bodyHi: 1.32,
+          cabin: const [(-2.25, 1.27), (1.25, 1.27), (0.7, 2.12), (-2.2, 2.12)],
+          cabinW: 1.12,
+          roof: 2.12,
+          front: 2.4,
+          back: -2.3,
+        );
+        for (final y in [-0.8, 0.8]) {
+          _box(-2.0, 0.4, y - 0.06, y + 0.06, 2.12, 2.24, Part.chrome);
+        }
+        _box(-2.45, -2.3, -0.45, 0.45, 0.8, 1.6, Part.tyre); // spare wheel
+      case CarBody.van:
+        _everyday(
+          wheelX: 1.65,
+          wheelY: 1.1,
+          wheelR: 0.46,
+          body: const [
+            (-2.55, 0.4),
+            (2.35, 0.4),
+            (2.5, 0.85),
+            (1.9, 1.15),
+            (-2.55, 1.15),
+          ],
+          bodyW: 1.15,
+          bodyLo: 0.4,
+          bodyHi: 1.15,
+          cabin: const [(-2.55, 1.1), (1.9, 1.1), (1.3, 2.4), (-2.55, 2.45)],
+          cabinW: 1.12,
+          roof: 2.45,
+          front: 2.5,
+          back: -2.55,
+          cabinSides: Part.body,
+        );
+        // Windows by the driver; the back is all van.
+        for (final y in [1.09, -1.09]) {
+          faces.add(
+            Face(
+              [
+                V3(0.6, y, 1.35),
+                V3(1.65, y, 1.35),
+                V3(1.3, y, 2.05),
+                V3(0.6, y, 2.05),
+              ],
+              const Color(0xFF000000),
+              part: Part.glass,
+            ),
+          );
+        }
       case CarBody.monster:
         _wheels(1.45, 1.35, 1.0, 0.75);
         _box(-1.2, 1.2, -0.15, 0.15, 0.9, 1.25, Part.chrome); // axles
@@ -793,7 +950,87 @@ class CarModel {
     CarBody.truck => const V3(-2.55, 0, 0.8),
     CarBody.goatKart => const V3(-1.95, 0, 0.45),
     CarBody.monster => const V3(-2.25, 0, 1.45),
+    CarBody.hatchback => const V3(-2.0, 0.5, 0.5),
+    CarBody.saloon => const V3(-2.45, 0.5, 0.5),
+    CarBody.estate => const V3(-2.45, 0.5, 0.5),
+    CarBody.suv => const V3(-2.35, 0.6, 0.65),
+    CarBody.van => const V3(-2.55, 0.6, 0.55),
   };
+
+  /// An everyday car: a body, a cabin on top with windows, lights and a
+  /// coloured stripe down each side.
+  void _everyday({
+    required double wheelX,
+    required double wheelY,
+    required double wheelR,
+    required List<(double, double)> body,
+    required double bodyW,
+    required double bodyLo,
+    required double bodyHi,
+    required List<(double, double)> cabin,
+    required double cabinW,
+    required double roof,
+    required double front,
+    required double back,
+    Part cabinSides = Part.glass,
+  }) {
+    _wheels(wheelX, wheelY, wheelR, wheelR * 0.8);
+    _prism(
+      body,
+      bodyW,
+      bodyW * 0.95,
+      bodyLo,
+      bodyHi,
+      (i) => i == 0 ? Part.dark : Part.body,
+    );
+    // Cabin edges: 0 bottom, 1 windscreen, 2 roof, 3 back window.
+    _prism(
+      cabin,
+      cabinW,
+      cabinW * 0.88,
+      bodyHi - 0.05,
+      roof,
+      (i) => i == 1 || i == 3 ? Part.glass : Part.body,
+      sides: cabinSides,
+    );
+    _sideStripe(
+      back + 0.3,
+      front - 0.3,
+      bodyLo + 0.25,
+      bodyLo + 0.38,
+      bodyW,
+      bodyW,
+    );
+    _lights(front, bodyW * 0.7, bodyHi - 0.2, bodyHi - 0.2, back);
+    // Bumpers and number plates.
+    _box(
+      front - 0.05,
+      front + 0.12,
+      -bodyW,
+      bodyW,
+      bodyLo,
+      bodyLo + 0.22,
+      Part.dark,
+    );
+    _box(
+      back - 0.12,
+      back + 0.05,
+      -bodyW,
+      bodyW,
+      bodyLo,
+      bodyLo + 0.22,
+      Part.dark,
+    );
+    _box(
+      front + 0.1,
+      front + 0.13,
+      -0.3,
+      0.3,
+      bodyLo + 0.25,
+      bodyLo + 0.42,
+      Part.light,
+    );
+  }
 
   /// Extrudes a side profile (x, z) across the car. The width shrinks from
   /// [w0] at height [z0] to [w1] at [z1], like a real car body.
@@ -1033,7 +1270,7 @@ class Pose {
 
   factory Pose.ofCar(Car c) {
     final up = V3(c.upX, c.upY, c.upZ).unit;
-    var f = V3(cos(c.heading), sin(c.heading), 0);
+    var f = V3(c.fx, c.fy, c.fz);
     f = (f - up * f.dot(up)).unit;
     var left = up.cross(f).unit;
     var u = up;

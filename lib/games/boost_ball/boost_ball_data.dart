@@ -4,7 +4,18 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// How a car is drawn.
-enum CarBody { sport, truck, hornet, goatKart, monster }
+enum CarBody {
+  sport,
+  truck,
+  hornet,
+  goatKart,
+  monster,
+  hatchback,
+  saloon,
+  suv,
+  van,
+  estate,
+}
 
 /// A car you can drive. Faster cars turn worse; heavy cars hit harder.
 class CarSpec {
@@ -101,6 +112,72 @@ const List<CarSpec> kCars = [
     jump: 13,
     weight: 1.8,
   ),
+  // Everyday cars, like the ones on your street.
+  CarSpec(
+    id: 'hatch',
+    name: 'Family Hatch',
+    blurb: 'A normal little car. Easy to drive.',
+    body: CarBody.hatchback,
+    price: 200,
+    speed: 21,
+    accel: 31,
+    turn: 4.5,
+    hit: 0.95,
+    jump: 12,
+    weight: 0.95,
+  ),
+  CarSpec(
+    id: 'saloon',
+    name: 'City Saloon',
+    blurb: 'A smooth, steady everyday car.',
+    body: CarBody.saloon,
+    price: 250,
+    speed: 23,
+    accel: 30,
+    turn: 4.1,
+    hit: 1,
+    jump: 12,
+    weight: 1.05,
+  ),
+  CarSpec(
+    id: 'estate',
+    name: 'Estate Car',
+    blurb: 'Long and roomy, with a big flat back.',
+    body: CarBody.estate,
+    price: 300,
+    speed: 22,
+    accel: 29,
+    turn: 4,
+    hit: 1.1,
+    jump: 12,
+    weight: 1.15,
+  ),
+  CarSpec(
+    id: 'suv',
+    name: 'Big SUV',
+    blurb: 'Tall and tough. Good for bumping.',
+    body: CarBody.suv,
+    price: 350,
+    speed: 21,
+    accel: 28,
+    turn: 3.8,
+    hit: 1.2,
+    jump: 13,
+    weight: 1.4,
+  ),
+  CarSpec(
+    id: 'van',
+    name: 'Delivery Van',
+    blurb: 'A big box on wheels. Hits like a wall.',
+    body: CarBody.van,
+    price: 400,
+    speed: 20,
+    accel: 27,
+    turn: 3.6,
+    hit: 1.3,
+    jump: 11,
+    weight: 1.6,
+  ),
 ];
 
 CarSpec carById(String id) =>
@@ -117,6 +194,10 @@ const List<Color> kCarColours = [
   Color(0xFF212121),
   Color(0xFFFFFFFF),
 ];
+
+/// The VIP pass: coins for 7 random cars you don't have yet.
+const int kVipPrice = 1000;
+const int kVipCars = 7;
 
 /// Coins for winning a match, by how hard the bots were.
 const List<int> kWinCoins = [25, 40, 60];
@@ -163,6 +244,7 @@ class BoostBallSave {
   int goals = 0;
   int bestKph = 0; // your hardest ever shot
   String name = ''; // shown to other people online
+  bool vip = false; // bought the VIP pass
 
   Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -180,6 +262,7 @@ class BoostBallSave {
       goals = m['goals'] as int? ?? 0;
       bestKph = m['bestKph'] as int? ?? 0;
       name = m['name'] as String? ?? '';
+      vip = m['vip'] == true;
     } catch (_) {
       // A broken save starts fresh.
     }
@@ -199,6 +282,7 @@ class BoostBallSave {
         'goals': goals,
         'bestKph': bestKph,
         'name': name,
+        'vip': vip,
       }),
     );
   }

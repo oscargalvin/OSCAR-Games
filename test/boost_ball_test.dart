@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:oscar_games/games/boost_ball/boost_ball_3d.dart';
 import 'package:oscar_games/games/boost_ball/boost_ball_data.dart';
 import 'package:oscar_games/games/boost_ball/boost_ball_game.dart';
 import 'package:oscar_games/games/boost_ball/boost_ball_net.dart';
@@ -54,7 +55,8 @@ void main() {
       ..colour = 0
       ..wins = 0
       ..losses = 0
-      ..goals = 0;
+      ..goals = 0
+      ..vip = false;
     await save.save();
   });
 
@@ -101,6 +103,82 @@ void main() {
     expect(tilted, isTrue);
   });
 
+  test('a car can drive up the wall, along the roof and fall off', () {
+    final you = Car(team: 0, name: 'You', spec: kCars.first, isYou: true);
+    final m = BoostBallMatch(
+      teamSize: 1,
+      players: [you],
+      mode: BoostMode.freePlay,
+      random: Random(1),
+    );
+    m.phase = MatchPhase.play;
+    you
+      ..x = 30
+      ..y = 50
+      ..heading = pi;
+    you.input
+      ..relative = true
+      ..throttle = 1
+      ..boost = true;
+    var onRoof = false;
+    for (var i = 0; i < 60 * 3; i++) {
+      m.step(1 / 60);
+      if (you.grounded && you.upZ < -0.9 && you.z > kCeiling - 0.5) {
+        onRoof = true;
+        break;
+      }
+    }
+    expect(onRoof, isTrue);
+    // Stop on the roof: too slow to stick, so you drop off it.
+    you.input
+      ..throttle = 0
+      ..boost = false;
+    for (var i = 0; i < 60 * 4; i++) {
+      m.step(1 / 60);
+    }
+    expect(you.z, lessThan(1));
+    expect(you.upZ, greaterThan(0.9));
+  });
+
+  test('a car driving up the wall carries the ball up it', () {
+    final you = Car(team: 0, name: 'You', spec: kCars.first, isYou: true);
+    final m = BoostBallMatch(
+      teamSize: 1,
+      players: [you],
+      mode: BoostMode.freePlay,
+      random: Random(1),
+    );
+    m.phase = MatchPhase.play;
+    m.ball
+      ..x = kBallR
+      ..y = 50
+      ..z = 16
+      ..vx = 0
+      ..vy = 0
+      ..vz = 0;
+    you
+      ..x = 0
+      ..y = 50
+      ..z = 4
+      ..grounded = true
+      ..upX = 1
+      ..upY = 0
+      ..upZ = 0
+      ..fx = 0
+      ..fy = 0
+      ..fz = 1
+      ..vz = 20;
+    you.input
+      ..relative = true
+      ..throttle = 1;
+    var highest = 0.0;
+    for (var i = 0; i < 60; i++) {
+      m.step(1 / 60);
+      highest = max(highest, m.ball.z);
+    }
+    expect(highest, greaterThan(25));
+  });
+
   test('steering right turns the car right', () {
     final car = Car(team: 0, name: 'You', spec: kCars.first, isYou: true);
     final m = BoostBallMatch(teamSize: 1, players: [car], random: Random(1));
@@ -143,15 +221,15 @@ void main() {
     await BoostBallSave.instance.save();
     await tester.pumpWidget(const MaterialApp(home: BoostBallScreen()));
     await tester.pumpAndSettle();
-    final buy = find.widgetWithText(ElevatedButton, '300');
+    final buy = find.widgetWithText(ElevatedButton, '300').hitTestable();
     await tester.scrollUntilVisible(
       buy,
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.ensureVisible(buy);
+    await tester.ensureVisible(buy.first);
     await tester.pumpAndSettle();
-    await tester.tap(buy);
+    await tester.tap(buy.first);
     await tester.pumpAndSettle();
     expect(BoostBallSave.instance.coins, 100);
     expect(BoostBallSave.instance.car, 'bulldog');
@@ -350,6 +428,38 @@ void main() {
     expect(host.match!.mode, BoostMode.firstTo5);
     expect(host.match!.cars.where((c) => c.netControlled), isEmpty);
     host.close();
+  });
+
+  testWidgets('the VIP pass gives 7 random cars for coins', (tester) async {
+    await _phone(tester);
+    BoostBallSave.instance.coins = kVipPrice + 50;
+    await BoostBallSave.instance.save();
+    await tester.pumpWidget(const MaterialApp(home: BoostBallScreen()));
+    await tester.pumpAndSettle();
+    final buy = find.widgetWithText(ElevatedButton, '$kVipPrice');
+    await tester.scrollUntilVisible(
+      buy,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(buy);
+    await tester.pumpAndSettle();
+    expect(find.text('VIP PASS!'), findsOneWidget);
+    final save = BoostBallSave.instance;
+    expect(save.coins, 50);
+    expect(save.vip, isTrue);
+    expect(save.cars.length, 1 + kVipCars);
+    expect(save.cars.length, lessThan(kCars.length));
+    await tester.tap(find.text('AWESOME'));
+    await tester.pumpAndSettle();
+  });
+
+  test('every car has a 3D model', () {
+    for (final c in kCars) {
+      expect(CarModel.of(c.body).faces.length, greaterThan(20));
+    }
+    expect(kCars.length, 10);
   });
 
   testWidgets('the garage shows game modes and online play', (tester) async {

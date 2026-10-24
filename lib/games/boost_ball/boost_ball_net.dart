@@ -381,7 +381,7 @@ class BoostBallSession {
             c.vx,
             c.vy,
             c.vz,
-            c.heading,
+            c.fx,
             c.boost,
             (c.grounded ? 1.0 : 0) + (c.boosting ? 2 : 0) + (c.canFlip ? 4 : 0),
             c.upX,
@@ -395,6 +395,8 @@ class BoostBallSession {
             c.input.stick.dx,
             c.input.stick.dy,
             c.topKph.toDouble(),
+            c.fy,
+            c.fz,
           ].map(_r).toList(),
       ],
     };
@@ -450,7 +452,7 @@ class BoostBallSession {
     if (cars is! List) return;
     for (var i = 0; i < cars.length && i < g.cars.length; i++) {
       final v = cars[i];
-      if (v is! List || v.length < 20) continue;
+      if (v is! List || v.length < 22) continue;
       final c = g.cars[i];
       final x = _d(v[0]), y = _d(v[1]), z = _d(v[2]);
       final gap = sqrt(
@@ -473,7 +475,9 @@ class BoostBallSession {
           ..vx = _d(v[3])
           ..vy = _d(v[4])
           ..vz = _d(v[5])
-          ..heading = _d(v[6])
+          ..fx = _d(v[6])
+          ..fy = _d(v[20])
+          ..fz = _d(v[21])
           ..grounded = flags & 1 != 0
           ..canFlip = flags & 4 != 0
           ..upX = _d(v[9])

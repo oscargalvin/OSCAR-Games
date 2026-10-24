@@ -14,6 +14,7 @@ const double kCorner = 12; // the corners are cut off at 45 degrees
 const double kCeiling = 44;
 const double kRampR =
     12; // the bottom of every wall curves up like a skate ramp
+const double kTopR = 10; // and the top curves over into the roof
 const double kWallH = kCeiling; // the glass walls go right up to the roof
 const double kBallR = 2.4;
 const double kCarR = 2.2;
@@ -65,7 +66,19 @@ class Car {
 
   double x = 0, y = 0, z = 0;
   double vx = 0, vy = 0, vz = 0;
-  double heading = 0;
+
+  /// Which way the car points, in 3D (it can point up a wall or along the
+  /// roof). Always flat along whatever the car is driving on.
+  double fx = 1, fy = 0, fz = 0;
+
+  /// The direction the car points, seen from above.
+  double get heading => atan2(fy, fx);
+  set heading(double a) {
+    fx = cos(a);
+    fy = sin(a);
+    fz = 0;
+  }
+
   double boost = 33;
   bool boosting = false;
   bool grounded = true;
@@ -97,6 +110,9 @@ class Car {
   Offset get pos => Offset(x, y);
   Offset get vel => Offset(vx, vy);
   Offset get forward => Offset(cos(heading), sin(heading));
+
+  /// Driving on a wall or the roof rather than the floor.
+  bool get onWall => grounded && upZ < 0.7;
   bool get alive => demoT <= 0;
   double get speed => sqrt(vx * vx + vy * vy);
   bool get supersonic => speed > spec.speed * 1.3;
@@ -114,6 +130,8 @@ enum MatchPhase { kickoff, play, goal, over }
 
 /// Something that happened, for sounds and the game feed.
 enum MatchEvent { hit, bigHit, goal, demolish, kickoff, whistle, boostPad }
+
+typedef V = (double, double, double);
 
 /// One game of Boost Ball: the cars, the ball and the rules.
 class BoostBallMatch {
@@ -381,71 +399,97 @@ class BoostBallMatch {
     final inp = c.input;
     final stick = inp.stick;
     final push = min(1.0, stick.distance);
+    // The car's own directions: forward and up (it can be on a wall).
+    final n = (c.upX, c.upY, c.upZ);
+    var f = _flat((c.fx, c.fy, c.fz), n);
     var throttle = 0.0;
-    final f0 = c.forward;
-    final along0 = c.vx * f0.dx + c.vy * f0.dy;
+    final along0 = c.vx * f.$1 + c.vy * f.$2 + c.vz * f.$3;
+    // Steering turns the car around its own up (or the sky's while flying).
+    final V axis = c.grounded ? n : (0, 0, 1);
     if (inp.relative) {
       final rate = c.spec.turn * (c.grounded ? 1 : 0.8);
       final grip = c.grounded ? 0.45 + 0.55 * min(1.0, along0.abs() / 8) : 1;
       final back = along0 < -1 ? -1 : 1;
-      c.heading -= inp.steer.clamp(-1.0, 1.0) * rate * grip * back * dt;
+      f = _turn(f, axis, -inp.steer.clamp(-1.0, 1.0) * rate * grip * back * dt);
       throttle = inp.throttle.clamp(-1.0, 1.0);
     } else if (push > 0.15) {
-      final want = stick.direction;
-      final diff = _angleDiff(c.heading, want);
+      // Bots point the way they want to go. On a wall that way also leans
+      // downhill, so they come back to the floor.
+      final want = _flat((
+        stick.dx / push,
+        stick.dy / push,
+        c.onWall ? -0.8 : 0.0,
+      ), axis);
+      final diff = atan2(_dot(_cross(f, want), axis), _dot(f, want));
       final rate = c.spec.turn * (c.grounded ? 1 : 0.7);
-      c.heading += diff.clamp(-rate * dt, rate * dt);
+      f = _turn(f, axis, diff.clamp(-rate * dt, rate * dt));
       throttle = push * (diff.abs() > 1.6 ? 0.35 : 1);
     }
+    f = _flat(f, axis);
     c.boosting = inp.boost && c.boost > 0;
     if (c.boosting) c.boost = max(0, c.boost - 33 * dt);
 
-    final f = c.forward;
-    final right = Offset(-f.dy, f.dx);
     if (c.grounded) {
-      var along = c.vx * f.dx + c.vy * f.dy;
-      var side = c.vx * right.dx + c.vy * right.dy;
+      final left = _cross(n, f);
+      var along = c.vx * f.$1 + c.vy * f.$2 + c.vz * f.$3;
+      var side = c.vx * left.$1 + c.vy * left.$2 + c.vz * left.$3;
       final top = c.spec.speed * (c.boosting ? 1.5 : 1);
-      along += (c.spec.accel * throttle + (c.boosting ? 32 : 0)) * dt;
-      if (along > top) along = max(top, along - 40 * dt);
+      final push = (c.spec.accel * throttle + (c.boosting ? 32 : 0)) * dt;
+      if (along > top) {
+        along = max(top, along - 40 * dt); // too fast (e.g. down a wall)
+      } else {
+        along = min(push > 0 ? top : along, along + push);
+      }
       if (along < -top * 0.5) along = -top * 0.5;
       if (throttle == 0 && !c.boosting) along *= pow(0.35, dt).toDouble();
       side *= pow(0.01, dt).toDouble(); // tyres grip
-      c.vx = f.dx * along + right.dx * side;
-      c.vy = f.dy * along + right.dy * side;
+      c.vx = f.$1 * along + left.$1 * side;
+      c.vy = f.$2 * along + left.$2 * side;
+      c.vz = f.$3 * along + left.$3 * side;
+      // Gravity pulls you back down a wall, but grippy tyres fight most of
+      // it, so you can drive as high as you like while you keep going.
+      final gn = -kGravity * n.$3;
+      final k = n.$3 > 0.7 ? 1.0 : 0.3;
+      c.vx += -n.$1 * gn * k * dt;
+      c.vy += -n.$2 * gn * k * dt;
+      c.vz += (-kGravity - n.$3 * gn) * k * dt;
     } else {
       if (c.boosting) {
-        c.vx += f.dx * 20 * dt;
-        c.vy += f.dy * 20 * dt;
-        c.vz += 10 * dt; // boosting in the air lifts you a little
+        c.vx += f.$1 * 20 * dt;
+        c.vy += f.$2 * 20 * dt;
+        c.vz += f.$3 * 20 * dt + 10 * dt; // boosting in the air lifts you
       }
+      c.vz -= kGravity * dt;
       c.airT += dt;
     }
-    c.vz -= kGravity * dt;
 
     var jumped = false;
     if (inp.jump) {
       if (c.grounded) {
-        // Jump away from whatever you're driving on (even a wall).
-        c.vx += c.upX * c.spec.jump;
-        c.vy += c.upY * c.spec.jump;
-        c.vz = max(0, c.vz) + c.upZ * c.spec.jump;
+        // Jump away from whatever you're driving on (even a wall or the roof).
+        c.vx += n.$1 * c.spec.jump;
+        c.vy += n.$2 * c.spec.jump;
+        c.vz += n.$3 * c.spec.jump;
+        if (n.$3 > 0.7) c.vz = max(c.vz, c.spec.jump * n.$3);
         c.airT = 0;
         c.canFlip = true;
         c.grounded = false;
         jumped = true;
       } else if (c.canFlip && c.airT < 1.6) {
         // Flip: a burst of speed and a big hit.
-        var dir = push > 0.2 ? stick / stick.distance : f;
+        final flatF = Offset(f.$1, f.$2);
+        var dir = push > 0.2
+            ? stick / stick.distance
+            : (flatF.distance > 0.1 ? flatF / flatF.distance : c.forward);
         if (inp.relative) {
-          final r = Offset(f.dy, -f.dx);
-          final d = f * inp.throttle + r * inp.steer;
-          dir = d.distance > 0.2 ? d / d.distance : f;
+          final r = Offset(dir.dy, -dir.dx);
+          final d = dir * inp.throttle + r * inp.steer;
+          dir = d.distance > 0.2 ? d / d.distance : dir;
         }
         c.vx += dir.dx * 15;
         c.vy += dir.dy * 15;
         c.vz = max(c.vz, 4);
-        c.heading = dir.direction;
+        f = (dir.dx, dir.dy, 0);
         c.flipT = 0.5;
         c.canFlip = false;
       }
@@ -454,28 +498,46 @@ class BoostBallMatch {
     c.x += c.vx * dt;
     c.y += c.vy * dt;
     c.z += c.vz * dt;
-    final v = _collideWalls(c.x, c.y, c.z, 0.9, c.vx, c.vy, 0.1);
+    final v = _collideWalls(c.x, c.y, c.z, 0, c.vx, c.vy, 0.1);
     c
       ..x = v.$1
       ..y = v.$2
       ..vx = v.$3
       ..vy = v.$4;
-    // Land on the floor or the curved walls (and stay stuck to the curve).
+    // Land on the floor, a wall or the roof. Tyres stick to walls and the
+    // roof while you keep moving; slow right down up there and you fall off.
+    final speed = sqrt(c.vx * c.vx + c.vy * c.vy + c.vz * c.vz);
+    final sticky = c.upZ > 0.7 || speed > 6;
     var touch = _surface(c.x, c.y, c.z, 0);
-    if (touch == null && c.grounded && !jumped) {
-      touch = _surface(c.x, c.y, c.z - 0.4, 0);
+    if (touch == null && c.grounded && !jumped && sticky) {
+      touch = _surface(
+        c.x - c.upX * 0.6,
+        c.y - c.upY * 0.6,
+        c.z - c.upZ * 0.6,
+        0,
+      );
     }
-    if (touch != null && !jumped) {
+    // Wheels only land on a wall or the roof if you drove onto it, or hit
+    // it going fast; otherwise you just bump off.
+    final land =
+        touch != null &&
+        !jumped &&
+        (touch.nz > 0.7 || (sticky && (c.grounded || touch.nz > -0.7)));
+    if (touch != null) {
       c
         ..x = touch.x
         ..y = touch.y
         ..z = touch.z;
       final vn = c.vx * touch.nx + c.vy * touch.ny + c.vz * touch.nz;
-      if (vn < 0) {
+      // Lose the speed going into the surface (and, while stuck to a wall
+      // or the roof, the speed going away from it too).
+      if (vn < 0 || (land && touch.nz < 0.7)) {
         c.vx -= touch.nx * vn;
         c.vy -= touch.ny * vn;
         c.vz -= touch.nz * vn;
       }
+    }
+    if (land) {
       c.grounded = true;
       c.airT = 0;
       c.upX = touch.nx;
@@ -485,12 +547,31 @@ class BoostBallMatch {
       c.grounded = false;
       // Level out in the air.
       final k = min(1.0, dt * 3);
-      c.upX += (0 - c.upX) * k;
-      c.upY += (0 - c.upY) * k;
-      c.upZ += (1 - c.upZ) * k;
+      var ux = c.upX * (1 - k),
+          uy = c.upY * (1 - k),
+          uz = c.upZ + (1 - c.upZ) * k;
+      final l = sqrt(ux * ux + uy * uy + uz * uz);
+      if (l < 1e-4) {
+        ux = 0;
+        uy = 0;
+        uz = 1;
+      } else {
+        ux /= l;
+        uy /= l;
+        uz /= l;
+      }
+      c
+        ..upX = ux
+        ..upY = uy
+        ..upZ = uz;
     }
+    f = _flat(f, (c.upX, c.upY, c.upZ));
+    c
+      ..fx = f.$1
+      ..fy = f.$2
+      ..fz = f.$3;
 
-    if (c.grounded) {
+    if (c.grounded && c.upZ > 0.9) {
       for (final p in pads) {
         if (p.ready &&
             c.boost < kMaxBoost &&
@@ -503,6 +584,37 @@ class BoostBallMatch {
     }
   }
 
+  static double _dot(V v, V w) => v.$1 * w.$1 + v.$2 * w.$2 + v.$3 * w.$3;
+  static V _cross(V a, V b) => (
+    a.$2 * b.$3 - a.$3 * b.$2,
+    a.$3 * b.$1 - a.$1 * b.$3,
+    a.$1 * b.$2 - a.$2 * b.$1,
+  );
+
+  /// [v] laid flat along a surface facing [n], as a unit vector.
+  static V _flat(V v, V n) {
+    final d = _dot(v, n);
+    var x = v.$1 - n.$1 * d, y = v.$2 - n.$2 * d, z = v.$3 - n.$3 * d;
+    var l = sqrt(x * x + y * y + z * z);
+    if (l < 1e-4) {
+      // Pointing straight into the surface: pick any direction along it.
+      final V alt = n.$3.abs() < 0.9 ? (0, 0, 1) : (1, 0, 0);
+      final d2 = _dot(alt, n);
+      x = alt.$1 - n.$1 * d2;
+      y = alt.$2 - n.$2 * d2;
+      z = alt.$3 - n.$3 * d2;
+      l = sqrt(x * x + y * y + z * z);
+    }
+    return (x / l, y / l, z / l);
+  }
+
+  /// [f] turned by angle [a] around [axis] (anticlockwise looking down it).
+  static V _turn(V f, V axis, double a) {
+    final s = _cross(axis, f);
+    final c = cos(a), sn = sin(a);
+    return (f.$1 * c + s.$1 * sn, f.$2 * c + s.$2 * sn, f.$3 * c + s.$3 * sn);
+  }
+
   void _respawn(Car c) {
     c
       ..x = kFieldW / 2 + (rnd.nextDouble() - 0.5) * 20
@@ -513,6 +625,9 @@ class BoostBallMatch {
       ..vz = 0
       ..boost = _startBoost
       ..grounded = true
+      ..upX = 0
+      ..upY = 0
+      ..upZ = 1
       ..demoT = 0;
     c.heading = c.team == 0 ? pi / 2 : -pi / 2;
   }
@@ -613,26 +728,33 @@ class BoostBallMatch {
   void _hitBall(Car c) {
     if (!c.alive || c.hitCool > 0) return;
     final b = ball;
-    final cz = c.z + 1.1;
-    final dx = b.x - c.x, dy = b.y - c.y, dz = b.z - cz;
+    // The middle of the car is a bit above its wheels, whichever way up.
+    final cx = c.x + c.upX * 1.1, cy = c.y + c.upY * 1.1;
+    final cz = c.z + c.upZ * 1.1;
+    final dx = b.x - cx, dy = b.y - cy, dz = b.z - cz;
     final dist = sqrt(dx * dx + dy * dy + dz * dz);
     const reach = kBallR + kCarR;
     if (dist >= reach || dist < 0.001) return;
     final nx = dx / dist, ny = dy / dist, nz = dz / dist;
     // Push the ball out so it is just touching.
-    b.x = c.x + nx * reach;
-    b.y = c.y + ny * reach;
-    b.z = max(kBallR, cz + nz * reach);
+    b.x = cx + nx * reach;
+    b.y = cy + ny * reach;
+    b.z = (cz + nz * reach).clamp(kBallR, kCeiling - kBallR);
     final rel = (c.vx - b.vx) * nx + (c.vy - b.vy) * ny + (c.vz - b.vz) * nz;
     var power = max(0.0, rel) * 1.15 * c.spec.hit + 5;
     final flipped = c.flipT > 0;
     if (flipped) power *= 1.35;
     b.vx += nx * power + c.vx * 0.25;
     b.vy += ny * power + c.vy * 0.25;
-    // Hits along the ground pop the ball up a bit.
-    b.vz += nz * power + (c.grounded ? 3 + max(0.0, rel) * 0.2 : 2);
+    // Hits pop the ball up off whatever the car is on (on a wall, that
+    // lifts it up the wall).
+    final pop = c.grounded ? 3 + max(0.0, rel) * 0.2 : 2;
+    b.vx += c.grounded ? c.upX * pop : 0;
+    b.vy += c.grounded ? c.upY * pop : 0;
+    b.vz += nz * power + c.vz * 0.25 + (c.grounded ? c.upZ * pop : pop);
     c.vx -= nx * max(0.0, rel) * 0.25;
     c.vy -= ny * max(0.0, rel) * 0.25;
+    c.vz -= nz * max(0.0, rel) * 0.25;
     c.hitCool = 0.12;
     lastTouch = c;
     lastKph = kph(min(b.speed, kMaxBallSpeed));
@@ -674,12 +796,17 @@ class BoostBallMatch {
 
   // ---- walls ----------------------------------------------------------------
 
-  /// The nearest wall that curves up into a ramp: its inward direction and
-  /// how far away it is. Null when no wall is close (or inside a goal).
-  static (double, double, double)? nearestRampWall(double x, double y) {
+  /// The nearest wall: its inward direction and how far away it is. Null
+  /// when no wall is close (or inside a goal). Above the crossbar the wall
+  /// over each goal counts too.
+  static (double, double, double)? nearestRampWall(
+    double x,
+    double y, [
+    double z = 0,
+  ]) {
     if (y < 0 || y > kFieldL) return null;
     const c = kFieldW / 2;
-    final mouth = (x - c).abs() < kGoalW / 2 + 1;
+    final mouth = (x - c).abs() < kGoalW / 2 + 1 && z < kGoalH + 0.5;
     var best = kRampR;
     (double, double, double)? out;
     void plane(double nx, double ny, double d) {
@@ -712,20 +839,29 @@ class BoostBallMatch {
     return kRampR - sqrt(max(0.0, kRampR * kRampR - a * a));
   }
 
-  /// If a ball of radius [r] centred at (x, y, z) is poking into the floor
-  /// or the curved bottom of a wall, where it should be instead and which
-  /// way the surface faces. Null if it is touching nothing.
+  /// If a ball of radius [r] centred at (x, y, z) is poking into the floor,
+  /// a wall, the roof or the curves joining them, where it should be
+  /// instead and which way the surface faces. Null if it is touching
+  /// nothing. Cars use r = 0 (their wheels).
   static ({double x, double y, double z, double nx, double ny, double nz})?
   _surface(double x, double y, double z, double r) {
-    final w = nearestRampWall(x, y);
-    if (w != null && z < kRampR) {
+    final w = nearestRampWall(x, y, z);
+    if (w != null) {
       final (wx, wy, d) = w;
-      // The curve is part of a circle around an axis kRampR from the wall
-      // and kRampR up. Stay inside it.
-      final ad = d - kRampR, az = z - kRampR;
-      if (ad < 0 && az < 0) {
+      // Curves at the bottom and top of the wall are parts of circles
+      // around an axis running along the wall. Stay inside them.
+      double? cz, rad;
+      if (z < kRampR && d < kRampR) {
+        cz = kRampR;
+        rad = kRampR;
+      } else if (z > kCeiling - kTopR && d < kTopR) {
+        cz = kCeiling - kTopR;
+        rad = kTopR;
+      }
+      if (cz != null && rad != null) {
+        final ad = d - rad, az = z - cz;
         final len = sqrt(ad * ad + az * az);
-        final lim = kRampR - r;
+        final lim = rad - r;
         if (len <= lim || len < 0.0001) return null;
         final k = lim / len;
         final shift = ad * k - ad;
@@ -733,14 +869,29 @@ class BoostBallMatch {
         return (
           x: x + wx * shift,
           y: y + wy * shift,
-          z: kRampR + az * k,
+          z: cz + az * k,
           nx: wx * nd,
           ny: wy * nd,
           nz: nz,
         );
       }
+      // The straight part of the wall.
+      if (d < r + 0.01) {
+        final shift = max(0.0, r - d);
+        return (
+          x: x + wx * shift,
+          y: y + wy * shift,
+          z: z,
+          nx: wx,
+          ny: wy,
+          nz: 0,
+        );
+      }
     }
     if (z < r) return (x: x, y: y, z: r, nx: 0, ny: 0, nz: 1);
+    if (z > kCeiling - r - 0.01) {
+      return (x: x, y: y, z: min(z, kCeiling - r), nx: 0, ny: 0, nz: -1);
+    }
     return null;
   }
 

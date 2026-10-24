@@ -234,29 +234,45 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
   void _updateCamera(double dt) {
     final c = _you;
     final b = _match.ball;
-    final toBall = Offset(b.x - c.x, b.y - c.y);
-    final wantYaw = _ballCam && toBall.distance > 2
-        ? toBall.direction
-        : c.heading;
+    final car = V3(c.x, c.y, c.z);
+    final onFloor = c.upZ > 0.9;
+    // Look at the ball (ball cam) or the way the car points, even if that
+    // is up a wall.
+    final toBall = V3(b.x, b.y, b.z) - car;
+    final want = _ballCam && toBall.length > 2
+        ? toBall.unit
+        : V3(c.fx, c.fy, c.fz);
+    final flat = sqrt(want.x * want.x + want.y * want.y);
+    final wantYaw = flat > 0.1 ? atan2(want.y, want.x) : _camYaw;
     var d = (wantYaw - _camYaw) % (2 * pi);
     if (d > pi) d -= 2 * pi;
     _camYaw += d * min(1.0, dt * 5);
-    final dir = V3(cos(_camYaw), sin(_camYaw), 0);
-    var want = V3(c.x, c.y, c.z * 0.6) - dir * 11 + const V3(0, 0, 4.6);
-    want = V3(
-      want.x.clamp(1.5, kFieldW - 1.5),
-      want.y.clamp(1.5, kFieldL - 1.5),
-      max(want.z, BoostBallMatch.floorHeight(want.x, want.y) + 1.5),
+    final along = asin(want.z.clamp(-1.0, 1.0));
+    final pitch = _ballCam
+        ? along * 0.8 - 0.06
+        : (onFloor ? -0.14 : along * 0.9 - 0.1);
+    _camPitch += (pitch.clamp(-0.6, 1.2) - _camPitch) * min(1.0, dt * 6);
+    // Sit behind the car: level on the floor, or along the wall (and a
+    // little off it) when driving up the walls or along the roof.
+    final V3 back;
+    if (onFloor) {
+      back = V3(cos(_camYaw), sin(_camYaw), 0) * 11 - const V3(0, 0, 4.6);
+    } else {
+      final dir = V3(
+        cos(_camYaw) * cos(_camPitch),
+        sin(_camYaw) * cos(_camPitch),
+        sin(_camPitch),
+      );
+      back = dir * 11 - V3(c.upX, c.upY, c.upZ) * 3.5 - const V3(0, 0, 1.5);
+    }
+    var at = (onFloor ? V3(c.x, c.y, c.z * 0.6) : car) - back;
+    at = V3(
+      at.x.clamp(1.5, kFieldW - 1.5),
+      at.y.clamp(1.5, kFieldL - 1.5),
+      at.z.clamp(BoostBallMatch.floorHeight(at.x, at.y) + 1.5, kCeiling - 1.5),
     );
     final k = min(1.0, dt * 8);
-    _camPos = _camPos + (want - _camPos) * k;
-    var pitch = -0.14;
-    if (_ballCam) {
-      final to = V3(b.x, b.y, b.z) - _camPos;
-      final flat = sqrt(to.x * to.x + to.y * to.y);
-      pitch = (atan2(to.z, max(flat, 1)) * 0.8 - 0.06).clamp(-0.4, 0.5);
-    }
-    _camPitch += (pitch - _camPitch) * min(1.0, dt * 6);
+    _camPos = _camPos + (at - _camPos) * k;
   }
 
   Camera _camera(Size size) {

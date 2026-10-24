@@ -250,6 +250,129 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
     _save.save();
   }
 
+  /// Buys the VIP pass: 7 random cars you don't have yet.
+  Future<void> _buyVip() async {
+    final missing = kCars.where((c) => !_save.cars.contains(c.id)).toList();
+    if (missing.isEmpty) {
+      _say('You already have every car!');
+      return;
+    }
+    if (_save.coins < kVipPrice) {
+      _say(
+        'You need ${kVipPrice - _save.coins} more coins. '
+        'Win matches to earn coins!',
+      );
+      return;
+    }
+    missing.shuffle(_rnd);
+    final won = missing.take(kVipCars).toList();
+    setState(() {
+      _save.coins -= kVipPrice;
+      _save.vip = true;
+      _save.cars.addAll(won.map((c) => c.id));
+    });
+    SoundService.instance.play(GameSound.levelComplete);
+    await _save.save();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _card,
+        title: const Text(
+          'VIP PASS!',
+          style: TextStyle(color: _gold, fontWeight: FontWeight.w900),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'You got ${won.length} new cars:',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 8),
+            for (final c in won)
+              Text(
+                c.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('AWESOME'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _vipCard() {
+    final missing = kCars.where((c) => !_save.cars.contains(c.id)).length;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF4A148C), Color(0xFFB8860B)],
+        ),
+        border: Border.all(color: _gold, width: 2),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.workspace_premium_rounded, color: _gold, size: 40),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'VIP PASS',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                Text(
+                  _save.vip
+                      ? 'You are a VIP!'
+                      : '$kVipCars random cars you don\'t have yet',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          if (_save.vip || missing == 0)
+            const Chip(
+              label: Text('VIP'),
+              backgroundColor: _gold,
+              labelStyle: TextStyle(fontWeight: FontWeight.w900),
+            )
+          else
+            ElevatedButton.icon(
+              onPressed: _buyVip,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _save.coins >= kVipPrice
+                    ? _gold
+                    : Colors.white24,
+                foregroundColor: Colors.black87,
+              ),
+              icon: const Icon(Icons.monetization_on_rounded, size: 18),
+              label: const Text('$kVipPrice'),
+            ),
+        ],
+      ),
+    );
+  }
+
   void _pick(CarSpec car) {
     setState(() => _save.car = car.id);
     SoundService.instance.play(GameSound.place);
@@ -422,6 +545,7 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                       _paints(),
                       const SizedBox(height: 14),
                       _section('Garage'),
+                      _vipCard(),
                       for (final car in kCars) _carCard(car),
                       const SizedBox(height: 8),
                       _howTo(),
