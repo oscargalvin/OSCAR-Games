@@ -10,6 +10,7 @@ import 'boost_ball_3d.dart';
 import 'boost_ball_data.dart';
 import 'boost_ball_net.dart';
 import 'boost_ball_sim.dart';
+import '../../widgets/full_screen_game.dart';
 
 const Color kBlueTeam = Color(0xFF2196F3);
 const Color kOrangeTeam = Color(0xFFFF7043);
@@ -48,7 +49,7 @@ class BoostBallGameScreen extends StatefulWidget {
 }
 
 class _BoostBallGameScreenState extends State<BoostBallGameScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, FullScreenGame {
   final _save = BoostBallSave.instance;
   final _rnd = Random();
   final _focus = FocusNode();

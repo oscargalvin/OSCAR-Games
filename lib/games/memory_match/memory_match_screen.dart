@@ -5,6 +5,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/game_scaffold.dart';
 import '../../services/sound_service.dart';
 import '../../services/save_service.dart';
+import '../../widgets/full_screen_game.dart';
 
 class MemoryMatchScreen extends StatefulWidget {
   const MemoryMatchScreen({super.key});
@@ -13,7 +14,8 @@ class MemoryMatchScreen extends StatefulWidget {
   State<MemoryMatchScreen> createState() => _MemoryMatchScreenState();
 }
 
-class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
+class _MemoryMatchScreenState extends State<MemoryMatchScreen>
+    with FullScreenGame {
   static const List<String> _allEmojis = [
     '🎮',
     '🚀',

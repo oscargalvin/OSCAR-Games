@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'services/save_service.dart';
+import 'widgets/full_screen_game.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  watchForTouch();
   await SaveService.instance.init();
   // Phones and tablets can be held either way up.
   SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -23,16 +25,24 @@ void main() async {
 class OscarGamesApp extends StatelessWidget {
   const OscarGamesApp({super.key});
 
-  /// The app fills the whole screen, so tablets get the full width whether
-  /// they are held upright or sideways.
-  static const double maxAppWidth = double.infinity;
+  static const double maxAppWidth = 500;
 
+  /// Centres the app in a phone-width column on wide screens. On tablets
+  /// the game you are playing gets the whole screen (menus stay narrow).
   static Widget frame(Widget? child) {
     return Container(
       color: const Color(0xFF15172A),
       child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: maxAppWidth),
+        child: ValueListenableBuilder<int>(
+          valueListenable: gamesPlaying,
+          builder: (context, playing, column) => ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: playing > 0 && bigGameScreens
+                  ? double.infinity
+                  : maxAppWidth,
+            ),
+            child: column,
+          ),
           child: Container(
             decoration: const BoxDecoration(color: AppTheme.primaryDark),
             clipBehavior: Clip.antiAlias,

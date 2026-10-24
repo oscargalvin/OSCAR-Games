@@ -6,6 +6,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/game_scaffold.dart';
 import '../../services/sound_service.dart';
 import '../../services/save_service.dart';
+import '../../widgets/full_screen_game.dart';
 
 enum Direction { up, down, left, right }
 
@@ -16,7 +17,8 @@ class SnakeScreen extends StatefulWidget {
   State<SnakeScreen> createState() => _SnakeScreenState();
 }
 
-class _SnakeScreenState extends State<SnakeScreen> {
+class _SnakeScreenState extends State<SnakeScreen>
+    with FullScreenGame {
   static const int gridSize = 20;
   static const Duration gameSpeed = Duration(milliseconds: 150);
 

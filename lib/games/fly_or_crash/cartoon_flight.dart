@@ -32,7 +32,7 @@ class CartoonFlightScreen extends StatefulWidget {
 }
 
 class _CartoonFlightState extends State<CartoonFlightScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, FullScreenGame {
   static const double _planeX = 0.22; // where our plane sits across the screen
   static const double _minY = 0.10;
   static const double _maxY = 0.86;

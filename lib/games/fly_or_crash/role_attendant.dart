@@ -53,7 +53,7 @@ class AttendantScreen extends StatefulWidget {
 }
 
 class _AttendantScreenState extends State<AttendantScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, FullScreenGame {
   static const int rows = 14;
   static const double rowH = 70; // pixels per row
   static const double galleyH = 120; // space at the front of the plane

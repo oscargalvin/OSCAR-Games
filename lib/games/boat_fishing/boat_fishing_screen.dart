@@ -11,6 +11,7 @@ import '../../widgets/game_scaffold.dart';
 import 'fishing_art.dart';
 import 'fishing_codes.dart';
 import 'fishing_models.dart';
+import '../../widgets/full_screen_game.dart';
 
 enum _FishTab { outing, shop, cooler, codes }
 
@@ -24,7 +25,7 @@ class BoatFishingScreen extends StatefulWidget {
 }
 
 class _BoatFishingScreenState extends State<BoatFishingScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, FullScreenGame {
   late int _coins;
   late List<String> _ownedBoats;
   late List<String> _ownedRods;

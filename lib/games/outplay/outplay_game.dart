@@ -11,6 +11,7 @@ import 'outplay_avatar.dart';
 import 'outplay_data.dart';
 import 'outplay_maps.dart';
 import 'outplay_net.dart';
+import '../../widgets/full_screen_game.dart';
 
 enum OutplayMode { lobby, duel, freeForAll, online, teams }
 
@@ -251,7 +252,7 @@ class OutplayGameScreen extends StatefulWidget {
 }
 
 class _OutplayGameScreenState extends State<OutplayGameScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, FullScreenGame {
   final _rnd = Random();
   final _save = OutplaySave.instance;
   final _focus = FocusNode();

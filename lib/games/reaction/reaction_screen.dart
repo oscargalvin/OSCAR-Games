@@ -6,6 +6,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/game_scaffold.dart';
 import '../../services/sound_service.dart';
 import '../../services/save_service.dart';
+import '../../widgets/full_screen_game.dart';
 
 enum ReactionState { waiting, ready, tooEarly, result }
 
@@ -17,7 +18,7 @@ class ReactionScreen extends StatefulWidget {
 }
 
 class _ReactionScreenState extends State<ReactionScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, FullScreenGame {
   ReactionState _state = ReactionState.waiting;
   int _reactionTime = 0;
   late int _bestTime;

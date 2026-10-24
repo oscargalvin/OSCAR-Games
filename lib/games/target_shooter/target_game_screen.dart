@@ -9,6 +9,7 @@ import 'models/game_world.dart';
 import 'models/player_data.dart';
 import 'models/target.dart';
 import 'painters/world_painter.dart';
+import '../../widgets/full_screen_game.dart';
 
 class TargetGameScreen extends StatefulWidget {
   final GameWorld world;
@@ -27,7 +28,7 @@ class TargetGameScreen extends StatefulWidget {
 }
 
 class _TargetGameScreenState extends State<TargetGameScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, FullScreenGame {
   late int currentLevel;
   List<ShootingTarget> targets = [];
   List<Arrow> arrows = [];

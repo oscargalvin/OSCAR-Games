@@ -5,6 +5,7 @@ import '../../widgets/game_scaffold.dart';
 import '../../services/sound_service.dart';
 import 'board_models.dart';
 import 'nested_board_painter.dart';
+import '../../widgets/full_screen_game.dart';
 
 enum _SetupStep { pickCount, enterNames, playing }
 
@@ -16,7 +17,7 @@ class BoardGameScreen extends StatefulWidget {
 }
 
 class _BoardGameScreenState extends State<BoardGameScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, FullScreenGame {
   static const playerColors = [
     AppTheme.accent,
     AppTheme.danger,

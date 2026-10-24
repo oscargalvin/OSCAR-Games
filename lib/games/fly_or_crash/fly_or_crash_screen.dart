@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/save_service.dart';
+import '../../widgets/full_screen_game.dart';
 
 part 'cartoon_flight.dart';
 part 'world_data.dart';
@@ -726,7 +727,7 @@ class FlightScreen extends StatefulWidget {
 }
 
 class _FlightScreenState extends State<FlightScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, FullScreenGame {
   static const double _cruiseSpeed = 4.0; // units per second
   static const double _approachSpeed = 3.0;
   static const double _ftPerUnit = 2500.0; // feet in one unit of height

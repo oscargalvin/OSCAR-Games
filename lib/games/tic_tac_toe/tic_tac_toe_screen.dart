@@ -4,6 +4,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/game_scaffold.dart';
 import '../../services/sound_service.dart';
 import '../../services/save_service.dart';
+import '../../widgets/full_screen_game.dart';
 
 class TicTacToeScreen extends StatefulWidget {
   const TicTacToeScreen({super.key});
@@ -13,7 +14,7 @@ class TicTacToeScreen extends StatefulWidget {
 }
 
 class _TicTacToeScreenState extends State<TicTacToeScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, FullScreenGame {
   List<String> board = List.filled(9, '');
   bool isXTurn = true;
   String? winner;
