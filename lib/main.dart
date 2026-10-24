@@ -7,10 +7,8 @@ import 'services/save_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SaveService.instance.init();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+  // Phones and tablets can be held either way up.
+  SystemChrome.setPreferredOrientations(DeviceOrientation.values);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -25,9 +23,10 @@ void main() async {
 class OscarGamesApp extends StatelessWidget {
   const OscarGamesApp({super.key});
 
-  static const double maxAppWidth = 500;
+  /// The app fills the whole screen, so tablets get the full width whether
+  /// they are held upright or sideways.
+  static const double maxAppWidth = double.infinity;
 
-  /// Centres the app in a phone-width column on wide screens.
   static Widget frame(Widget? child) {
     return Container(
       color: const Color(0xFF15172A),
@@ -35,9 +34,7 @@ class OscarGamesApp extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: maxAppWidth),
           child: Container(
-            decoration: const BoxDecoration(
-              color: AppTheme.primaryDark,
-            ),
+            decoration: const BoxDecoration(color: AppTheme.primaryDark),
             clipBehavior: Clip.antiAlias,
             child: child,
           ),

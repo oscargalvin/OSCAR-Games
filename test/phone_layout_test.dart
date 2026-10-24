@@ -35,6 +35,11 @@ const _phones = <String, Size>{
   '375x667': Size(375, 667),
   '390x844': Size(390, 844),
   '412x915': Size(412, 915),
+  // Tablets, held upright and sideways.
+  '768x1024': Size(768, 1024),
+  '1024x768': Size(1024, 768),
+  '820x1180': Size(820, 1180),
+  '1180x820': Size(1180, 820),
 };
 
 const _paris = Destination('Paris', 'France', 48.86, 2.35);

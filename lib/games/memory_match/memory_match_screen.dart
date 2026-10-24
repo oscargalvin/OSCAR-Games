@@ -15,8 +15,22 @@ class MemoryMatchScreen extends StatefulWidget {
 
 class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
   static const List<String> _allEmojis = [
-    '🎮', '🚀', '⭐', '🎯', '🔥', '💎', '🎪', '🌈',
-    '🦄', '🎸', '🏆', '🎲', '🧩', '🎭', '🌙', '⚡',
+    '🎮',
+    '🚀',
+    '⭐',
+    '🎯',
+    '🔥',
+    '💎',
+    '🎪',
+    '🌈',
+    '🦄',
+    '🎸',
+    '🏆',
+    '🎲',
+    '🧩',
+    '🎭',
+    '🌙',
+    '⚡',
   ];
 
   List<String> cards = [];
@@ -100,7 +114,8 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
             SoundService.instance.play(GameSound.levelComplete);
             SaveService.instance.saveMemoryBestMoves(gridSize, moves);
             SaveService.instance.saveMemoryBestTime(
-              gridSize, stopwatch.elapsed.inSeconds,
+              gridSize,
+              stopwatch.elapsed.inSeconds,
             );
             _showWinDialog();
           }
@@ -128,8 +143,8 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
     final stars = moves <= totalPairs + 2
         ? 3
         : moves <= totalPairs * 2
-            ? 2
-            : 1;
+        ? 2
+        : 1;
 
     showDialog(
       context: context,
@@ -142,10 +157,7 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                '🎉',
-                style: TextStyle(fontSize: 48),
-              ),
+              const Text('🎉', style: TextStyle(fontSize: 48)),
               const SizedBox(height: 16),
               const Text(
                 'You Won!',
@@ -266,10 +278,7 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
       ),
       child: Column(
         children: [
-          Text(
-            label,
-            style: TextStyle(color: color, fontSize: 12),
-          ),
+          Text(label, style: TextStyle(color: color, fontSize: 12)),
           const SizedBox(height: 4),
           Text(
             value,
@@ -287,16 +296,34 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
   Widget _buildGrid() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: GridView.builder(
-        physics: const NeverScrollableScrollPhysics(),
-        shrinkWrap: true,
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: gridSize,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
-        ),
-        itemCount: cards.length,
-        itemBuilder: (context, index) => _buildCard(index),
+      // Size the cards so the whole grid fits, whether the screen is tall
+      // (a phone) or wide (a tablet turned sideways).
+      child: LayoutBuilder(
+        builder: (context, box) {
+          const gap = 8.0;
+          final rows = (cards.length / gridSize).ceil();
+          final cell = min(
+            (box.maxWidth - gap * (gridSize - 1)) / gridSize,
+            (box.maxHeight - gap * (rows - 1)) / rows,
+          );
+          return Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: cell * gridSize + gap * (gridSize - 1),
+              child: GridView.builder(
+                physics: const NeverScrollableScrollPhysics(),
+                shrinkWrap: true,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: gridSize,
+                  crossAxisSpacing: gap,
+                  mainAxisSpacing: gap,
+                ),
+                itemCount: cards.length,
+                itemBuilder: (context, index) => _buildCard(index),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -314,15 +341,15 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
           color: isMatched
               ? AppTheme.success.withValues(alpha: 0.2)
               : isFlipped
-                  ? AppTheme.accent.withValues(alpha: 0.15)
-                  : AppTheme.cardColor,
+              ? AppTheme.accent.withValues(alpha: 0.15)
+              : AppTheme.cardColor,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: isMatched
                 ? AppTheme.success.withValues(alpha: 0.5)
                 : isFlipped
-                    ? AppTheme.accent.withValues(alpha: 0.5)
-                    : AppTheme.surface,
+                ? AppTheme.accent.withValues(alpha: 0.5)
+                : AppTheme.surface,
             width: 1.5,
           ),
           boxShadow: isFlipped
@@ -342,9 +369,7 @@ class _MemoryMatchScreenState extends State<MemoryMatchScreen> {
                 ? Text(
                     cards[index],
                     key: ValueKey('emoji-$index'),
-                    style: TextStyle(
-                      fontSize: gridSize == 4 ? 32 : 22,
-                    ),
+                    style: TextStyle(fontSize: gridSize == 4 ? 32 : 22),
                   )
                 : Icon(
                     Icons.question_mark_rounded,

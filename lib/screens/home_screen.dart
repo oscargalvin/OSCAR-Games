@@ -245,8 +245,9 @@ class _HomeScreenState extends State<HomeScreen> {
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
               sliver: SliverGrid(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
+                // Two tiles across on phones, more on tablets.
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 260,
                   crossAxisSpacing: 14,
                   mainAxisSpacing: 14,
                   // A fixed height (not an aspect ratio) so tiles on narrow
