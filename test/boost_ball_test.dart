@@ -376,6 +376,22 @@ void main() {
     expect(find.text('START FREE PLAY'), findsOneWidget);
   });
 
+  testWidgets('the game fills the whole screen', (tester) async {
+    await _phone(tester);
+    await tester.pumpWidget(const MaterialApp(home: BoostBallGameScreen()));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    final pitch = find.byWidgetPredicate(
+      (w) =>
+          w is CustomPaint &&
+          w.painter.runtimeType.toString() == '_PitchPainter',
+    );
+    expect(tester.getSize(pitch), const Size(375, 667));
+    expect(find.text('JUMP'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('free play is just you and the ball', (tester) async {
     await _phone(tester);
     await tester.pumpWidget(

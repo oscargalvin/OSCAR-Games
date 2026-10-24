@@ -553,7 +553,9 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
   Widget _kphPill() {
     final m = _match;
     if (m.kphT <= 0 || m.phase != MatchPhase.play) {
-      return const SizedBox.shrink();
+      // Must stay Positioned: a plain child would shrink the whole Stack
+      // (and everything in it) to nothing, leaving a black screen.
+      return const Positioned(left: 0, top: 0, child: SizedBox.shrink());
     }
     final hot = m.lastKph >= 120;
     return Positioned(
@@ -1235,7 +1237,8 @@ class _PitchPainter extends CustomPainter {
       _text(
         canvas,
         m.feed!,
-        mid + const Offset(0, 48),
+        // Below the goal speed, so the two don't overlap.
+        mid + Offset(0, m.phase == MatchPhase.goal && m.goalKph > 0 ? 84 : 48),
         18,
         Colors.white.withValues(alpha: m.feedT.clamp(0, 1)),
         maxWidth: max(40, size.width - 40),
