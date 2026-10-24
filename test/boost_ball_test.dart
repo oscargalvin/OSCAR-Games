@@ -720,4 +720,27 @@ void main() {
     expect(save.coins, 500);
     expect(find.text('Score 7 goals in Winner Wall'), findsNothing);
   });
+
+  testWidgets('you can change your player name', (tester) async {
+    await _phone(tester);
+    final save = BoostBallSave.instance..name = 'Oscar';
+    await save.save();
+    await tester.pumpWidget(const MaterialApp(home: BoostBallScreen()));
+    await tester.pumpAndSettle();
+    final change = find.text('CHANGE NAME');
+    await tester.scrollUntilVisible(
+      change,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(change);
+    await tester.pumpAndSettle();
+    expect(find.text('Change your name'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Speedy');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(save.name, 'Speedy');
+    expect(find.text('Speedy'), findsOneWidget);
+  });
 }

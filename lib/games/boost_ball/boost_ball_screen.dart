@@ -77,13 +77,13 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
   }
 
   /// Other people see your name online, so ask for one the first time.
-  Future<bool> _askName() async {
-    if (_save.name.trim().isNotEmpty) return true;
-    final ctrl = TextEditingController();
+  Future<bool> _askName({bool change = false}) async {
+    if (!change && _save.name.trim().isNotEmpty) return true;
+    final ctrl = TextEditingController(text: change ? _save.name : '');
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Pick a player name'),
+        title: Text(change ? 'Change your name' : 'Pick a player name'),
         content: TextField(
           controller: ctrl,
           autofocus: true,
@@ -105,9 +105,42 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
     );
     final clean = (name ?? '').trim();
     if (clean.isEmpty) return false;
-    _save.name = clean;
+    setState(() => _save.name = clean);
     await _save.save();
     return true;
+  }
+
+  /// Your player name, with a button to change it.
+  Widget _nameRow() {
+    final name = _save.name.trim();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person_rounded, color: Colors.white54),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              name.isEmpty ? 'No player name yet' : name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: name.isEmpty ? Colors.white54 : Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _askName(change: true),
+            child: Text(name.isEmpty ? 'PICK A NAME' : 'CHANGE NAME'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Shown when you look for real people and nobody is online.
@@ -687,6 +720,9 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                         style: const TextStyle(color: Colors.white60),
                       ),
                       const SizedBox(height: 18),
+                      _section('Your name'),
+                      _nameRow(),
+                      const SizedBox(height: 14),
                       _section('Quests'),
                       _quests(),
                       const SizedBox(height: 14),
