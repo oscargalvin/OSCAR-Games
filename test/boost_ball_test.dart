@@ -57,7 +57,9 @@ void main() {
       ..losses = 0
       ..goals = 0
       ..vip = false
-      ..name = '';
+      ..name = ''
+      ..quest = {}
+      ..claimed = {};
     await save.save();
   });
 
@@ -460,7 +462,7 @@ void main() {
     for (final c in kCars) {
       expect(CarModel.of(c.body).faces.length, greaterThan(20));
     }
-    expect(kCars.length, 10);
+    expect(kCars.length, 13);
   });
 
   testWidgets('the garage shows game modes and online play', (tester) async {
@@ -651,5 +653,71 @@ void main() {
     }
     expect(find.text('JUMP'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  test('the VIP pass never gives away the Golden Hypercar', () {
+    expect(carById('hyper').price, 12000);
+    expect(vipCanGive(carById('hyper')), isFalse);
+    expect(kCars.where(vipCanGive).length, greaterThanOrEqualTo(kVipCars));
+  });
+
+  test('quests count your matches and pay out once', () async {
+    final save = BoostBallSave.instance;
+    final wall = kQuests.firstWhere((q) => q.id == 'wall7');
+    final any = kQuests.firstWhere((q) => q.id == 'goals20');
+    expect(wall.reward, 500);
+    expect(any.reward, 250);
+    var done = save.recordMatch(
+      won: true,
+      goals: 4,
+      demos: 0,
+      topKph: 60,
+      mode: BoostMode.winnerWall,
+      extreme: false,
+    );
+    expect(save.questCount(wall), 4);
+    expect(done, isEmpty);
+    done = save.recordMatch(
+      won: false,
+      goals: 3,
+      demos: 1,
+      topKph: 140,
+      mode: BoostMode.winnerWall,
+      extreme: false,
+    );
+    expect(done.map((q) => q.id), containsAll(['wall7', 'fast']));
+    expect(save.questCount(any), 7);
+    final before = save.coins;
+    expect(save.claim(wall), isTrue);
+    expect(save.claim(wall), isFalse);
+    expect(save.coins, before + 500);
+    expect(save.claim(any), isFalse); // only 7 of 20 goals so far
+    await save.save();
+    save.quest = {};
+    save.claimed = {};
+    await save.load();
+    expect(save.claimed, contains('wall7'));
+    expect(save.questCount(any), 7);
+  });
+
+  testWidgets('quests show in the garage and can be claimed', (tester) async {
+    await _phone(tester);
+    final save = BoostBallSave.instance;
+    save.quest = {QuestStat.wallGoals.name: 7};
+    await save.save();
+    await tester.pumpWidget(const MaterialApp(home: BoostBallScreen()));
+    await tester.pumpAndSettle();
+    final claim = find.widgetWithText(ElevatedButton, 'CLAIM');
+    await tester.scrollUntilVisible(
+      claim,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Score 7 goals in Winner Wall'), findsOneWidget);
+    await tester.tap(claim);
+    await tester.pumpAndSettle();
+    expect(save.coins, 500);
+    expect(find.text('Score 7 goals in Winner Wall'), findsNothing);
   });
 }

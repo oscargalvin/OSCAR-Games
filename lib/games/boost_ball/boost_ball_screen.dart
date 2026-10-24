@@ -269,7 +269,7 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
         ..showSnackBar(
           SnackBar(
             content: Text(
-              'You need ${car.price - _save.coins} more coins. '
+              'You need ${commas(car.price - _save.coins)} more coins. '
               'Win matches to earn coins!',
             ),
           ),
@@ -287,7 +287,9 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
 
   /// Buys the VIP pass: 7 random cars you don't have yet.
   Future<void> _buyVip() async {
-    final missing = kCars.where((c) => !_save.cars.contains(c.id)).toList();
+    final missing = kCars
+        .where((c) => !_save.cars.contains(c.id) && vipCanGive(c))
+        .toList();
     if (missing.isEmpty) {
       _say('You already have every car!');
       return;
@@ -347,8 +349,116 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
     );
   }
 
+  Widget _quests() {
+    final todo =
+        [
+          for (final q in kQuests)
+            if (!_save.claimed.contains(q.id)) q,
+        ]..sort(
+          (a, b) => (_save.questDone(b) ? 1 : 0) - (_save.questDone(a) ? 1 : 0),
+        );
+    final done = kQuests.length - todo.length;
+    return Column(
+      children: [
+        for (final q in todo) _questRow(q),
+        if (done > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              todo.isEmpty
+                  ? 'You finished every quest!'
+                  : '$done of ${kQuests.length} quests finished',
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _questRow(Quest q) {
+    final count = _save.questCount(q);
+    final ready = _save.questDone(q);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: ready ? const Color(0xFF69F0AE) : Colors.white12,
+          width: ready ? 2 : 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  q.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: count / q.target,
+                          minHeight: 7,
+                          backgroundColor: Colors.white12,
+                          color: ready ? const Color(0xFF69F0AE) : _gold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$count/${q.target}',
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          ElevatedButton.icon(
+            onPressed: ready ? () => _claim(q) : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00C853),
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: Colors.white10,
+              disabledForegroundColor: _gold,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
+            icon: const Icon(Icons.monetization_on_rounded, size: 16),
+            label: Text(ready ? 'CLAIM' : commas(q.reward)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _claim(Quest q) {
+    if (!_save.claim(q)) return;
+    setState(() {});
+    SoundService.instance.play(GameSound.levelComplete);
+    _save.save();
+    _say('+${commas(q.reward)} coins for "${q.title}"!');
+  }
+
   Widget _vipCard() {
-    final missing = kCars.where((c) => !_save.cars.contains(c.id)).length;
+    final missing = kCars
+        .where((c) => !_save.cars.contains(c.id) && vipCanGive(c))
+        .length;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
@@ -577,6 +687,9 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                         style: const TextStyle(color: Colors.white60),
                       ),
                       const SizedBox(height: 18),
+                      _section('Quests'),
+                      _quests(),
+                      const SizedBox(height: 14),
                       _section('Paint'),
                       _paints(),
                       const SizedBox(height: 14),
@@ -871,7 +984,7 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                             Icons.monetization_on_rounded,
                             size: 18,
                           ),
-                          label: Text('${car.price}'),
+                          label: Text(commas(car.price)),
                         ),
                 ),
               ],

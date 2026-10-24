@@ -101,6 +101,7 @@ class Car {
   double hitCool = 0;
   double demoT = 0; // > 0 while waiting to come back after a demolition
   int goals = 0;
+  int demos = 0; // cars this one has demolished
   final CarInput input = CarInput();
 
   // Bot brain.
@@ -691,6 +692,7 @@ class BoostBallMatch {
 
   void _demolish(Car victim, Car by) {
     victim.demoT = 2;
+    by.demos++;
     events.add(MatchEvent.demolish);
     _say('${by.name} DEMOLISHED ${victim.name}!');
   }

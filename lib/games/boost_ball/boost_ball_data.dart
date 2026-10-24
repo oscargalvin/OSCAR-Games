@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,9 @@ enum CarBody {
   suv,
   van,
   estate,
+  rally,
+  police,
+  hyper,
 }
 
 /// A car you can drive. Faster cars turn worse; heavy cars hit harder.
@@ -178,7 +182,49 @@ const List<CarSpec> kCars = [
     jump: 11,
     weight: 1.6,
   ),
+  CarSpec(
+    id: 'rally',
+    name: 'Rally Car',
+    blurb: 'Built for mud and jumps. Grippy and quick.',
+    body: CarBody.rally,
+    price: 600,
+    speed: 23,
+    accel: 34,
+    turn: 4.7,
+    hit: 1.05,
+    jump: 14,
+    weight: 1,
+  ),
+  CarSpec(
+    id: 'police',
+    name: 'Police Car',
+    blurb: 'Flashing lights and a push bar for bumping.',
+    body: CarBody.police,
+    price: 800,
+    speed: 24,
+    accel: 32,
+    turn: 4.3,
+    hit: 1.2,
+    jump: 12,
+    weight: 1.3,
+  ),
+  CarSpec(
+    id: 'hyper',
+    name: 'Golden Hypercar',
+    blurb: 'The best car in the game. Fast, strong, covered in gold.',
+    body: CarBody.hyper,
+    price: 12000,
+    speed: 26,
+    accel: 37,
+    turn: 4.7,
+    hit: 1.3,
+    jump: 14,
+    weight: 1.35,
+  ),
 ];
+
+/// Cars too special for the VIP pass to give away.
+bool vipCanGive(CarSpec c) => c.price <= 1000;
 
 CarSpec carById(String id) =>
     kCars.firstWhere((c) => c.id == id, orElse: () => kCars.first);
@@ -229,6 +275,49 @@ enum BoostMode {
   );
 }
 
+/// 12000 -> "12,000".
+String commas(int n) =>
+    n.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+
+/// What a quest counts.
+enum QuestStat {
+  matches,
+  wins,
+  goals,
+  wallGoals,
+  demos,
+  fastShot, // your hardest shot, not a running total
+  suddenDeathWins,
+  extremeWins,
+}
+
+/// Something to do for bonus coins. Each quest pays out once.
+class Quest {
+  final String id;
+  final String title;
+  final QuestStat stat;
+  final int target;
+  final int reward;
+  const Quest(this.id, this.title, this.stat, this.target, this.reward);
+}
+
+const List<Quest> kQuests = [
+  Quest('wall7', 'Score 7 goals in Winner Wall', QuestStat.wallGoals, 7, 500),
+  Quest('goals20', 'Score 20 goals in any game', QuestStat.goals, 20, 250),
+  Quest('play5', 'Play 5 matches', QuestStat.matches, 5, 100),
+  Quest('win3', 'Win 3 matches', QuestStat.wins, 3, 150),
+  Quest('fast', 'Hit the ball at 130 KPH', QuestStat.fastShot, 130, 150),
+  Quest('demo5', 'Demolish 5 cars', QuestStat.demos, 5, 200),
+  Quest(
+    'sudden',
+    'Win a Sudden Death match',
+    QuestStat.suddenDeathWins,
+    1,
+    150,
+  ),
+  Quest('extreme', 'Beat the Extreme bots', QuestStat.extremeWins, 1, 600),
+];
+
 /// Turns the ball's speed (metres a second) into kilometres an hour.
 int kph(double metresPerSecond) => (metresPerSecond * 3.6).round();
 
@@ -249,6 +338,49 @@ class BoostBallSave {
   int bestKph = 0; // your hardest ever shot
   String name = ''; // shown to other people online
   bool vip = false; // bought the VIP pass
+  Map<String, int> quest = {}; // quest counters, by QuestStat name
+  Set<String> claimed = {}; // quests already paid out
+
+  int questCount(Quest q) => min(q.target, quest[q.stat.name] ?? 0);
+  bool questDone(Quest q) => questCount(q) >= q.target;
+
+  /// Counts a finished match towards the quests. Returns the quests it
+  /// just completed.
+  List<Quest> recordMatch({
+    required bool won,
+    required int goals,
+    required int demos,
+    required int topKph,
+    required BoostMode mode,
+    required bool extreme,
+  }) {
+    final before = {
+      for (final q in kQuests)
+        if (questDone(q)) q.id,
+    };
+    void add(QuestStat s, int n) => quest[s.name] = (quest[s.name] ?? 0) + n;
+    add(QuestStat.matches, 1);
+    add(QuestStat.goals, goals);
+    add(QuestStat.demos, demos);
+    if (mode == BoostMode.winnerWall) add(QuestStat.wallGoals, goals);
+    if (won) add(QuestStat.wins, 1);
+    if (won && mode == BoostMode.suddenDeath) add(QuestStat.suddenDeathWins, 1);
+    if (won && extreme) add(QuestStat.extremeWins, 1);
+    final fast = QuestStat.fastShot.name;
+    quest[fast] = max(quest[fast] ?? 0, topKph);
+    return [
+      for (final q in kQuests)
+        if (questDone(q) && !before.contains(q.id)) q,
+    ];
+  }
+
+  /// Pays out a finished quest.
+  bool claim(Quest q) {
+    if (!questDone(q) || claimed.contains(q.id)) return false;
+    claimed.add(q.id);
+    coins += q.reward;
+    return true;
+  }
 
   Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -267,6 +399,11 @@ class BoostBallSave {
       bestKph = m['bestKph'] as int? ?? 0;
       name = m['name'] as String? ?? '';
       vip = m['vip'] == true;
+      quest = {
+        for (final e in ((m['quest'] as Map?) ?? {}).entries)
+          '${e.key}': (e.value as num).toInt(),
+      };
+      claimed = {...(m['claimed'] as List? ?? []).cast<String>()};
     } catch (_) {
       // A broken save starts fresh.
     }
@@ -287,6 +424,8 @@ class BoostBallSave {
         'bestKph': bestKph,
         'name': name,
         'vip': vip,
+        'quest': quest,
+        'claimed': claimed.toList(),
       }),
     );
   }

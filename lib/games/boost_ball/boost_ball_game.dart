@@ -84,6 +84,7 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
   int _lastCount = -1;
   bool _paid = false;
   int _coinsWon = 0;
+  List<Quest> _questsDone = const [];
 
   @override
   void initState() {
@@ -358,6 +359,14 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
       SoundService.instance.play(GameSound.levelFail);
     }
     _save.goals += _you.goals;
+    _questsDone = _save.recordMatch(
+      won: won,
+      goals: _you.goals,
+      demos: _you.demos,
+      topKph: _you.topKph,
+      mode: _match.mode,
+      extreme: !_online && widget.difficulty == 3,
+    );
     _save.save();
   }
 
@@ -779,6 +788,18 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                       color: Color(0xFFFFD54F),
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+                for (final q in _questsDone) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'QUEST DONE: ${q.title}!\n'
+                    'Claim ${commas(q.reward)} coins in the garage.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFF69F0AE),
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ],

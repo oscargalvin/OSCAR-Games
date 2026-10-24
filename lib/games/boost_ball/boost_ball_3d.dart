@@ -41,6 +41,8 @@ enum Part {
   chrome,
   goat,
   horn,
+  siren, // blue police light
+  gold,
 }
 
 class Face {
@@ -900,6 +902,102 @@ class CarModel {
             ),
           );
         }
+      case CarBody.rally:
+        _everyday(
+          wheelX: 1.3,
+          wheelY: 1.05,
+          wheelR: 0.45,
+          body: const [
+            (-1.95, 0.4),
+            (1.95, 0.4),
+            (2.05, 0.8),
+            (1.3, 1.0),
+            (-1.95, 1.05),
+          ],
+          bodyW: 1.05,
+          bodyLo: 0.4,
+          bodyHi: 1.05,
+          cabin: const [(-1.95, 1.0), (1.0, 1.0), (0.2, 1.7), (-1.75, 1.7)],
+          cabinW: 0.96,
+          roof: 1.7,
+          front: 2.05,
+          back: -1.95,
+        );
+        _box(-0.9, -0.2, -0.3, 0.3, 1.7, 1.85, Part.accent); // roof scoop
+        _box(-2.15, -1.75, -1.0, 1.0, 1.75, 1.85, Part.accent); // big wing
+        _box(-2.0, -1.85, -0.7, -0.6, 1.6, 1.75, Part.dark);
+        _box(-2.0, -1.85, 0.6, 0.7, 1.6, 1.75, Part.dark);
+        // Four rally lamps on the bonnet.
+        for (final y in [-0.75, -0.25, 0.25, 0.75]) {
+          _box(2.0, 2.15, y - 0.18, y + 0.18, 0.95, 1.25, Part.light);
+        }
+        // Mud flaps.
+        for (final y in [-0.95, 0.95]) {
+          _box(-1.05, -0.95, y - 0.2, y + 0.2, 0.15, 0.55, Part.dark);
+        }
+      case CarBody.police:
+        _everyday(
+          wheelX: 1.55,
+          wheelY: 1.05,
+          wheelR: 0.44,
+          body: const [
+            (-2.4, 0.35),
+            (2.3, 0.35),
+            (2.42, 0.72),
+            (1.3, 0.96),
+            (-2.4, 1.0),
+          ],
+          bodyW: 1.05,
+          bodyLo: 0.35,
+          bodyHi: 1.0,
+          cabin: const [(-1.35, 0.95), (1.0, 0.95), (0.2, 1.6), (-0.85, 1.6)],
+          cabinW: 0.98,
+          roof: 1.6,
+          front: 2.42,
+          back: -2.4,
+        );
+        // Light bar: red one side, blue the other.
+        _box(-0.55, -0.15, -0.75, 0.75, 1.6, 1.66, Part.dark);
+        _box(-0.5, -0.2, 0.05, 0.7, 1.66, 1.86, Part.tail, lit: false);
+        _box(-0.5, -0.2, -0.7, -0.05, 1.66, 1.86, Part.siren, lit: false);
+        // Push bar on the front.
+        _box(2.42, 2.6, -0.8, 0.8, 0.4, 0.9, Part.dark);
+      case CarBody.hyper:
+        _wheels(1.6, 1.12, 0.46, 0.42);
+        _prism(
+          const [
+            (-2.5, 0.3),
+            (2.7, 0.3),
+            (2.78, 0.48),
+            (1.0, 0.92),
+            (-2.5, 1.02),
+          ],
+          1.18,
+          1.05,
+          0.3,
+          1.02,
+          (i) => i == 0 ? Part.dark : Part.body,
+        );
+        _prism(
+          const [(-1.3, 0.95), (0.7, 0.88), (-0.25, 1.42), (-1.0, 1.44)],
+          0.78,
+          0.55,
+          0.88,
+          1.44,
+          (i) => i == 0 ? Part.body : Part.glass,
+          sides: Part.glass,
+        );
+        // Gold stripes, gold wing and gold side skirts.
+        for (final y in [-0.35, 0.35]) {
+          _strip(const [(2.6, 0.55), (1.0, 0.93)], y, 0.14, Part.gold, 0.012);
+        }
+        _box(-2.75, -2.05, -1.25, 1.25, 1.55, 1.66, Part.gold);
+        _box(-2.4, -2.25, -0.8, -0.65, 1.0, 1.55, Part.dark);
+        _box(-2.4, -2.25, 0.65, 0.8, 1.0, 1.55, Part.dark);
+        for (final y in [-1.2, 1.2]) {
+          _box(-1.0, 1.0, y - 0.04, y + 0.04, 0.3, 0.45, Part.gold);
+        }
+        _lights(2.72, 0.75, 0.5, 0.8, -2.52);
       case CarBody.monster:
         _wheels(1.45, 1.35, 1.0, 0.75);
         _box(-1.2, 1.2, -0.15, 0.15, 0.9, 1.25, Part.chrome); // axles
@@ -969,6 +1067,9 @@ class CarModel {
     CarBody.estate => const V3(-2.45, 0.5, 0.5),
     CarBody.suv => const V3(-2.35, 0.6, 0.65),
     CarBody.van => const V3(-2.55, 0.6, 0.55),
+    CarBody.rally => const V3(-2.05, 0.5, 0.5),
+    CarBody.police => const V3(-2.45, 0.5, 0.5),
+    CarBody.hyper => const V3(-2.6, 0, 0.55),
   };
 
   /// An everyday car: a body, a cabin on top with windows, lights and a
@@ -1264,6 +1365,8 @@ Color Function(Part) carPaint(Color body, Color team, {Color? accent}) {
     Part.chrome => const Color(0xFFCFD8DC),
     Part.goat => const Color(0xFFF5F5F5),
     Part.horn => const Color(0xFF8D6E63),
+    Part.siren => const Color(0xFF2979FF),
+    Part.gold => const Color(0xFFFFC400),
   };
 }
 
