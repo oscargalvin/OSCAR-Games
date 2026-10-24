@@ -16,6 +16,7 @@ import '../games/boat_fishing/boat_fishing_screen.dart';
 import '../games/board_game/board_game_screen.dart';
 import '../games/fly_or_crash/fly_or_crash_screen.dart';
 import '../games/outplay/outplay_screen.dart';
+import '../games/boost_ball/boost_ball_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -38,6 +39,20 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.warning,
       screenBuilder: () => const OutplayScreen(),
       difficulty: 'Hard',
+    ),
+    GameInfo(
+      id: 'boost_ball',
+      title: 'Boost Ball',
+      subtitle: 'Car football with boost',
+      description:
+          'Drive, boost, jump and flip into a giant ball to score goals. '
+          'Play 1v1 to 3v3 against easy, medium or hard bots and unlock '
+          'new cars with your coins.',
+      icon: Icons.sports_soccer_rounded,
+      color: AppTheme.blue,
+      secondaryColor: AppTheme.warning,
+      screenBuilder: () => const BoostBallScreen(),
+      difficulty: 'Medium',
     ),
     GameInfo(
       id: 'fly_or_crash',
