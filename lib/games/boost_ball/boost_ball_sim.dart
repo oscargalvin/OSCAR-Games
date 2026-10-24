@@ -5,18 +5,20 @@ import 'boost_ball_data.dart';
 
 // The pitch, in metres. x runs across, y runs from the blue goal (y = 0)
 // to the orange goal (y = kFieldL). Blue attacks up the pitch.
-const double kFieldW = 64;
-const double kFieldL = 100;
-const double kGoalW = 18;
-const double kGoalDepth = 7;
-const double kGoalH = 8;
-const double kCorner = 10; // the corners are cut off at 45 degrees
-const double kCeiling = 30;
-const double kRampR = 8; // the bottom of every wall curves up like a skate ramp
-const double kWallH = 18; // how tall the walls are drawn
+const double kFieldW = 72;
+const double kFieldL = 112;
+const double kGoalW = 26;
+const double kGoalDepth = 9;
+const double kGoalH = 13;
+const double kCorner = 12; // the corners are cut off at 45 degrees
+const double kCeiling = 44;
+const double kRampR =
+    12; // the bottom of every wall curves up like a skate ramp
+const double kWallH = kCeiling; // the glass walls go right up to the roof
 const double kBallR = 2.4;
 const double kCarR = 2.2;
 const double kGravity = 32;
+const double kMaxBallSpeed = 50; // 180 KPH
 const double kMaxBoost = 100;
 const double kKickoffTime = 3;
 const double kGoalPause = 3;
@@ -48,11 +50,18 @@ class Ball {
 
 class Car {
   final int team; // 0 blue (attacks +y), 1 orange (attacks -y)
-  final String name;
+  String name;
   final bool isYou;
   final CarSpec spec;
-  final int colour;
+  int colour;
   final int difficulty; // bots only
+
+  /// Online: a real person drives this car (it gets their paint), and
+  /// [netControlled] cars are steered by messages instead of a bot brain.
+  bool human = false;
+  bool netControlled = false;
+  String netId = '';
+  int topKph = 0; // this car's hardest hit of the match
 
   double x = 0, y = 0, z = 0;
   double vx = 0, vy = 0, vz = 0;
@@ -115,6 +124,16 @@ class BoostBallMatch {
   final Ball ball = Ball();
   final List<BoostPad> pads = [];
   final List<MatchEvent> events = [];
+  final BoostMode mode;
+
+  /// False on a phone that just copies someone else's game (online guests):
+  /// it moves things along between updates but never scores or ends it.
+  bool authority = true;
+
+  /// How fast the ball went off the last hit, and for how long to show it.
+  int lastKph = 0;
+  double kphT = 0;
+  int goalKph = 0;
 
   MatchPhase phase = MatchPhase.kickoff;
   double phaseT = 0;
@@ -131,26 +150,45 @@ class BoostBallMatch {
     required this.teamSize,
     required List<Car> players,
     this.length = 150,
+    this.mode = BoostMode.classic,
     Random? random,
   }) : rnd = random ?? Random(),
        clock = length {
     cars.addAll(players);
-    for (final x in [6.0, kFieldW - 6]) {
-      for (final y in [12.0, kFieldL - 12]) {
-        pads.add(BoostPad(Offset(x, y), true));
+    if (mode != BoostMode.noBoost) {
+      for (final x in [10.0, kFieldW - 10]) {
+        for (final y in [16.0, kFieldL - 16]) {
+          pads.add(BoostPad(Offset(x, y), true));
+        }
+        pads.add(BoostPad(Offset(x, kFieldL / 2), true));
       }
-      pads.add(BoostPad(Offset(x, kFieldL / 2), true));
-    }
-    for (final x in [16.0, kFieldW / 2, kFieldW - 16]) {
-      for (final y in [26.0, 40.0, 60.0, 74.0]) {
-        pads.add(BoostPad(Offset(x, y), false));
+      for (final x in [20.0, kFieldW / 2, kFieldW - 20]) {
+        for (final y in [30.0, 45.0, kFieldL - 45, kFieldL - 30]) {
+          pads.add(BoostPad(Offset(x, y), false));
+        }
       }
-    }
-    for (final x in [kFieldW / 2 - 14, kFieldW / 2 + 14]) {
-      pads.add(BoostPad(Offset(x, kFieldL / 2), false));
+      for (final x in [kFieldW / 2 - 16, kFieldW / 2 + 16]) {
+        pads.add(BoostPad(Offset(x, kFieldL / 2), false));
+      }
     }
     resetKickoff();
   }
+
+  /// How much boost cars start with (and come back with).
+  double get _startBoost => switch (mode) {
+    BoostMode.noBoost => 0,
+    BoostMode.freePlay => kMaxBoost,
+    _ => 33,
+  };
+
+  /// The match is over once a goal like this one has gone in.
+  bool get _goalEnds => switch (mode) {
+    BoostMode.classic ||
+    BoostMode.noBoost => overtime || (clock <= 0 && leader != null),
+    BoostMode.suddenDeath => true,
+    BoostMode.firstTo5 => score[0] >= 5 || score[1] >= 5,
+    BoostMode.freePlay => false,
+  };
 
   /// The team that is winning, or null for a draw.
   int? get leader =>
@@ -187,7 +225,7 @@ class BoostBallMatch {
           ..vx = 0
           ..vy = 0
           ..vz = 0
-          ..boost = 33
+          ..boost = _startBoost
           ..flipT = 0
           ..demoT = 0
           ..grounded = true
@@ -211,10 +249,20 @@ class BoostBallMatch {
   void step(double dt) {
     phaseT += dt;
     feedT = max(0, feedT - dt);
+    kphT = max(0, kphT - dt);
+    if (mode == BoostMode.freePlay) {
+      for (final c in cars) {
+        c.boost = kMaxBoost; // practice: boost never runs out
+      }
+    }
+    if (!authority) {
+      _follow(dt);
+      return;
+    }
     switch (phase) {
       case MatchPhase.kickoff:
         for (final c in cars) {
-          if (!c.isYou) _think(c, dt);
+          if (_isBot(c)) _think(c, dt);
         }
         if (phaseT >= kKickoffTime) {
           phase = MatchPhase.play;
@@ -228,12 +276,12 @@ class BoostBallMatch {
       case MatchPhase.goal:
         // The ball explodes in the net; cars can still drive about.
         for (final c in cars) {
-          if (!c.isYou) _think(c, dt);
+          if (_isBot(c)) _think(c, dt);
           _moveCar(c, dt);
           c.input.jump = false;
         }
         if (phaseT >= kGoalPause) {
-          if (overtime || (clock <= 0 && leader != null)) {
+          if (_goalEnds) {
             phase = MatchPhase.over;
             phaseT = 0;
           } else {
@@ -245,8 +293,8 @@ class BoostBallMatch {
         break;
     }
 
-    clock -= dt;
-    if (clock <= 0 && !overtime) {
+    if (mode.timed) clock -= dt;
+    if (mode.timed && clock <= 0 && !overtime) {
       clock = 0;
       // A draw goes to overtime: the next goal wins.
       if (leader == null && ball.z < kBallR + 0.5) {
@@ -263,7 +311,7 @@ class BoostBallMatch {
     }
 
     for (final c in cars) {
-      if (!c.isYou) _think(c, dt);
+      if (_isBot(c)) _think(c, dt);
     }
     const steps = 2;
     for (var i = 0; i < steps; i++) {
@@ -280,6 +328,40 @@ class BoostBallMatch {
     }
     for (final p in pads) {
       p.respawnT = max(0, p.respawnT - dt);
+    }
+    for (final c in cars) {
+      c.input.jump = false;
+    }
+  }
+
+  bool _isBot(Car c) => !c.isYou && !c.netControlled;
+
+  /// For a phone copying the real game: keep things moving smoothly between
+  /// updates, but leave goals, the clock and kickoffs to the real game.
+  void _follow(double dt) {
+    if (phase == MatchPhase.play && mode.timed && !overtime) {
+      clock = max(0, clock - dt);
+    }
+    if (phase == MatchPhase.play || phase == MatchPhase.goal) {
+      const steps = 2;
+      for (var i = 0; i < steps; i++) {
+        final h = dt / steps;
+        for (final c in cars) {
+          _moveCar(c, h);
+        }
+        if (phase == MatchPhase.play) {
+          _moveBall(h);
+          _bumpCars();
+          for (final c in cars) {
+            _hitBall(c);
+          }
+        }
+      }
+      for (final p in pads) {
+        p.respawnT = max(0, p.respawnT - dt);
+      }
+    } else if (phase == MatchPhase.over) {
+      _moveBall(dt);
     }
     for (final c in cars) {
       c.input.jump = false;
@@ -429,7 +511,7 @@ class BoostBallMatch {
       ..vx = 0
       ..vy = 0
       ..vz = 0
-      ..boost = 33
+      ..boost = _startBoost
       ..grounded = true
       ..demoT = 0;
     c.heading = c.team == 0 ? pi / 2 : -pi / 2;
@@ -514,10 +596,10 @@ class BoostBallMatch {
     b.vx *= drag;
     b.vy *= drag;
     final sp = b.speed;
-    if (sp > 55) {
-      b.vx *= 55 / sp;
-      b.vy *= 55 / sp;
-      b.vz *= 55 / sp;
+    if (sp > kMaxBallSpeed) {
+      b.vx *= kMaxBallSpeed / sp;
+      b.vy *= kMaxBallSpeed / sp;
+      b.vz *= kMaxBallSpeed / sp;
     }
     final v = _collideWalls(b.x, b.y, b.z, kBallR, b.vx, b.vy, 0.5);
     b
@@ -544,7 +626,7 @@ class BoostBallMatch {
     final rel = (c.vx - b.vx) * nx + (c.vy - b.vy) * ny + (c.vz - b.vz) * nz;
     var power = max(0.0, rel) * 1.15 * c.spec.hit + 5;
     final flipped = c.flipT > 0;
-    if (flipped) power *= 1.6;
+    if (flipped) power *= 1.35;
     b.vx += nx * power + c.vx * 0.25;
     b.vy += ny * power + c.vy * 0.25;
     // Hits along the ground pop the ball up a bit.
@@ -553,6 +635,9 @@ class BoostBallMatch {
     c.vy -= ny * max(0.0, rel) * 0.25;
     c.hitCool = 0.12;
     lastTouch = c;
+    lastKph = kph(min(b.speed, kMaxBallSpeed));
+    kphT = 1.8;
+    c.topKph = max(c.topKph, lastKph);
     events.add(power > 30 ? MatchEvent.bigHit : MatchEvent.hit);
   }
 
@@ -562,6 +647,7 @@ class BoostBallMatch {
     if (ball.y > kFieldL + kBallR) scorer = 0;
     if (scorer == null) return false;
     score[scorer]++;
+    goalKph = kph(min(ball.speed, kMaxBallSpeed));
     lastScorerTeam = scorer;
     final touch = lastTouch;
     lastScorer = touch;

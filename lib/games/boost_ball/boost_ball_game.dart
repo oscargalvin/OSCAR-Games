@@ -7,23 +7,11 @@ import 'package:flutter/services.dart';
 import '../../services/sound_service.dart';
 import 'boost_ball_3d.dart';
 import 'boost_ball_data.dart';
+import 'boost_ball_net.dart';
 import 'boost_ball_sim.dart';
 
 const Color kBlueTeam = Color(0xFF2196F3);
 const Color kOrangeTeam = Color(0xFFFF7043);
-
-const List<String> _botNames = [
-  'Turbo',
-  'Zippy',
-  'Nitro',
-  'Bolt',
-  'Skid',
-  'Rocket Rex',
-  'Vroom',
-  'Drifty',
-  'Bumper',
-  'Gizmo',
-];
 
 class _Spark {
   V3 pos;
@@ -33,17 +21,25 @@ class _Spark {
   _Spark(this.pos, this.vel, this.colour, this.life);
 }
 
-/// A match of Boost Ball against bots.
+/// What the end card's PLAY AGAIN means for an online game: go and find
+/// another one.
+const String kPlayAgainOnline = 'again';
+
+/// A match of Boost Ball against bots, or online when [session] is given.
 class BoostBallGameScreen extends StatefulWidget {
   final int teamSize;
   final int difficulty;
   final double length;
+  final BoostMode mode;
+  final BoostBallSession? session;
 
   const BoostBallGameScreen({
     super.key,
     this.teamSize = 1,
     this.difficulty = 1,
     this.length = 150,
+    this.mode = BoostMode.classic,
+    this.session,
   });
 
   @override
@@ -56,8 +52,15 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
   final _rnd = Random();
   final _focus = FocusNode();
   late final Ticker _ticker;
-  late final BoostBallMatch _match;
-  late final Car _you;
+  BoostBallMatch? _m;
+  Car? _y;
+  BoostBallMatch get _match => _m!;
+  Car get _you => _y!;
+  BoostBallSession? get _net => widget.session;
+  bool get _online => _net != null;
+  bool get _ready => _m != null;
+  String? _note;
+  double _noteT = 0;
   Duration _last = Duration.zero;
   Size _size = Size.zero;
 
@@ -85,18 +88,24 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
   @override
   void initState() {
     super.initState();
-    final names = [..._botNames]..shuffle(_rnd);
+    if (!_online) _startOffline();
+    _ticker = createTicker(_tick)..start();
+  }
+
+  void _startOffline() {
+    final names = [...kBotNames]..shuffle(_rnd);
     var n = 0;
-    _you = Car(
+    final you = Car(
       team: 0,
       name: 'You',
       isYou: true,
       spec: carById(_save.car),
       colour: _save.colour,
     );
-    _you.input.relative = true;
-    final cars = <Car>[_you];
-    for (var i = 1; i < widget.teamSize; i++) {
+    you.input.relative = true;
+    final cars = <Car>[you];
+    final free = widget.mode == BoostMode.freePlay;
+    for (var i = 1; i < widget.teamSize && !free; i++) {
       cars.add(
         Car(
           team: 0,
@@ -106,7 +115,7 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
         ),
       );
     }
-    for (var i = 0; i < widget.teamSize; i++) {
+    for (var i = 0; i < widget.teamSize && !free; i++) {
       cars.add(
         Car(
           team: 1,
@@ -116,19 +125,21 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
         ),
       );
     }
-    _match = BoostBallMatch(
+    _y = you;
+    _m = BoostBallMatch(
       teamSize: widget.teamSize,
       players: cars,
       length: widget.length,
+      mode: widget.mode,
       random: _rnd,
     );
-    _ticker = createTicker(_tick)..start();
   }
 
   @override
   void dispose() {
     _ticker.dispose();
     _focus.dispose();
+    _net?.close();
     super.dispose();
   }
 
@@ -137,8 +148,29 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
         ? 0.016
         : ((now - _last).inMicroseconds / 1e6).clamp(0.0, 0.05);
     _last = now;
-    _readControls();
-    _match.step(dt);
+    _noteT = max(0, _noteT - dt);
+    final net = _net;
+    if (net != null) {
+      if (_ready) _readControls();
+      net.update(dt);
+      for (final n in net.notes) {
+        _note = n;
+        _noteT = 3;
+      }
+      net.notes.clear();
+      if (!_ready && net.match != null) {
+        _m = net.match;
+        _y = net.you;
+        SoundService.instance.play(GameSound.levelComplete);
+      }
+      if (!_ready || net.ended != null) {
+        setState(() {});
+        return;
+      }
+    } else {
+      _readControls();
+      _match.step(dt);
+    }
     _handleEvents();
     _shake = max(0, _shake - dt * 3);
     _updateCamera(dt);
@@ -298,9 +330,10 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   void _finish() {
     _paid = true;
-    final won = _match.leader == 0;
+    _save.bestKph = max(_save.bestKph, _you.topKph);
+    final won = _match.leader == _you.team;
     if (won) {
-      _coinsWon = kWinCoins[widget.difficulty];
+      _coinsWon = kWinCoins[_online ? 1 : widget.difficulty];
       _save.coins += _coinsWon;
       _save.wins++;
       SoundService.instance.play(GameSound.levelComplete);
@@ -324,6 +357,9 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   @override
   Widget build(BuildContext context) {
+    final net = _net;
+    if (net != null && net.ended != null) return _leftCard(net.ended!);
+    if (net != null && !_ready) return _waitingRoom(net);
     return Scaffold(
       backgroundColor: const Color(0xFF0E1A2B),
       body: Focus(
@@ -404,6 +440,34 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                       ),
                     ),
                   ),
+                _kphPill(),
+                if (_noteT > 0 && _note != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 110,
+                    child: IgnorePointer(
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            _note!,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (_match.phase == MatchPhase.over) _endCard(),
               ],
             );
@@ -422,9 +486,15 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   Widget _scoreBar() {
     final t = _match.clock.ceil();
+    final mode = _match.mode;
     final time = _match.overtime
         ? 'OT'
-        : '${t ~/ 60}:${(t % 60).toString().padLeft(2, '0')}';
+        : switch (mode) {
+            BoostMode.suddenDeath => 'NEXT GOAL WINS',
+            BoostMode.firstTo5 => 'FIRST TO 5',
+            BoostMode.freePlay => 'FREE PLAY',
+            _ => '${t ~/ 60}:${(t % 60).toString().padLeft(2, '0')}',
+          };
     Widget box(String text, Color c) => Container(
       width: 46,
       height: 40,
@@ -452,9 +522,10 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
           children: [
             box('${_match.score[0]}', kBlueTeam),
             Container(
-              width: 70,
+              constraints: const BoxConstraints(minWidth: 70),
               height: 34,
               alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               margin: const EdgeInsets.symmetric(horizontal: 6),
               decoration: BoxDecoration(
                 color: Colors.black54,
@@ -463,16 +534,58 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
               child: Text(
                 time,
                 style: TextStyle(
-                  color: _match.overtime || t <= 10
+                  color: _match.overtime || (mode.timed && t <= 10)
                       ? const Color(0xFFFFD54F)
                       : Colors.white,
-                  fontSize: 18,
+                  fontSize: mode.timed ? 18 : 13,
                   fontWeight: FontWeight.w800,
                 ),
               ),
             ),
             box('${_match.score[1]}', kOrangeTeam),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// How fast the ball went off the last hit.
+  Widget _kphPill() {
+    final m = _match;
+    if (m.kphT <= 0 || m.phase != MatchPhase.play) {
+      return const SizedBox.shrink();
+    }
+    final hot = m.lastKph >= 120;
+    return Positioned(
+      top: 60,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        child: IgnorePointer(
+          child: Center(
+            child: Opacity(
+              opacity: m.kphT.clamp(0.0, 1.0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: hot ? const Color(0xCCE65100) : Colors.black54,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${m.lastKph} KPH',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -594,11 +707,12 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   Widget _endCard() {
     final leader = _match.leader;
-    final title = leader == 0
+    final won = leader == _you.team;
+    final title = leader == null
+        ? 'DRAW'
+        : won
         ? 'YOU WIN!'
-        : leader == 1
-        ? 'YOU LOSE'
-        : 'DRAW';
+        : 'YOU LOSE';
     return Positioned.fill(
       child: Container(
         color: Colors.black54,
@@ -622,7 +736,7 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                 Text(
                   title,
                   style: TextStyle(
-                    color: leader == 0 ? const Color(0xFF90CAF9) : kOrangeTeam,
+                    color: won ? const Color(0xFF90CAF9) : kOrangeTeam,
                     fontSize: 34,
                     fontWeight: FontWeight.w900,
                   ),
@@ -634,7 +748,9 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'You scored ${_you.goals}',
+                  'You scored ${_you.goals} · '
+                  'Hardest hit ${_you.topKph} KPH',
+                  textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white70),
                 ),
                 if (_coinsWon > 0) ...[
@@ -652,23 +768,26 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder: (_) => BoostBallGameScreen(
-                          teamSize: widget.teamSize,
-                          difficulty: widget.difficulty,
-                          length: widget.length,
-                        ),
-                      ),
-                    ),
+                    onPressed: _online
+                        ? () => Navigator.of(context).pop(kPlayAgainOnline)
+                        : () => Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => BoostBallGameScreen(
+                                teamSize: widget.teamSize,
+                                difficulty: widget.difficulty,
+                                length: widget.length,
+                                mode: widget.mode,
+                              ),
+                            ),
+                          ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: kBlueTeam,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    child: const Text(
-                      'PLAY AGAIN',
-                      style: TextStyle(fontWeight: FontWeight.w900),
+                    child: Text(
+                      _online ? 'FIND ANOTHER GAME' : 'PLAY AGAIN',
+                      style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ),
                 ),
@@ -682,6 +801,150 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Online, before the game starts: who is here, and (for the room maker)
+  /// a button to start straight away with bots in the empty places.
+  Widget _waitingRoom(BoostBallSession net) {
+    final names = net.waiting;
+    return Scaffold(
+      backgroundColor: const Color(0xFF0E1A2B),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${net.teamSize}v${net.teamSize} ${net.mode.title}'
+                        .toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (net.room.showCode) ...[
+                    const Text(
+                      'Tell your friends this code:',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 6),
+                    SelectableText(
+                      net.room.code,
+                      style: const TextStyle(
+                        color: Color(0xFFFFD54F),
+                        fontSize: 44,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 8,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  const SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: CircularProgressIndicator(color: kBlueTeam),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    net.isHost
+                        ? 'Waiting for players: ${names.length} of ${net.needed}'
+                        : 'Waiting for the game to start...',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      for (final n in names)
+                        Chip(
+                          avatar: const Icon(
+                            Icons.person_rounded,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          label: Text(n),
+                          backgroundColor: const Color(0xFF1B2A41),
+                          labelStyle: const TextStyle(color: Colors.white),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  if (net.isHost)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: () => setState(net.startNow),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kBlueTeam,
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text(
+                          'START NOW WITH BOTS',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Leave'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _leftCard(String why) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0E1A2B),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                why,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 18),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(kPlayAgainOnline),
+                child: const Text('Find another game'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Back to garage'),
+              ),
+            ],
           ),
         ),
       ),
@@ -792,13 +1055,18 @@ class _PitchPainter extends CustomPainter {
       final rad = p.big ? 1.6 : 0.85;
       const n = 6;
       final ready = p.ready;
+      final ground = BoostBallMatch.floorHeight(p.pos.dx, p.pos.dy);
       r.add(
         [
           for (var i = 0; i < n; i++)
             V3(
               p.pos.dx + cos(i / n * 2 * pi) * rad,
               p.pos.dy + sin(i / n * 2 * pi) * rad,
-              0.06,
+              BoostBallMatch.floorHeight(
+                    p.pos.dx + cos(i / n * 2 * pi) * rad,
+                    p.pos.dy + sin(i / n * 2 * pi) * rad,
+                  ) +
+                  0.06,
             ),
         ],
         ready
@@ -809,7 +1077,7 @@ class _PitchPainter extends CustomPainter {
       );
       if (p.big && ready) {
         // A glowing orb hovers over full-boost pads.
-        final bob = 1.4 + 0.25 * sin(m.phaseT * 3 + p.pos.dx);
+        final bob = ground + 1.4 + 0.25 * sin(m.phaseT * 3 + p.pos.dx);
         final c = V3(p.pos.dx, p.pos.dy, bob);
         const pts = [
           V3(0.7, 0, 0),
@@ -831,7 +1099,7 @@ class _PitchPainter extends CustomPainter {
   }
 
   Color _paintOf(Car c) {
-    if (c.isYou) return kCarColours[c.colour];
+    if (c.isYou || c.human) return kCarColours[c.colour];
     final shades = c.team == 0
         ? const [Color(0xFF1565C0), Color(0xFF42A5F5), Color(0xFF0D47A1)]
         : const [Color(0xFFE64A19), Color(0xFFFF8A65), Color(0xFFBF360C)];
@@ -862,8 +1130,11 @@ class _PitchPainter extends CustomPainter {
       Paint()..color = Colors.black45,
     );
     canvas.drawRect(box, Paint()..color = const Color(0xAA2E7D32));
-    Offset at(double x, double y) =>
-        Offset(box.left + x / kFieldW * w, box.bottom - y / kFieldL * h);
+    // Orange drives the other way, so turn the map round for them.
+    final flip = s._you.team == 1;
+    Offset at(double x, double y) => flip
+        ? Offset(box.right - x / kFieldW * w, box.top + y / kFieldL * h)
+        : Offset(box.left + x / kFieldW * w, box.bottom - y / kFieldL * h);
     canvas.drawRect(
       Rect.fromPoints(
         at(kFieldW / 2 - kGoalW / 2, 0),
@@ -938,6 +1209,15 @@ class _PitchPainter extends CustomPainter {
         final c = m.lastScorerTeam == 0 ? const Color(0xFF90CAF9) : kOrangeTeam;
         final pop = 1 + 0.15 * sin(min(1.0, m.phaseT * 3) * pi);
         _text(canvas, 'GOAL!', mid, 60 * pop, c);
+        if (m.goalKph > 0) {
+          _text(
+            canvas,
+            '${m.goalKph} KPH',
+            mid + Offset(0, 46 * pop),
+            24,
+            Colors.white,
+          );
+        }
       case MatchPhase.play:
         if (m.phaseT < 0.8 && !m.overtime) {
           _text(
@@ -958,7 +1238,7 @@ class _PitchPainter extends CustomPainter {
         mid + const Offset(0, 48),
         18,
         Colors.white.withValues(alpha: m.feedT.clamp(0, 1)),
-        maxWidth: size.width - 40,
+        maxWidth: max(40, size.width - 40),
       );
     }
   }

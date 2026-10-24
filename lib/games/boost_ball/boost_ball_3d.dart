@@ -542,10 +542,10 @@ class Stadium {
   void _buildLights() {
     // Floodlight towers in the four corners.
     for (final (x, y) in [
-      (-22.0, -22.0),
-      (kFieldW + 22, -22.0),
-      (-22.0, kFieldL + 22),
-      (kFieldW + 22, kFieldL + 22),
+      (-34.0, -34.0),
+      (kFieldW + 34, -34.0),
+      (-34.0, kFieldL + 34),
+      (kFieldW + 34, kFieldL + 34),
     ]) {
       _box(
         solid,
@@ -554,12 +554,12 @@ class Stadium {
         y - 0.8,
         y + 0.8,
         0,
-        46,
+        kWallH + 26,
         const Color(0xFF546E7A),
       );
       final toward = V3(kFieldW / 2 - x, kFieldL / 2 - y, 0).unit;
       final side = V3(-toward.y, toward.x, 0);
-      final c = V3(x, y, 48) + toward * 0.9;
+      final c = V3(x, y, kWallH + 28) + toward * 0.9;
       solid.add(
         Face(
           [

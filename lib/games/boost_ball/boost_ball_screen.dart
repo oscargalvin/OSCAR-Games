@@ -1,9 +1,13 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../services/sound_service.dart';
+import '../outplay/outplay_net.dart';
 import 'boost_ball_3d.dart';
 import 'boost_ball_data.dart';
 import 'boost_ball_game.dart';
+import 'boost_ball_net.dart';
 
 const Color _bg = Color(0xFF0E1A2B);
 const Color _card = Color(0xFF1B2A41);
@@ -11,7 +15,15 @@ const Color _gold = Color(0xFFFFC93C);
 
 /// Boost Ball garage: pick a match, then buy and paint your car.
 class BoostBallScreen extends StatefulWidget {
-  const BoostBallScreen({super.key});
+  /// How to go online (swapped for pretend links in tests).
+  final OutplayLink? Function() makeLink;
+  final OutplayDirectory? Function() makeDirectory;
+
+  const BoostBallScreen({
+    super.key,
+    this.makeLink = createLink,
+    this.makeDirectory = createDirectory,
+  });
 
   @override
   State<BoostBallScreen> createState() => _BoostBallScreenState();
@@ -22,6 +34,10 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
   bool _loaded = false;
   int _size = 1;
   int _difficulty = 1;
+  BoostMode _mode = BoostMode.classic;
+  bool _people = false; // play against real people instead of bots
+  String? _busy; // what we're waiting for online
+  final _rnd = Random();
   double _spinAngle = 0.7; // drag the car in the garage to spin it
 
   @override
@@ -32,15 +48,183 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
     });
   }
 
+  bool get _free => _mode == BoostMode.freePlay;
+  bool get _online => _people && !_free;
+
   Future<void> _play() async {
     SoundService.instance.play(GameSound.tap);
+    if (_online) return _playOnline();
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            BoostBallGameScreen(teamSize: _size, difficulty: _difficulty),
+        builder: (_) => BoostBallGameScreen(
+          teamSize: _size,
+          difficulty: _difficulty,
+          mode: _mode,
+        ),
       ),
     );
     if (mounted) setState(() {});
+  }
+
+  void _say(String text) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// Other people see your name online, so ask for one the first time.
+  Future<bool> _askName() async {
+    if (_save.name.trim().isNotEmpty) return true;
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Pick a player name'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 12,
+          decoration: const InputDecoration(hintText: 'Your name'),
+          onSubmitted: (v) => Navigator.of(context).pop(v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(ctrl.text),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    final clean = (name ?? '').trim();
+    if (clean.isEmpty) return false;
+    _save.name = clean;
+    await _save.save();
+    return true;
+  }
+
+  Future<String?> _askCode() async {
+    final ctrl = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Type your friend's code"),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 4,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(hintText: 'ABCD'),
+          onSubmitted: (v) => Navigator.of(context).pop(v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(ctrl.text),
+            child: const Text('JOIN'),
+          ),
+        ],
+      ),
+    );
+    final clean = (code ?? '').trim().toUpperCase();
+    return clean.length == 4 ? clean : null;
+  }
+
+  /// Finds real people to play: join a room waiting for the same match, or
+  /// make one. [friends] makes a room with a code to share; [code] joins one.
+  Future<void> _playOnline({bool friends = false, String? code}) async {
+    if (!await _askName() || !mounted) return;
+    final make = widget.makeLink;
+    final dir = widget.makeDirectory();
+    if (make() == null || dir == null) {
+      _say('Online play only works on the website.');
+      return;
+    }
+    final map = boostRoomMap(_mode);
+    OutplayRoom? room;
+    try {
+      if (code != null) {
+        setState(() => _busy = 'Joining $code...');
+        room = await OutplayRoom.join(() => make()!, code);
+        if (!isBoostRoom(room.mapId)) {
+          room.close();
+          throw 'That code is for an Outplay game, not Boost Ball.';
+        }
+      } else if (friends) {
+        setState(() => _busy = 'Making a room...');
+        room = await OutplayRoom.host(
+          () => make()!,
+          map,
+          teamSize: _size,
+          showCode: true,
+        );
+      } else {
+        setState(() => _busy = 'Looking for players...');
+        var rooms = const <RoomInfo>[];
+        dir.browse((r) => rooms = r);
+        await Future<void>.delayed(
+          Duration(milliseconds: 2000 + _rnd.nextInt(1000)),
+        );
+        dir.stopBrowse();
+        final open =
+            rooms
+                .where(
+                  (r) =>
+                      r.mapId == map &&
+                      r.teamSize == _size &&
+                      !r.friends &&
+                      !r.playing &&
+                      r.players < _size * 2,
+                )
+                .toList()
+              ..sort((a, b) => b.players.compareTo(a.players));
+        for (final r in open.take(2)) {
+          try {
+            room = await OutplayRoom.join(() => make()!, r.code);
+            break;
+          } catch (_) {
+            // Gone or full: try the next one.
+          }
+        }
+        room ??= await OutplayRoom.host(() => make()!, map, teamSize: _size);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _busy = null);
+        _say('$e');
+      }
+      return;
+    }
+    if (!mounted) {
+      room.close();
+      return;
+    }
+    setState(() => _busy = null);
+    final session = BoostBallSession(
+      room: room,
+      lister: room.isHost && !room.showCode ? dir : null,
+      myName: _save.name.trim(),
+      myCar: carById(_save.car),
+      myColour: _save.colour,
+    );
+    final again = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => BoostBallGameScreen(
+          teamSize: session.teamSize,
+          mode: session.mode,
+          session: session,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {});
+    if (again == kPlayAgainOnline) await _playOnline(friends: friends);
   }
 
   void _buy(CarSpec car) {
@@ -106,6 +290,24 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
       ),
       body: !_loaded
           ? const Center(child: CircularProgressIndicator())
+          : _busy != null
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(color: kBlueTeam),
+                  const SizedBox(height: 14),
+                  Text(
+                    _busy!,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            )
           : SafeArea(
               child: Center(
                 child: ConstrainedBox(
@@ -115,24 +317,38 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                     children: [
                       _hero(),
                       const SizedBox(height: 14),
-                      _section('Match'),
-                      _choices(
-                        const ['1v1', '2v2', '3v3'],
-                        _size - 1,
-                        (i) => _size = i + 1,
-                      ),
-                      const SizedBox(height: 10),
-                      _section('Bots'),
-                      _choices(
-                        kDifficultyNames,
-                        _difficulty,
-                        (i) => _difficulty = i,
-                        colours: const [
-                          Color(0xFF66BB6A),
-                          Color(0xFFFFB300),
-                          Color(0xFFE53935),
-                        ],
-                      ),
+                      _section('Game mode'),
+                      _modes(),
+                      if (!_free) ...[
+                        const SizedBox(height: 10),
+                        _section('Match'),
+                        _choices(
+                          const ['1v1', '2v2', '3v3'],
+                          _size - 1,
+                          (i) => _size = i + 1,
+                        ),
+                        const SizedBox(height: 10),
+                        _section('Play against'),
+                        _choices(
+                          const ['Bots', 'People'],
+                          _people ? 1 : 0,
+                          (i) => _people = i == 1,
+                        ),
+                      ],
+                      if (!_free && !_people) ...[
+                        const SizedBox(height: 10),
+                        _section('Bots'),
+                        _choices(
+                          kDifficultyNames,
+                          _difficulty,
+                          (i) => _difficulty = i,
+                          colours: const [
+                            Color(0xFF66BB6A),
+                            Color(0xFFFFB300),
+                            Color(0xFFE53935),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 16),
                       SizedBox(
                         height: 58,
@@ -145,9 +361,17 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                               borderRadius: BorderRadius.circular(16),
                             ),
                           ),
-                          icon: const Icon(Icons.sports_soccer_rounded),
+                          icon: Icon(
+                            _online
+                                ? Icons.public_rounded
+                                : Icons.sports_soccer_rounded,
+                          ),
                           label: Text(
-                            'PLAY ${_size}v$_size',
+                            _free
+                                ? 'START FREE PLAY'
+                                : _online
+                                ? 'FIND PLAYERS ${_size}v$_size'
+                                : 'PLAY ${_size}v$_size',
                             style: const TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w900,
@@ -155,10 +379,41 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
                           ),
                         ),
                       ),
+                      if (_online) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _playOnline(friends: true),
+                                icon: const Icon(Icons.group_add_rounded),
+                                label: const Text('MAKE A ROOM'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  final code = await _askCode();
+                                  if (code != null) {
+                                    await _playOnline(code: code);
+                                  }
+                                },
+                                icon: const Icon(Icons.vpn_key_rounded),
+                                label: const Text('ENTER CODE'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       Text(
-                        'Win to earn ${kWinCoins[_difficulty]} coins · '
-                        '${_save.wins} wins · ${_save.goals} goals',
+                        _free
+                            ? 'Hardest shot ever: ${_save.bestKph} KPH'
+                            : 'Win to earn '
+                                  '${kWinCoins[_online ? 1 : _difficulty]} '
+                                  'coins · ${_save.wins} wins · '
+                                  'hardest shot ${_save.bestKph} KPH',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: Colors.white60),
                       ),
@@ -231,6 +486,38 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _modes() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final m in BoostMode.values)
+              ChoiceChip(
+                label: Text(m.title),
+                selected: m == _mode,
+                onSelected: (_) {
+                  SoundService.instance.play(GameSound.tap);
+                  setState(() => _mode = m);
+                },
+                selectedColor: kBlueTeam,
+                backgroundColor: _card,
+                showCheckmark: false,
+                labelStyle: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(_mode.blurb, style: const TextStyle(color: Colors.white70)),
+      ],
     );
   }
 
@@ -439,7 +726,7 @@ class _BoostBallScreenState extends State<BoostBallScreen> {
         borderRadius: BorderRadius.circular(14),
       ),
       child: const Text(
-        'How to play: drag on the left side to drive the way you point. '
+        'How to play: drag on the left side, up to go and sideways to steer. '
         'Hold BOOST to go faster. Tap JUMP to jump, and tap it again in the '
         'air to flip into the ball for a super hit. Drive over the orange '
         'pads to fill up your boost. Ram an enemy at full boost to demolish '

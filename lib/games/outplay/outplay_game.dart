@@ -2469,7 +2469,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       _waitingRooms = null;
     });
     dir.browse((rooms) {
-      if (mounted) setState(() => _waitingRooms = rooms);
+      // Boost Ball rooms share the lobby: leave them out.
+      final ours = [
+        for (final r in rooms)
+          if (!r.mapId.startsWith('bb:')) r,
+      ];
+      if (mounted) setState(() => _waitingRooms = ours);
     });
   }
 
@@ -2522,6 +2527,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
             .where(
               (r) =>
                   r.teamSize == size &&
+                  !r.mapId.startsWith('bb:') &&
                   !r.friends &&
                   !r.playing &&
                   r.players < size * 2 &&
@@ -2566,6 +2572,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               showCode: showCode,
             )
           : await OutplayRoom.join(() => make()!, joinCode);
+      if (room.mapId.startsWith('bb:')) {
+        room.close();
+        throw 'That code is for a Boost Ball game. Open Boost Ball to join it.';
+      }
     } catch (e) {
       if (mounted) {
         setState(() {

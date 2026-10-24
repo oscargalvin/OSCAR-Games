@@ -123,6 +123,30 @@ const List<int> kWinCoins = [25, 40, 60];
 
 const List<String> kDifficultyNames = ['Easy', 'Medium', 'Hard'];
 
+/// The different ways to play a match.
+enum BoostMode {
+  classic('Classic', 'Most goals when the clock runs out wins.'),
+  suddenDeath('Sudden Death', 'No clock. The first goal wins the match.'),
+  firstTo5('First to 5', 'No clock. First team to score 5 goals wins.'),
+  noBoost('No Boost', 'A normal match, but nobody gets any boost.'),
+  freePlay('Free Play', 'Just you and the ball. Practise your shots!');
+
+  final String title;
+  final String blurb;
+  const BoostMode(this.title, this.blurb);
+
+  /// Modes with a match clock (the others end on goals).
+  bool get timed => this == classic || this == noBoost;
+
+  static BoostMode byName(String? name) => BoostMode.values.firstWhere(
+    (m) => m.name == name,
+    orElse: () => BoostMode.classic,
+  );
+}
+
+/// Turns the ball's speed (metres a second) into kilometres an hour.
+int kph(double metresPerSecond) => (metresPerSecond * 3.6).round();
+
 /// Your coins, cars and paint, kept on this device.
 class BoostBallSave {
   BoostBallSave._();
@@ -137,6 +161,8 @@ class BoostBallSave {
   int wins = 0;
   int losses = 0;
   int goals = 0;
+  int bestKph = 0; // your hardest ever shot
+  String name = ''; // shown to other people online
 
   Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -152,6 +178,8 @@ class BoostBallSave {
       wins = m['wins'] as int? ?? 0;
       losses = m['losses'] as int? ?? 0;
       goals = m['goals'] as int? ?? 0;
+      bestKph = m['bestKph'] as int? ?? 0;
+      name = m['name'] as String? ?? '';
     } catch (_) {
       // A broken save starts fresh.
     }
@@ -169,6 +197,8 @@ class BoostBallSave {
         'wins': wins,
         'losses': losses,
         'goals': goals,
+        'bestKph': bestKph,
+        'name': name,
       }),
     );
   }
