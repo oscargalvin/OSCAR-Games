@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -479,6 +480,48 @@ void main() {
     expect(find.text('The Zombie King comes at wave 4'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     guest.close();
+  });
+
+  test('jumping goes up, comes down, and dodges bites', () {
+    final w = ZombieWorld(random: Random(12));
+    w.input.jump = true;
+    w.step(1 / 60);
+    var top = 0.0;
+    for (var i = 0; i < 30; i++) {
+      w.step(1 / 60);
+      top = max(top, w.you.jumpZ);
+    }
+    expect(top, greaterThan(1));
+    for (var i = 0; i < 60; i++) {
+      w.step(1 / 60);
+    }
+    expect(w.you.jumpZ, 0);
+    // High in the air, a zombie right next to you can't bite.
+    _run(w, 3);
+    w.zombies
+      ..clear()
+      ..add(Zombie(1, ZombieKind.walker, w.player + const Offset(1, 0), 1, 0));
+    w.you
+      ..jumpZ = 1.2
+      ..jumpV = 0.1;
+    w.step(1 / 60);
+    expect(w.hp, kMaxHp);
+  });
+
+  testWidgets('Space jumps', (tester) async {
+    tester.view.physicalSize = const Size(844, 390) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const MaterialApp(home: ZombieGameScreen()));
+    await tester.pump(const Duration(milliseconds: 50));
+    final w = _world(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(w.you.jumpZ, greaterThan(0.3));
+    expect(w.bullets, isEmpty);
+    expect(find.text('JUMP'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 }
 

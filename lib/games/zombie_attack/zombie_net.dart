@@ -153,6 +153,12 @@ class ZombieSession {
   /// to the room maker's phone so none get lost.
   void grenade() => _act({'g': 1}, () => world?.input.grenade = true);
   void swap() => _act({'s': 1}, () => world?.input.swap = true);
+  void jump() {
+    // Your own jump shows straight away on your phone.
+    world?.input.jump = true;
+    if (!isHost) room.send({'t': 'act', 'j': 1});
+  }
+
   void order(ZombieOrder o) =>
       _act({'o': o.index}, () => world?.boss?.orders.add(o));
 
@@ -259,6 +265,7 @@ class ZombieSession {
         if (w == null) return;
         if (m['g'] != null) _theirInput(w).grenade = true;
         if (m['s'] != null) _theirInput(w).swap = true;
+        if (m['j'] != null) _theirInput(w).jump = true;
         final o = m['o'];
         if (o != null && w.boss != null) {
           final i = _i(o);
@@ -318,6 +325,7 @@ class ZombieSession {
             _r(s.hurtT),
             _r(s.swingT),
             s.keptSword ? 1 : 0,
+            _r(s.jumpZ),
             for (final g in s.weapons) kGuns.indexOf(g),
           ],
       ],
@@ -386,7 +394,7 @@ class ZombieSession {
     if (sv is List) {
       for (var i = 0; i < sv.length && i < w.survivors.length; i++) {
         final v = sv[i];
-        if (v is! List || v.length < 10) continue;
+        if (v is! List || v.length < 11) continue;
         final s = w.survivors[i];
         final at = _o(v[0], v[1]);
         final mine = i == w.youIndex;
@@ -403,9 +411,12 @@ class ZombieSession {
           ..hurtT = _d(v[6])
           ..swingT = _d(v[7])
           ..keptSword = _i(v[8]) == 1;
-        if (!mine) s.aimAngle = _d(v[3]);
+        if (!mine) {
+          s.aimAngle = _d(v[3]);
+          s.jumpZ = _d(v[9]);
+        }
         final guns = [
-          for (final g in v.skip(9))
+          for (final g in v.skip(10))
             if (_i(g) >= 0 && _i(g) < kGuns.length) kGuns[_i(g)],
         ];
         if (guns.isNotEmpty) {

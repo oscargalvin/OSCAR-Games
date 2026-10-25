@@ -899,10 +899,11 @@ class Zombie3dPainter extends CustomPainter {
       skin: const Color(0xFFFFCC80),
       shirt: s.hurtT > 0 ? const Color(0xFFFF5252) : shirtColour,
       trousers: const Color(0xFF283593),
-      walk: moving ? w.time * 10 : 0,
+      walk: moving && s.jumpZ <= 0 ? w.time * 10 : 0,
       armsOut: false,
+      lift: s.jumpZ,
     );
-    final at = _w(s.pos);
+    final at = _w(s.pos, s.jumpZ);
     final f = V3(cos(yaw), sin(yaw), 0), side = V3(-sin(yaw), cos(yaw), 0);
     // Hair, then the gun held out in front.
     _box(r, at - f * 0.03, 0.24, 0.24, 1.87, 0.1, yaw, const Color(0xFF5D4037));
@@ -982,8 +983,9 @@ class Zombie3dPainter extends CustomPainter {
     required Color trousers,
     required double walk,
     required bool armsOut,
+    double lift = 0,
   }) {
-    final at = _w(pos);
+    final at = _w(pos, lift);
     final f = V3(cos(yaw), sin(yaw), 0), side = V3(-sin(yaw), cos(yaw), 0);
     final step = sin(walk) * 0.18 * s;
     for (final k in [-1.0, 1.0]) {

@@ -12,6 +12,8 @@ const double kMaxHp = 100;
 const double kGrenadeRange = 9;
 const double kGrenadeBlast = 5;
 const double kWaveBreak = 3;
+const double kJumpSpeed = 7;
+const double kGravity = 20;
 
 /// Size of the safe zone in each corner of the map. Zombies can't get in
 /// and can't bite you while you're inside.
@@ -136,6 +138,7 @@ class ZombieInput {
   bool autoAim = false; // shoot the nearest zombie by itself (touch help)
   bool grenade = false; // set for one frame to throw
   bool swap = false; // set for one frame to change weapon
+  bool jump = false; // set for one frame to jump
 }
 
 /// A person fighting the zombies.
@@ -149,6 +152,8 @@ class Survivor {
   double swingT = 0; // > 0 while a sword swing is showing
   int grenades = 2;
   bool keptSword = false; // won the 5% roll this game
+  double jumpZ = 0; // how high off the ground you are
+  double jumpV = 0;
   final ZombieInput input = ZombieInput();
   final List<Gun> weapons;
   int weaponIndex = 0;
@@ -390,6 +395,7 @@ class ZombieWorld {
       var m = s.input.move;
       if (m.distance > 1) m = m / m.distance;
       s.pos = _slide(s.pos + m * kPlayerSpeed * dt, kPlayerR);
+      _jump(s, dt);
       final aim = s.input.aim;
       if (aim != null && aim.distance > 0.1) s.aimAngle = aim.direction;
     }
@@ -610,6 +616,22 @@ class ZombieWorld {
     var m = s.input.move;
     if (m.distance > 1) m = m / m.distance;
     s.pos = _slide(s.pos + m * kPlayerSpeed * dt, kPlayerR);
+    _jump(s, dt);
+  }
+
+  /// Jumping: up you go, and zombies can't bite you while you're high up.
+  void _jump(Survivor s, double dt) {
+    if (s.input.jump) {
+      s.input.jump = false;
+      if (s.jumpZ <= 0 && s.alive) s.jumpV = kJumpSpeed;
+    }
+    if (s.jumpZ <= 0 && s.jumpV <= 0) return;
+    s.jumpV -= kGravity * dt;
+    s.jumpZ += s.jumpV * dt;
+    if (s.jumpZ <= 0) {
+      s.jumpZ = 0;
+      s.jumpV = 0;
+    }
   }
 
   Zombie? nearestZombie(double within, [Offset? from]) {
@@ -841,6 +863,7 @@ class ZombieWorld {
       // Bite! (Not while you're in a safe zone.)
       if (d < z.r + kPlayerR + 0.1 &&
           z.hitCool <= 0 &&
+          target.jumpZ < 0.6 &&
           !inSafeZone(target.pos)) {
         z.hitCool = 0.9;
         _hurt(target, _zombieDamage * (z.kind == ZombieKind.king ? 2 : 1));

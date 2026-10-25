@@ -288,7 +288,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
       ..move = ahead * stick.dy + right * stick.dx
       // Shoot where the camera looks, nudged onto a zombie close to it.
       ..aim = (_w.youAreBoss ? _kingAimHelp(ahead) : _aimHelp(ahead)) ?? ahead
-      ..fire = _shooting || _keys.contains(LogicalKeyboardKey.space)
+      ..fire = _shooting || _keys.contains(LogicalKeyboardKey.keyF)
       ..autoAim = false;
   }
 
@@ -377,6 +377,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
     if (e is KeyDownEvent) {
       _keys.add(e.logicalKey);
       if (e.logicalKey == LogicalKeyboardKey.keyG) _grenade();
+      if (e.logicalKey == LogicalKeyboardKey.space) _jump();
       if (e.logicalKey == LogicalKeyboardKey.keyR) _swap();
       if (_w.youAreBoss) {
         const keys = [
@@ -399,6 +400,15 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
       _net!.grenade();
     } else {
       _w.input.grenade = true;
+    }
+  }
+
+  void _jump() {
+    if (_w.youAreBoss) return;
+    if (_net != null) {
+      _net!.jump();
+    } else {
+      _w.input.jump = true;
     }
   }
 
@@ -478,10 +488,17 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                           if (_w.king == null) _orderButtons(),
                           if (_w.king != null) _shootButton(label: 'SMASH'),
                         ] else ...[
-                          if (_w.weapons.length > 1) ...[
-                            _swapButton(),
-                            const SizedBox(height: 12),
-                          ],
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_w.weapons.length > 1) ...[
+                                _swapButton(),
+                                const SizedBox(width: 10),
+                              ],
+                              _jumpButton(),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
@@ -867,6 +884,29 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
       ),
     );
   }
+
+  Widget _jumpButton() => GestureDetector(
+    onTapDown: (_) => _jump(),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xCC1E88E5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white70, width: 2),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.keyboard_double_arrow_up_rounded, color: Colors.white),
+          SizedBox(width: 4),
+          Text(
+            'JUMP',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _grenadeButton() {
     final left = _w.grenades;
