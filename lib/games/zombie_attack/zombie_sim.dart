@@ -366,9 +366,11 @@ class ZombieWorld {
         fireCool = 0.15;
       }
     }
+    // No shooting, swinging or throwing from inside a safe zone.
+    final safe = inSafeZone(player);
     if (input.grenade) {
       input.grenade = false;
-      if (grenades > 0) {
+      if (grenades > 0 && !safe) {
         grenades--;
         final to = _slide(
           player + Offset.fromDirection(aimAngle, kGrenadeRange),
@@ -377,7 +379,7 @@ class ZombieWorld {
         thrown.add(Grenade(player, to));
       }
     }
-    if (!fire || fireCool > 0) return;
+    if (!fire || fireCool > 0 || safe) return;
     fireCool = 1 / gun.fireRate;
     if (gun.melee) {
       _swing();

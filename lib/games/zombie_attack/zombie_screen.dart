@@ -397,7 +397,8 @@ class _ZombieScreenState extends State<ZombieScreen> {
       'Every 5th wave the Zombie King comes. Grab first-aid kits to heal!\n'
       'Zombies holding a sword drop it when you beat them. Grab it to use '
       'it for that game, and there is a 5% chance you get to keep it!\n'
-      'Each corner of the map is a green safe zone: zombies cannot get in.',
+      'Each corner of the map is a green safe zone: zombies cannot get in, '
+      'but you cannot shoot from it either.',
       style: TextStyle(color: Colors.white70, height: 1.4),
     ),
   );

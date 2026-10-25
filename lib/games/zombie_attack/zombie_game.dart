@@ -478,7 +478,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
         Icon(Icons.shield_rounded, color: Colors.white, size: 18),
         SizedBox(width: 6),
         Text(
-          'SAFE ZONE',
+          'SAFE ZONE: NO SHOOTING',
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w900,
@@ -562,7 +562,11 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
       height: 74,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: _shooting ? const Color(0xEEFF5252) : const Color(0xBBE53935),
+        color: inSafeZone(_w.player)
+            ? Colors.black38
+            : _shooting
+            ? const Color(0xEEFF5252)
+            : const Color(0xBBE53935),
         border: Border.all(color: Colors.white, width: 3),
       ),
       alignment: Alignment.center,

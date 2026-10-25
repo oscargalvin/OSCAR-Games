@@ -129,6 +129,16 @@ void main() {
     expect(w.hp, kMaxHp);
     final z = w.zombies.firstWhere((z) => z.id == 1);
     expect(kSafeZones.first.inflate(z.r - 0.01).contains(z.pos), isFalse);
+    // You can't shoot or throw grenades from in there.
+    w.input
+      ..aim = const Offset(1, 0)
+      ..fire = true
+      ..grenade = true;
+    _run(w, 1);
+    expect(w.bullets, isEmpty);
+    expect(w.thrown, isEmpty);
+    expect(w.grenades, 2);
+    w.input.fire = false;
     // Step out and it bites.
     w.player = Offset(kSafeSize + 1.5, 3);
     _run(w, 3);
