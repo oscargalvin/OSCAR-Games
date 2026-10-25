@@ -388,11 +388,11 @@ class _ZombieScreenState extends State<ZombieScreen> {
     ),
     child: const Text(
       'HOW TO PLAY\n'
-      'Phone or tablet: drag on the left to run. Your gun aims and fires '
-      'at the nearest zombie by itself, or drag on the right to aim it '
-      'yourself. Tap the green button to throw a grenade.\n'
-      'Computer: WASD or arrow keys to run, point and click to shoot, '
-      'Space for a grenade.\n'
+      'Phone or tablet: drag on the left to run and drag on the right to '
+      'turn the camera. Hold the red SHOOT button to shoot and tap the '
+      'green button to throw a grenade.\n'
+      'Computer: WASD to run, drag the mouse (or press Q and E) to turn, '
+      'hold Space or the SHOOT button to shoot, G for a grenade.\n'
       'Every 5th wave the Zombie King comes. Grab first-aid kits to heal!',
       style: TextStyle(color: Colors.white70, height: 1.4),
     ),

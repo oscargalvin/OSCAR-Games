@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:oscar_games/games/zombie_attack/zombie_3d.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_data.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_game.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_screen.dart';
@@ -166,4 +167,46 @@ void main() {
     expect(find.text('THE ZOMBIES GOT YOU!'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('3D view: drag to turn, hold SHOOT to shoot', (tester) async {
+    tester.view.physicalSize = const Size(390, 844) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const MaterialApp(home: ZombieGameScreen()));
+    await tester.pump(const Duration(milliseconds: 100));
+    final w = _world(tester);
+    final before = w.aimAngle;
+
+    // Drag on the right half to turn the camera (and your gun).
+    final g = await tester.startGesture(const Offset(300, 450));
+    for (var i = 0; i < 10; i++) {
+      await g.moveBy(const Offset(10, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await g.up();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(w.aimAngle, isNot(closeTo(before, 0.3)));
+
+    // Nothing shoots until you press the button.
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(w.bullets, isEmpty);
+    final shoot = await tester.startGesture(
+      tester.getCenter(find.text('SHOOT')),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(w.bullets, isNotEmpty);
+    await shoot.up();
+    await tester.pumpWidget(const SizedBox());
+  });
+}
+
+ZombieWorld _world(WidgetTester tester) {
+  final painter = tester
+      .widgetList<CustomPaint>(find.byType(CustomPaint))
+      .map((c) => c.painter)
+      .whereType<Zombie3dPainter>()
+      .first;
+  return painter.w;
 }
