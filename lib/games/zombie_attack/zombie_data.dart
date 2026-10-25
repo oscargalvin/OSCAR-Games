@@ -17,6 +17,8 @@ class Gun {
   final double range; // metres before a bullet fades
   final bool pierce; // goes through zombies
   final double blast; // explosion radius (0 = none)
+  final bool melee; // swung, not shot: hits everything in front of you
+  final bool dropOnly; // not in the shop: only sword zombies drop it
   final Color colour;
 
   const Gun({
@@ -32,6 +34,8 @@ class Gun {
     this.range = 18,
     this.pierce = false,
     this.blast = 0,
+    this.melee = false,
+    this.dropOnly = false,
     required this.colour,
   });
 }
@@ -94,7 +98,23 @@ const List<Gun> kGuns = [
     blast: 4,
     colour: Color(0xFFFF5252),
   ),
+  Gun(
+    id: 'sword',
+    name: 'Zombie Sword',
+    blurb: 'Dropped by sword zombies. Slices everything in front of you.',
+    price: 0,
+    damage: 3,
+    fireRate: 2.4,
+    spread: 0,
+    range: 3.4,
+    melee: true,
+    dropOnly: true,
+    colour: Color(0xFFCFD8DC),
+  ),
 ];
+
+/// The chance that a sword you pick up is yours to keep after the game.
+const double kKeepSwordChance = 0.05;
 
 Gun gunById(String id) =>
     kGuns.firstWhere((g) => g.id == id, orElse: () => kGuns.first);
@@ -118,6 +138,24 @@ enum ZombieMap {
     'The playground at break time. Run!',
     Color(0xFF9E8F6E),
     Color(0xFFEF5350),
+  ),
+  farm(
+    'Farm',
+    'Barns and hay bales. Watch out in the fields!',
+    Color(0xFF7C9A4E),
+    Color(0xFFC62828),
+  ),
+  beach(
+    'Beach',
+    'Sand, palm trees and beach huts by the sea.',
+    Color(0xFFE8D29A),
+    Color(0xFF8D6E63),
+  ),
+  snow(
+    'Snowy Forest',
+    'Pine trees and snowmen. Brrr!',
+    Color(0xFFE3EEF5),
+    Color(0xFF2E7D32),
   );
 
   final String title;

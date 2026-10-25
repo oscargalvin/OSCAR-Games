@@ -13,6 +13,21 @@ const double kGrenadeRange = 9;
 const double kGrenadeBlast = 5;
 const double kWaveBreak = 3;
 
+/// Size of the safe zone in each corner of the map. Zombies can't get in
+/// and can't bite you while you're inside.
+const double kSafeSize = 8;
+const List<Rect> kSafeZones = [
+  Rect.fromLTWH(0, 0, kSafeSize, kSafeSize),
+  Rect.fromLTWH(kWorldW - kSafeSize, 0, kSafeSize, kSafeSize),
+  Rect.fromLTWH(0, kWorldH - kSafeSize, kSafeSize, kSafeSize),
+  Rect.fromLTWH(kWorldW - kSafeSize, kWorldH - kSafeSize, kSafeSize, kSafeSize),
+];
+
+bool inSafeZone(Offset p) => kSafeZones.any((z) => z.contains(p));
+
+/// How long a sword swing shows for.
+const double kSwingTime = 0.25;
+
 enum ZombieKind {
   walker(3, 2.6, 0.85),
   runner(2, 4.8, 0.7),
@@ -35,6 +50,7 @@ class Zombie {
   double flash = 0; // > 0 just after being hit
   double wobble; // for the shuffling walk
   double facing = 0;
+  bool sword = false; // carries a sword, and drops it when beaten
 
   Zombie(this.id, this.kind, this.pos, double hpScale, this.wobble)
     : hp = kind.hp * hpScale,
@@ -52,7 +68,7 @@ class Bullet {
   Bullet(this.pos, this.vel, this.gun) : life = gun.range / gun.speed;
 }
 
-enum PickupKind { health, grenade }
+enum PickupKind { health, grenade, sword }
 
 class Pickup {
   final PickupKind kind;
@@ -93,6 +109,7 @@ class ZombieInput {
   bool fire = false;
   bool autoAim = false; // shoot the nearest zombie by itself (touch help)
   bool grenade = false; // set for one frame to throw
+  bool swap = false; // set for one frame to change weapon
 }
 
 enum ZombiePhase { play, rest, over }
@@ -107,12 +124,19 @@ enum ZombieEvent {
   waveStart,
   waveClear,
   dead,
+  swing,
+  newWeapon, // picked up a sword
+  keepWeapon, // ...and it's yours to keep!
 }
 
 class ZombieWorld {
   final ZombieMap map;
   final int level; // 0 easy, 1 normal, 2 hard
-  final Gun gun;
+  final List<Gun> weapons;
+  int weaponIndex = 0;
+  Gun get gun => weapons[weaponIndex];
+  double swingT = 0; // > 0 while a sword swing is showing
+  bool keptSword = false; // won the 5% roll this game
   final Random rnd;
   final List<Rect> blocks;
 
@@ -148,7 +172,7 @@ class ZombieWorld {
     this.level = 1,
     Gun? gun,
     Random? random,
-  }) : gun = gun ?? kGuns.first,
+  }) : weapons = [gun ?? kGuns.first],
        rnd = random ?? Random(),
        blocks = buildBlocks(map);
 
@@ -163,12 +187,16 @@ class ZombieWorld {
     final out = <Rect>[];
     bool clear(Rect b) =>
         (b.center - const Offset(kWorldW / 2, kWorldH / 2)).distance > 9 &&
+        kSafeZones.every((z) => !z.inflate(2).overlaps(b)) &&
         out.every((o) => !o.inflate(3).overlaps(b));
     var tries = 0;
     final want = switch (map) {
       ZombieMap.town => 10,
       ZombieMap.graveyard => 22,
       ZombieMap.school => 12,
+      ZombieMap.farm => 14,
+      ZombieMap.beach => 16,
+      ZombieMap.snow => 24,
     };
     while (out.length < want && tries++ < 500) {
       final (w, h) = switch (map) {
@@ -181,6 +209,19 @@ class ZombieWorld {
         ZombieMap.graveyard => r.nextDouble() < 0.2 ? (4.0, 2.6) : (1.4, 0.9),
         // Benches, a climbing frame and a slide.
         ZombieMap.school => r.nextDouble() < 0.3 ? (5.0, 4.0) : (3.6, 1.0),
+        // Barns and hay bales.
+        ZombieMap.farm =>
+          r.nextDouble() < 0.25
+              ? (8.0, 6.0)
+              : (r.nextBool() ? (2.4, 1.3) : (1.3, 2.4)),
+        // Beach huts, rocks and palm trees.
+        ZombieMap.beach => switch (r.nextDouble()) {
+          < 0.25 => (4.0, 4.0),
+          < 0.55 => (2.2, 1.8),
+          _ => (0.8, 0.8),
+        },
+        // Pine trees and snowmen.
+        ZombieMap.snow => r.nextDouble() < 0.25 ? (1.4, 1.4) : (1.0, 1.0),
       };
       final x = 4 + r.nextDouble() * (kWorldW - 8 - w);
       final y = 4 + r.nextDouble() * (kWorldH - 8 - h);
@@ -244,6 +285,14 @@ class ZombieWorld {
           ? ZombieKind.runner
           : ZombieKind.walker;
       _spawn(kind);
+      // From wave 2, some walkers and runners carry a sword.
+      final z = zombies.isEmpty ? null : zombies.last;
+      if (z != null &&
+          wave >= 2 &&
+          z.kind != ZombieKind.tank &&
+          rnd.nextDouble() < 0.15) {
+        z.sword = true;
+      }
     }
     if (_toSpawn == 0 && zombies.isEmpty) {
       wavesCleared++;
@@ -266,6 +315,7 @@ class ZombieWorld {
         _ => Offset(kWorldW - 1.5, t * kWorldH),
       };
       if ((p - player).distance < 14) continue;
+      if (kSafeZones.any((z) => z.inflate(3).contains(p))) continue;
       if (blocks.any((b) => b.inflate(kind.radius).contains(p))) continue;
       final hpScale = 1 + (wave - 1) * 0.08;
       zombies.add(
@@ -308,6 +358,14 @@ class ZombieWorld {
       fire = z != null;
     }
     if (aim != null && aim.distance > 0.1) aimAngle = aim.direction;
+    swingT = max(0, swingT - dt);
+    if (input.swap) {
+      input.swap = false;
+      if (weapons.length > 1) {
+        weaponIndex = (weaponIndex + 1) % weapons.length;
+        fireCool = 0.15;
+      }
+    }
     if (input.grenade) {
       input.grenade = false;
       if (grenades > 0) {
@@ -321,6 +379,10 @@ class ZombieWorld {
     }
     if (!fire || fireCool > 0) return;
     fireCool = 1 / gun.fireRate;
+    if (gun.melee) {
+      _swing();
+      return;
+    }
     for (var i = 0; i < gun.pellets; i++) {
       final spread = gun.pellets == 1
           ? (rnd.nextDouble() - 0.5) * gun.spread
@@ -330,6 +392,24 @@ class ZombieWorld {
       bullets.add(Bullet(player + dir * 1.1, dir * gun.speed, gun));
     }
     events.add(ZombieEvent.shoot);
+  }
+
+  /// A sword slice: hits every zombie in front of you, within reach.
+  void _swing() {
+    swingT = kSwingTime;
+    events.add(ZombieEvent.swing);
+    final ahead = Offset.fromDirection(aimAngle);
+    for (final z in zombies) {
+      final to = z.pos - player;
+      final d = to.distance;
+      if (d > gun.range + z.r) continue;
+      if (d > 0.01) {
+        final cosA = (to.dx * ahead.dx + to.dy * ahead.dy) / d;
+        if (cosA < cos(1.2) && d > z.r + kPlayerR) continue;
+      }
+      _damage(z, gun.damage, (d > 0.01 ? to / d : ahead) * 2.5);
+    }
+    _bury();
   }
 
   // ---- bullets and bangs -------------------------------------------------
@@ -401,7 +481,9 @@ class ZombieWorld {
       poofs.add(Poof(z.pos, z.r * 1.8));
       events.add(ZombieEvent.kill);
       final roll = rnd.nextDouble();
-      if (z.kind == ZombieKind.king || roll < 0.06) {
+      if (z.sword) {
+        pickups.add(Pickup(PickupKind.sword, z.pos));
+      } else if (z.kind == ZombieKind.king || roll < 0.06) {
         pickups.add(Pickup(PickupKind.health, z.pos));
       } else if (roll < 0.1) {
         pickups.add(Pickup(PickupKind.grenade, z.pos));
@@ -432,9 +514,9 @@ class ZombieWorld {
         final reach = z.r + o.r;
         if (gd < reach && gd > 0.001) next += gap / gd * (reach - gd) * 0.5;
       }
-      z.pos = _slide(next, z.r);
-      // Bite!
-      if (d < z.r + kPlayerR + 0.1 && z.hitCool <= 0) {
+      z.pos = _keepOutOfSafeZones(_slide(next, z.r), z.r);
+      // Bite! (Not while you're in a safe zone.)
+      if (d < z.r + kPlayerR + 0.1 && z.hitCool <= 0 && !inSafeZone(player)) {
         z.hitCool = 0.9;
         final bite = _zombieDamage * (z.kind == ZombieKind.king ? 2 : 1);
         hp -= bite;
@@ -455,10 +537,46 @@ class ZombieWorld {
             hp = min(kMaxHp, hp + 30);
           case PickupKind.grenade:
             grenades = min(5, grenades + 1);
+          case PickupKind.sword:
+            _gotSword();
         }
       }
     }
     pickups.removeWhere((p) => p.life <= 0);
+  }
+
+  /// A dropped sword: use it for the rest of this game, and there's a
+  /// small chance it's yours to keep.
+  void _gotSword() {
+    final sword = gunById('sword');
+    var i = weapons.indexWhere((g) => g.id == sword.id);
+    if (i < 0) {
+      weapons.add(sword);
+      i = weapons.length - 1;
+      events.add(ZombieEvent.newWeapon);
+      if (!keptSword && rnd.nextDouble() < kKeepSwordChance) {
+        keptSword = true;
+        events.add(ZombieEvent.keepWeapon);
+      }
+    }
+    weaponIndex = i;
+  }
+
+  /// Pushes a zombie back out of any safe zone it walked into.
+  Offset _keepOutOfSafeZones(Offset p, double r) {
+    for (final zone in kSafeZones) {
+      final z = zone.inflate(r);
+      if (!z.contains(p)) continue;
+      // Only the sides facing into the map can be crossed.
+      final outX = zone.left == 0 ? z.right : z.left;
+      final outY = zone.top == 0 ? z.bottom : z.top;
+      if ((outX - p.dx).abs() < (outY - p.dy).abs()) {
+        p = Offset(outX, p.dy);
+      } else {
+        p = Offset(p.dx, outY);
+      }
+    }
+    return p;
   }
 
   // ---- walls -------------------------------------------------------------

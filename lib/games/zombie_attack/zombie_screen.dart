@@ -149,7 +149,8 @@ class _ZombieScreenState extends State<ZombieScreen> {
             ),
             const SizedBox(height: 22),
             _heading('GUN SHOP'),
-            for (final g in kGuns) _gunTile(g),
+            for (final g in kGuns)
+              if (!g.dropOnly || _save.guns.contains(g.id)) _gunTile(g),
             const SizedBox(height: 14),
             _howTo(),
           ],
@@ -393,7 +394,10 @@ class _ZombieScreenState extends State<ZombieScreen> {
       'green button to throw a grenade.\n'
       'Computer: WASD to run, drag the mouse (or press Q and E) to turn, '
       'hold Space or the SHOOT button to shoot, G for a grenade.\n'
-      'Every 5th wave the Zombie King comes. Grab first-aid kits to heal!',
+      'Every 5th wave the Zombie King comes. Grab first-aid kits to heal!\n'
+      'Zombies holding a sword drop it when you beat them. Grab it to use '
+      'it for that game, and there is a 5% chance you get to keep it!\n'
+      'Each corner of the map is a green safe zone: zombies cannot get in.',
       style: TextStyle(color: Colors.white70, height: 1.4),
     ),
   );

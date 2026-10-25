@@ -22,10 +22,17 @@ class ZombieView {
   const ZombieView(this.yaw, this.pitch);
 
   Camera camera(Offset player, Size size) {
-    const dist = 7.5;
     final f = V3(cos(yaw), -sin(yaw), 0);
     final p = _w(player);
-    final pos = p - f * (dist * cos(pitch)) + V3(0, 0, dist * sin(pitch) + 1.3);
+    // Pull the camera in rather than letting it go out past the fence.
+    var back = 7.5 * cos(pitch);
+    const edge = 0.2;
+    if (f.x > 0.01) back = min(back, (p.x + edge) / f.x);
+    if (f.x < -0.01) back = min(back, (kWorldW + edge - p.x) / -f.x);
+    if (f.y < -0.01) back = min(back, (edge - p.y) / -f.y);
+    if (f.y > 0.01) back = min(back, (p.y + kWorldH + edge) / f.y);
+    back = max(back, 3.5);
+    final pos = p - f * back + V3(0, 0, 7.5 * sin(pitch) + 1.3);
     final target = p + f * 3 + const V3(0, 0, 1.1);
     final focal = min(size.width, size.height) * 0.95;
     return Camera.lookAt(pos, target, focal, size.center(Offset.zero));
@@ -58,9 +65,12 @@ class Zombie3dPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: dark
-              ? const [Color(0xFF0B1026), Color(0xFF2B2F4A)]
-              : const [Color(0xFF64B5F6), Color(0xFFD7ECFF)],
+          colors: switch (w.map) {
+            ZombieMap.graveyard => const [Color(0xFF0B1026), Color(0xFF2B2F4A)],
+            ZombieMap.snow => const [Color(0xFF9FB3C8), Color(0xFFEFF4F8)],
+            ZombieMap.beach => const [Color(0xFF29B6F6), Color(0xFFE1F5FE)],
+            _ => const [Color(0xFF64B5F6), Color(0xFFD7ECFF)],
+          },
         ).createShader(Offset.zero & size),
     );
 
@@ -74,6 +84,7 @@ class Zombie3dPainter extends CustomPainter {
       _block(r, b);
     }
     _fence(r);
+    _safeZones(r);
     for (final p in w.pickups) {
       _pickup(r, p);
     }
@@ -206,7 +217,11 @@ class Zombie3dPainter extends CustomPainter {
         V3(150, -150, 0),
         V3(150, 80, 0),
       ],
-      Color.lerp(g, Colors.black, 0.25)!,
+      switch (w.map) {
+        ZombieMap.beach => const Color(0xFF4FC3F7), // the sea
+        ZombieMap.snow => const Color(0xFFF5F9FC),
+        _ => Color.lerp(g, Colors.black, 0.25)!,
+      },
       floor: true,
     );
     final light = Color.lerp(g, Colors.white, 0.07)!;
@@ -252,17 +267,67 @@ class Zombie3dPainter extends CustomPainter {
     }
   }
 
-  void _flat(Renderer r, Rect b, Color c) => r.add(
+  void _flat(Renderer r, Rect b, Color c, [double z = 0.01]) => r.add(
     [
-      _w(b.topLeft, 0.01),
-      _w(b.bottomLeft, 0.01),
-      _w(b.bottomRight, 0.01),
-      _w(b.topRight, 0.01),
+      _w(b.topLeft, z),
+      _w(b.bottomLeft, z),
+      _w(b.bottomRight, z),
+      _w(b.topRight, z),
     ],
     c,
     lit: false,
     floor: true,
   );
+
+  /// The four corner safe zones: a green glow on the floor and posts
+  /// along the sides zombies can't cross.
+  void _safeZones(Renderer r) {
+    final glow = const Color(0xFF69F0AE).withValues(alpha: 0.35);
+    const post = Color(0xFF00E676);
+    for (final z in kSafeZones) {
+      _flat(r, z, glow, 0.02);
+      final x = z.left == 0 ? z.right : z.left;
+      final y = z.top == 0 ? z.bottom : z.top;
+      for (var t = 0.0; t <= kSafeSize + 0.01; t += 2) {
+        final ax = z.left == 0 ? t : kWorldW - t;
+        final ay = z.top == 0 ? t : kWorldH - t;
+        _rect(
+          r,
+          Rect.fromCenter(center: Offset(x, ay), width: 0.25, height: 0.25),
+          0,
+          1,
+          post,
+        );
+        _rect(
+          r,
+          Rect.fromCenter(center: Offset(ax, y), width: 0.25, height: 0.25),
+          0,
+          1,
+          post,
+        );
+      }
+      // A flag on the inside corner so you can spot it.
+      final c = Offset(x, y);
+      _rect(
+        r,
+        Rect.fromCenter(center: c, width: 0.2, height: 0.2),
+        0,
+        4,
+        Colors.white,
+      );
+      _box(
+        r,
+        _w(c) + const V3(0.6, 0, 0),
+        0.6,
+        0.04,
+        3.2,
+        0.8,
+        0,
+        post,
+        lit: false,
+      );
+    }
+  }
 
   void _fence(Renderer r) {
     const brown = Color(0xFF6D4C41);
@@ -275,11 +340,119 @@ class Zombie3dPainter extends CustomPainter {
 
   void _block(Renderer r, Rect b) {
     switch (w.map) {
+      case ZombieMap.farm:
+        if (max(b.width, b.height) >= 6) {
+          _house(
+            r,
+            b,
+            wall: const Color(0xFFC62828),
+            roof: const Color(0xFF616161),
+            h: 3.6,
+            ridge: 5.6,
+            windows: false,
+          );
+        } else {
+          const hay = Color(0xFFFFD54F);
+          _rect(r, b, 0, 1.2, hay);
+          final strap = b.width > b.height
+              ? Rect.fromCenter(
+                  center: b.center,
+                  width: 0.15,
+                  height: b.height + 0.04,
+                )
+              : Rect.fromCenter(
+                  center: b.center,
+                  width: b.width + 0.04,
+                  height: 0.15,
+                );
+          _rect(r, strap, 0, 1.22, const Color(0xFF8D6E63));
+        }
+      case ZombieMap.beach:
+        if (b.width >= 3.5) {
+          // A beach hut with a straw roof.
+          _rect(r, b, 0, 2.4, const Color(0xFF4DD0E1));
+          final c = _w(b.center, 4);
+          final cs = [b.topLeft, b.topRight, b.bottomRight, b.bottomLeft];
+          for (var i = 0; i < 4; i++) {
+            r.add([
+              _w(cs[i], 2.4),
+              _w(cs[(i + 1) % 4], 2.4),
+              c,
+            ], const Color(0xFFD4B26A));
+          }
+          final y = b.bottom + 0.02;
+          _upright(
+            r,
+            Offset(b.center.dx - 0.5, y),
+            Offset(b.center.dx + 0.5, y),
+            0,
+            1.9,
+            const Color(0xFFFFFFFF),
+          );
+        } else if (b.width >= 1.5) {
+          _rect(r, b, 0, 1.0, const Color(0xFF8D8D8D));
+          _rect(r, b.deflate(0.4), 1.0, 1.5, const Color(0xFF9E9E9E));
+        } else {
+          // A palm tree.
+          _rect(r, b.deflate(0.25), 0, 4.6, const Color(0xFF8D6E63));
+          for (var i = 0; i < 5; i++) {
+            final a = i * 2 * pi / 5;
+            _box(
+              r,
+              _w(b.center + Offset.fromDirection(-a, 0.9)),
+              0.9,
+              0.3,
+              4.4,
+              0.12,
+              a,
+              const Color(0xFF43A047),
+            );
+          }
+        }
+      case ZombieMap.snow:
+        if (b.width >= 1.2) {
+          // A snowman.
+          const snow = Color(0xFFFFFFFF);
+          final c = _w(b.center);
+          _box(r, c, 0.65, 0.65, 0, 0.95, 0, snow);
+          _box(r, c, 0.47, 0.47, 0.95, 0.75, 0, snow);
+          _box(r, c, 0.33, 0.33, 1.7, 0.6, 0, snow);
+          _box(r, c, 0.2, 0.2, 2.3, 0.45, 0, const Color(0xFF212121));
+          _box(
+            r,
+            c + const V3(0, -0.45, 0),
+            0.06,
+            0.2,
+            1.95,
+            0.1,
+            pi / 2,
+            const Color(0xFFFF7043),
+            lit: false,
+          );
+        } else {
+          // A pine tree with snow on top.
+          final c = _w(b.center);
+          _box(r, c, 0.2, 0.2, 0, 1, 0, const Color(0xFF5D4037));
+          const green = Color(0xFF2E7D32);
+          var z = 1.0;
+          for (final half in [1.3, 0.95, 0.62, 0.32]) {
+            _box(r, c, half, half, z, 1.0, 0.4, green);
+            z += 0.9;
+          }
+          _box(r, c, 0.2, 0.2, z, 0.25, 0.4, Colors.white);
+        }
       case ZombieMap.town:
         if (min(b.width, b.height) < 2.5) {
           _car(r, b);
         } else {
-          _house(r, b);
+          _house(
+            r,
+            b,
+            wall: const Color(0xFFF3E5AB),
+            roof: const Color(0xFFB0453A),
+            h: 3.0,
+            ridge: 4.8,
+          );
         }
       case ZombieMap.graveyard:
         if (b.width > 3) {
@@ -330,9 +503,15 @@ class Zombie3dPainter extends CustomPainter {
     }
   }
 
-  void _house(Renderer r, Rect b) {
-    const wall = Color(0xFFF3E5AB), roof = Color(0xFFB0453A);
-    const h = 3.0, ridge = 4.8;
+  void _house(
+    Renderer r,
+    Rect b, {
+    required Color wall,
+    required Color roof,
+    required double h,
+    required double ridge,
+    bool windows = true,
+  }) {
     _rect(r, b, 0, h, wall);
     final along = b.width >= b.height; // ridge runs along the long side
     if (along) {
@@ -361,6 +540,18 @@ class Zombie3dPainter extends CustomPainter {
       2,
       door,
     );
+    if (!windows) {
+      // A big barn door.
+      _upright(
+        r,
+        Offset(b.center.dx - 1.4, y),
+        Offset(b.center.dx + 1.4, y),
+        0,
+        2.8,
+        const Color(0xFFFFFFFF),
+      );
+      return;
+    }
     _upright(
       r,
       Offset(b.left + 0.8, y),
@@ -458,19 +649,48 @@ class Zombie3dPainter extends CustomPainter {
           spin,
           const Color(0xFF9E9E9E),
         );
+      case PickupKind.sword:
+        // A sword standing up, spinning, with a gold glow under it.
+        _shadow(r, p.pos, 0.9, const Color(0x80FFD54F));
+        _box(
+          r,
+          _w(p.pos),
+          0.05,
+          0.12,
+          z + 0.55,
+          1.4,
+          spin,
+          const Color(0xFFECEFF1),
+        );
+        _box(
+          r,
+          _w(p.pos),
+          0.08,
+          0.4,
+          z + 0.45,
+          0.1,
+          spin,
+          const Color(0xFFFFC107),
+        );
+        _box(r, _w(p.pos), 0.07, 0.07, z, 0.45, spin, const Color(0xFF6D4C41));
     }
   }
 
   // ---- people ------------------------------------------------------------
 
-  void _shadow(Renderer r, Offset p, double radius) {
+  void _shadow(
+    Renderer r,
+    Offset p,
+    double radius, [
+    Color colour = const Color(0x50000000),
+  ]) {
     const n = 10;
     r.add(
       [
         for (var i = 0; i < n; i++)
           _w(p + Offset.fromDirection(i / n * 2 * pi, radius), 0.02),
       ],
-      const Color(0x50000000),
+      colour,
       lit: false,
       floor: true,
     );
@@ -523,6 +743,40 @@ class Zombie3dPainter extends CustomPainter {
         lit: false,
       );
     }
+    if (z.sword) {
+      // A sword held up in its right hand.
+      final hand = at + f * (0.8 * s) - side * (0.37 * s);
+      _box(
+        r,
+        hand,
+        0.06 * s,
+        0.06 * s,
+        1.2 * s,
+        0.3 * s,
+        yaw,
+        const Color(0xFF6D4C41),
+      );
+      _box(
+        r,
+        hand,
+        0.08 * s,
+        0.25 * s,
+        1.5 * s,
+        0.08 * s,
+        yaw,
+        const Color(0xFFFFC107),
+      );
+      _box(
+        r,
+        hand,
+        0.04 * s,
+        0.1 * s,
+        1.58 * s,
+        1.1 * s,
+        yaw,
+        const Color(0xFFCFD8DC),
+      );
+    }
     if (z.kind == ZombieKind.king) {
       // A gold crown with points.
       const gold = Color(0xFFFFC107);
@@ -563,6 +817,56 @@ class Zombie3dPainter extends CustomPainter {
     final f = V3(cos(yaw), sin(yaw), 0), side = V3(-sin(yaw), cos(yaw), 0);
     // Hair, then the gun held out in front.
     _box(r, at - f * 0.03, 0.24, 0.24, 1.87, 0.1, yaw, const Color(0xFF5D4037));
+    if (w.gun.melee) {
+      _sword(r, at, yaw, side);
+    } else {
+      _gun(r, at, yaw, f, side);
+    }
+    // Arms reaching forwards.
+    for (final k in [-1.0, 1.0]) {
+      _box(
+        r,
+        at + f * 0.25 + side * (0.25 * k - 0.05),
+        0.25,
+        0.08,
+        1.2,
+        0.16,
+        yaw,
+        const Color(0xFF1E88E5),
+      );
+    }
+  }
+
+  /// Your sword: held out to the right, sweeping across when you swing.
+  void _sword(Renderer r, V3 at, double yaw, V3 side) {
+    final k = w.swingT > 0 ? 1 - w.swingT / kSwingTime : 0.0;
+    final a = w.swingT > 0 ? yaw + 1.2 - 2.4 * k : yaw - 0.35;
+    final dir = V3(cos(a), sin(a), 0);
+    final hand = at + V3(cos(yaw), sin(yaw), 0) * 0.45 - side * 0.12;
+    _box(
+      r,
+      hand + dir * 0.12,
+      0.14,
+      0.05,
+      1.12,
+      0.1,
+      a,
+      const Color(0xFF6D4C41),
+    );
+    _box(
+      r,
+      hand + dir * 0.3,
+      0.04,
+      0.22,
+      1.08,
+      0.18,
+      a,
+      const Color(0xFFFFC107),
+    );
+    _box(r, hand + dir * 1.0, 0.68, 0.06, 1.13, 0.08, a, w.gun.colour);
+  }
+
+  void _gun(Renderer r, V3 at, double yaw, V3 f, V3 side) {
     final gunAt = at + f * 0.55 + side * -0.2;
     _box(r, gunAt, 0.42, 0.08, 1.15, 0.18, yaw, const Color(0xFF263238));
     _box(
@@ -576,19 +880,6 @@ class Zombie3dPainter extends CustomPainter {
       w.gun.colour,
       lit: false,
     );
-    // Arms reaching to the gun.
-    for (final k in [-1.0, 1.0]) {
-      _box(
-        r,
-        at + f * 0.25 + side * (0.25 * k - 0.05),
-        0.25,
-        0.08,
-        1.2,
-        0.16,
-        yaw,
-        const Color(0xFF1E88E5),
-      );
-    }
   }
 
   /// A blocky person facing [yaw] (3D angle), [s] times normal size.

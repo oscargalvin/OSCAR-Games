@@ -122,6 +122,17 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
           SoundService.instance.play(GameSound.levelComplete);
         case ZombieEvent.dead:
           SoundService.instance.play(GameSound.gameOver);
+        case ZombieEvent.swing:
+          SoundService.instance.play(GameSound.bowTwang);
+        case ZombieEvent.newWeapon:
+          _say('YOU GOT A SWORD!');
+          SoundService.instance.play(GameSound.win);
+        case ZombieEvent.keepWeapon:
+          // The 5% roll: the sword is yours for every game from now on.
+          _save.guns.add('sword');
+          _save.save();
+          _say('LUCKY! THE SWORD IS YOURS TO KEEP!');
+          _bannerT = 3.5;
         case ZombieEvent.hit:
           break;
       }
@@ -256,6 +267,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
     if (e is KeyDownEvent) {
       _keys.add(e.logicalKey);
       if (e.logicalKey == LogicalKeyboardKey.keyG) _w.input.grenade = true;
+      if (e.logicalKey == LogicalKeyboardKey.keyR) _w.input.swap = true;
     } else if (e is KeyUpEvent) {
       _keys.remove(e.logicalKey);
     }
@@ -312,12 +324,21 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                   right: 20,
                   bottom: 24,
                   child: SafeArea(
-                    child: Row(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        _grenadeButton(),
-                        const SizedBox(width: 14),
-                        _shootButton(),
+                        if (_w.weapons.length > 1) ...[
+                          _swapButton(),
+                          const SizedBox(height: 12),
+                        ],
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _grenadeButton(),
+                            const SizedBox(width: 14),
+                            _shootButton(),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -328,6 +349,13 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                     right: 0,
                     top: _size.height * 0.24,
                     child: IgnorePointer(child: _bannerText()),
+                  ),
+                if (inSafeZone(_w.player) && _w.phase != ZombiePhase.over)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: _size.height * 0.16,
+                    child: IgnorePointer(child: Center(child: _safeTag())),
                   ),
                 if (_w.phase == ZombiePhase.over)
                   Positioned.fill(child: _overCard()),
@@ -438,6 +466,59 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
     ),
   );
 
+  Widget _safeTag() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+    decoration: BoxDecoration(
+      color: const Color(0xCC00C853),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.shield_rounded, color: Colors.white, size: 18),
+        SizedBox(width: 6),
+        Text(
+          'SAFE ZONE',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// Changes between your gun and a sword you picked up.
+  Widget _swapButton() {
+    final next = _w.weapons[(_w.weaponIndex + 1) % _w.weapons.length];
+    return GestureDetector(
+      onTap: () => _w.input.swap = true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white70, width: 2),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.swap_horiz_rounded, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(
+              next.name,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _grenadeButton() {
     final left = _w.grenades;
     return GestureDetector(
@@ -542,6 +623,16 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
               '${w.kills} zombies zapped',
               style: const TextStyle(color: Colors.white70),
             ),
+            if (w.keptSword) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'You kept the Zombie Sword!',
+                style: TextStyle(
+                  color: Color(0xFFB9F6CA),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
             if (w.coinsEarned > 0) ...[
               const SizedBox(height: 10),
               Text(

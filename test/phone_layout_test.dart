@@ -91,6 +91,7 @@ final _screens = <String, Widget Function()>{
   'zombie_town': () => const ZombieGameScreen(),
   'zombie_graveyard': () =>
       const ZombieGameScreen(map: ZombieMap.graveyard, level: 2),
+  'zombie_snow': () => const ZombieGameScreen(map: ZombieMap.snow),
   'board_game': () => const BoardGameScreen(),
   'boat_fishing': () => const BoatFishingScreen(),
   'tic_tac_toe': () => const TicTacToeScreen(),
