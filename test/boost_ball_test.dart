@@ -59,7 +59,8 @@ void main() {
       ..vip = false
       ..name = ''
       ..quest = {}
-      ..claimed = {};
+      ..claimed = {}
+      ..ballCam = true;
     await save.save();
   });
 
@@ -770,5 +771,24 @@ void main() {
     }
 
     expect(shotAim(true), lessThan(shotAim(false)));
+  });
+
+  testWidgets('the camera you pick is remembered', (tester) async {
+    await _phone(tester);
+    await tester.pumpWidget(const MaterialApp(home: BoostBallGameScreen()));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('BALL CAM'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('CAR CAM'), findsOneWidget);
+    final save = BoostBallSave.instance;
+    expect(save.ballCam, isFalse);
+    save.ballCam = true;
+    await save.load();
+    expect(save.ballCam, isFalse);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(const MaterialApp(home: BoostBallGameScreen()));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('CAR CAM'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 }

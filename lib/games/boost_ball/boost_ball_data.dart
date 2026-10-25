@@ -338,6 +338,7 @@ class BoostBallSave {
   int bestKph = 0; // your hardest ever shot
   String name = ''; // shown to other people online
   bool vip = false; // bought the VIP pass
+  bool ballCam = true; // the camera you picked last (ball cam or car cam)
   Map<String, int> quest = {}; // quest counters, by QuestStat name
   Set<String> claimed = {}; // quests already paid out
 
@@ -399,6 +400,7 @@ class BoostBallSave {
       bestKph = m['bestKph'] as int? ?? 0;
       name = m['name'] as String? ?? '';
       vip = m['vip'] == true;
+      ballCam = m['ballCam'] as bool? ?? true;
       quest = {
         for (final e in ((m['quest'] as Map?) ?? {}).entries)
           '${e.key}': (e.value as num).toInt(),
@@ -424,6 +426,7 @@ class BoostBallSave {
         'bestKph': bestKph,
         'name': name,
         'vip': vip,
+        'ballCam': ballCam,
         'quest': quest,
         'claimed': claimed.toList(),
       }),

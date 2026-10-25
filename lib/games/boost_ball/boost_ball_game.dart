@@ -78,7 +78,7 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   // The camera follows behind your car, looking at the ball (ball cam) or
   // straight ahead.
-  bool _ballCam = true;
+  bool _ballCam = BoostBallSave.instance.ballCam; // remembered
   double _camYaw = pi / 2;
   V3 _camPos = const V3(kFieldW / 2, 10, 5);
   double _camPitch = -0.1;
@@ -632,7 +632,12 @@ class _BoostBallGameScreenState extends State<BoostBallGameScreen>
 
   Widget _ballCamButton() {
     return GestureDetector(
-      onTap: () => setState(() => _ballCam = !_ballCam),
+      onTap: () {
+        setState(() => _ballCam = !_ballCam);
+        BoostBallSave.instance
+          ..ballCam = _ballCam
+          ..save();
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
