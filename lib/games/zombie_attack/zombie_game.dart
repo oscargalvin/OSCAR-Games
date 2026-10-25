@@ -9,6 +9,7 @@ import '../../services/sound_service.dart';
 import '../../widgets/full_screen_game.dart';
 import 'zombie_3d.dart';
 import 'zombie_data.dart';
+import 'zombie_net.dart';
 import 'zombie_sim.dart';
 
 /// One game of Zombie Attack: survive as many waves as you can.
@@ -17,11 +18,15 @@ class ZombieGameScreen extends StatefulWidget {
   final int level;
   final String gunId;
 
+  /// A 2-player game with a friend on another phone.
+  final ZombieSession? session;
+
   const ZombieGameScreen({
     super.key,
     this.map = ZombieMap.town,
     this.level = 1,
     this.gunId = 'pistol',
+    this.session,
   });
 
   @override
@@ -30,7 +35,13 @@ class ZombieGameScreen extends StatefulWidget {
 
 class _ZombieGameScreenState extends State<ZombieGameScreen>
     with SingleTickerProviderStateMixin, FullScreenGame {
-  late ZombieWorld _w;
+  late ZombieWorld _solo;
+  ZombieSession? get _net => widget.session;
+
+  /// The game on this phone. For 2 players it only exists once your friend
+  /// has joined.
+  ZombieWorld get _w => _net?.world ?? _solo;
+  bool get _waiting => _net != null && _net!.world == null;
   late final Ticker _ticker;
   Duration _last = Duration.zero;
   final _save = ZombieSave.instance;
@@ -55,6 +66,11 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
   double _shake = 0;
   double _soundT = 0;
 
+  // What you had last frame, to notice changes on either phone.
+  double _lastHp = kMaxHp;
+  int _lastWeapons = 1;
+  bool _lastKept = false;
+
   @override
   void initState() {
     super.initState();
@@ -63,12 +79,15 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
   }
 
   void _start() {
-    _w = ZombieWorld(
+    _solo = ZombieWorld(
       map: widget.map,
       level: widget.level,
       gun: gunById(widget.gunId),
     );
     _paid = false;
+    _lastHp = kMaxHp;
+    _lastWeapons = 1;
+    _lastKept = false;
     _yaw = -pi / 2;
     _shooting = false;
     _banner = 'GET READY!';
@@ -77,6 +96,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
 
   @override
   void dispose() {
+    _net?.close();
     _ticker.dispose();
     _focus.dispose();
     super.dispose();
@@ -87,16 +107,36 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
         ? 1 / 60
         : ((now - _last).inMicroseconds / 1e6).clamp(0.0, 0.25);
     _last = now;
+    if (_waiting) {
+      _net!.update(dt);
+      if (!_waiting) {
+        _say('GET READY!');
+        if (_w.youAreBoss) {
+          // You start floating at the top of the map: look down over it.
+          _yaw = pi / 2;
+          _pitch = 0.8;
+        }
+      }
+      setState(() {});
+      return;
+    }
     _readControls(dt);
     // Slow frames take a few small steps so nothing jumps through walls.
     final steps = (dt * 60).ceil().clamp(1, 15);
+    final events = <ZombieEvent>[];
     for (var i = 0; i < steps; i++) {
-      _w.step(dt / steps);
+      if (_net != null) {
+        _net!.update(dt / steps);
+      } else {
+        _w.step(dt / steps);
+      }
+      events.addAll(_w.events);
     }
+    _noticeChanges();
     _bannerT = max(0, _bannerT - dt);
     _shake = max(0, _shake - dt * 3);
     _soundT = max(0, _soundT - dt);
-    for (final e in _w.events) {
+    for (final e in events) {
       switch (e) {
         case ZombieEvent.shoot:
           if (_soundT <= 0) {
@@ -106,8 +146,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
         case ZombieEvent.kill:
           SoundService.instance.play(GameSound.hit);
         case ZombieEvent.hurt:
-          _shake = 0.5;
-          SoundService.instance.play(GameSound.noMatch);
+          break; // see _noticeChanges
         case ZombieEvent.boom:
           _shake = max(_shake, 0.7);
         case ZombieEvent.pickup:
@@ -116,6 +155,9 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
           _say(
             _w.bossWave ? 'WAVE ${_w.wave}: ZOMBIE KING!' : 'WAVE ${_w.wave}',
           );
+          if (_w.mode == ZombieMode.versus && _w.wave == kKingArrives - 1) {
+            _say('WAVE ${_w.wave}: THE KING COMES NEXT WAVE!');
+          }
           SoundService.instance.play(GameSound.countdown);
         case ZombieEvent.waveClear:
           _say('WAVE ${_w.wave} CLEARED!');
@@ -124,17 +166,23 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
           SoundService.instance.play(GameSound.gameOver);
         case ZombieEvent.swing:
           SoundService.instance.play(GameSound.bowTwang);
-        case ZombieEvent.newWeapon:
-          _say('YOU GOT A SWORD!');
-          SoundService.instance.play(GameSound.win);
-        case ZombieEvent.keepWeapon:
-          // The 5% roll: the sword is yours for every game from now on.
-          _save.guns.add('sword');
-          _save.save();
-          _say('LUCKY! THE SWORD IS YOURS TO KEEP!');
-          _bannerT = 3.5;
+        case ZombieEvent.kingArrives:
+          _say(
+            _w.youAreBoss
+                ? 'YOU ARE THE ZOMBIE KING!'
+                : 'THE ZOMBIE KING IS HERE!',
+          );
+          _bannerT = 3;
+          SoundService.instance.play(GameSound.countdown);
+        case ZombieEvent.smash:
+          _shake = max(_shake, 0.4);
+          SoundService.instance.play(GameSound.hit);
+        case ZombieEvent.spawned:
+          SoundService.instance.play(GameSound.place);
         case ZombieEvent.hit:
-          break;
+        case ZombieEvent.newWeapon:
+        case ZombieEvent.keepWeapon:
+          break; // see _noticeChanges
       }
     }
     if (_w.phase == ZombiePhase.over && !_paid) _finish();
@@ -146,11 +194,53 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
     _bannerT = 2;
   }
 
+  /// Things that happen to you, worked out the same way whichever phone
+  /// is running the game.
+  void _noticeChanges() {
+    final w = _w;
+    if (w.youAreBoss) return;
+    final s = w.you;
+    if (s.hp < _lastHp - 0.01) {
+      _shake = 0.5;
+      SoundService.instance.play(GameSound.noMatch);
+      if (s.hp <= 0 && w.survivors.any((o) => o.alive)) {
+        _say('KNOCKED OUT! BACK NEXT WAVE');
+        _bannerT = 3;
+      }
+    }
+    if (s.weapons.length > _lastWeapons) {
+      _say('YOU GOT A SWORD!');
+      SoundService.instance.play(GameSound.win);
+    }
+    if (s.keptSword && !_lastKept) {
+      // The 5% roll: the sword is yours for every game from now on.
+      _save.guns.add('sword');
+      _save.save();
+      _say('LUCKY! THE SWORD IS YOURS TO KEEP!');
+      _bannerT = 3.5;
+    }
+    _lastHp = s.hp;
+    _lastWeapons = s.weapons.length;
+    _lastKept = s.keptSword;
+  }
+
+  /// True if this phone's side won a Zombie vs Human game.
+  bool get _youWon => _w.winner == (_w.youAreBoss ? 'zombies' : 'humans');
+
+  int get _coinsForYou {
+    final w = _w;
+    if (w.mode != ZombieMode.versus) return w.coinsEarned;
+    if (w.youAreBoss) return _youWon ? 100 : 20;
+    return w.coinsEarned;
+  }
+
   void _finish() {
     _paid = true;
-    _save.coins += _w.coinsEarned;
-    _save.kills += _w.kills;
-    _save.bestWave = max(_save.bestWave, _w.wavesCleared);
+    _save.coins += _coinsForYou;
+    _save.kills += _w.youAreBoss ? 0 : _w.kills;
+    if (_w.mode == ZombieMode.solo) {
+      _save.bestWave = max(_save.bestWave, _w.wavesCleared);
+    }
     _save.save();
   }
 
@@ -158,6 +248,12 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
 
   void _readControls(double dt) {
     final inp = _w.input;
+    if (!_w.youAreBoss && !_w.you.alive) {
+      inp
+        ..move = Offset.zero
+        ..fire = false;
+      return;
+    }
     // Turning with the keyboard.
     var turn = 0.0;
     if (_keys.contains(LogicalKeyboardKey.arrowLeft) ||
@@ -191,7 +287,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
     inp
       ..move = ahead * stick.dy + right * stick.dx
       // Shoot where the camera looks, nudged onto a zombie close to it.
-      ..aim = _aimHelp(ahead) ?? ahead
+      ..aim = (_w.youAreBoss ? _kingAimHelp(ahead) : _aimHelp(ahead)) ?? ahead
       ..fire = _shooting || _keys.contains(LogicalKeyboardKey.space)
       ..autoAim = false;
   }
@@ -216,6 +312,20 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
       }
     }
     return best;
+  }
+
+  /// For the Zombie King: turn towards a person who's nearly in front.
+  Offset? _kingAimHelp(Offset ahead) {
+    final k = _w.king;
+    if (k == null) return null;
+    for (final s in _w.survivors) {
+      final to = s.pos - k.pos;
+      if (!s.alive || to.distance > k.r + 3) continue;
+      var diff = (to.direction - ahead.direction).abs() % (2 * pi);
+      if (diff > pi) diff = 2 * pi - diff;
+      if (diff < 0.6) return to;
+    }
+    return null;
   }
 
   void _down(PointerDownEvent e) {
@@ -266,12 +376,44 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (e is KeyDownEvent) {
       _keys.add(e.logicalKey);
-      if (e.logicalKey == LogicalKeyboardKey.keyG) _w.input.grenade = true;
-      if (e.logicalKey == LogicalKeyboardKey.keyR) _w.input.swap = true;
+      if (e.logicalKey == LogicalKeyboardKey.keyG) _grenade();
+      if (e.logicalKey == LogicalKeyboardKey.keyR) _swap();
+      if (_w.youAreBoss) {
+        const keys = [
+          LogicalKeyboardKey.digit1,
+          LogicalKeyboardKey.digit2,
+          LogicalKeyboardKey.digit3,
+          LogicalKeyboardKey.digit4,
+        ];
+        final i = keys.indexOf(e.logicalKey);
+        if (i >= 0) _order(ZombieOrder.values[i]);
+      }
     } else if (e is KeyUpEvent) {
       _keys.remove(e.logicalKey);
     }
     return KeyEventResult.handled;
+  }
+
+  void _grenade() {
+    if (_net != null) {
+      _net!.grenade();
+    } else {
+      _w.input.grenade = true;
+    }
+  }
+
+  void _swap() {
+    if (_net != null) {
+      _net!.swap();
+    } else {
+      _w.input.swap = true;
+    }
+  }
+
+  void _order(ZombieOrder o) {
+    final b = _w.boss;
+    if (b == null || b.brains < o.cost) return;
+    _net?.order(o);
   }
 
   // ---- screen ------------------------------------------------------------
@@ -287,6 +429,11 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
         child: LayoutBuilder(
           builder: (context, box) {
             _size = box.biggest;
+            if (_net?.ended != null && _w.phase != ZombiePhase.over) {
+              return _message(_net!.ended!);
+            }
+            if (_waiting) return _waitingRoom();
+            final boss = _w.youAreBoss;
             return Stack(
               children: [
                 Positioned.fill(
@@ -327,18 +474,23 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        if (_w.weapons.length > 1) ...[
-                          _swapButton(),
-                          const SizedBox(height: 12),
-                        ],
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            _grenadeButton(),
-                            const SizedBox(width: 14),
-                            _shootButton(),
+                        if (boss) ...[
+                          if (_w.king == null) _orderButtons(),
+                          if (_w.king != null) _shootButton(label: 'SMASH'),
+                        ] else ...[
+                          if (_w.weapons.length > 1) ...[
+                            _swapButton(),
+                            const SizedBox(height: 12),
                           ],
-                        ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              _grenadeButton(),
+                              const SizedBox(width: 14),
+                              _shootButton(),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -350,7 +502,9 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                     top: _size.height * 0.24,
                     child: IgnorePointer(child: _bannerText()),
                   ),
-                if (inSafeZone(_w.player) && _w.phase != ZombiePhase.over)
+                if (!boss &&
+                    inSafeZone(_w.player) &&
+                    _w.phase != ZombiePhase.over)
                   Positioned(
                     left: 0,
                     right: 0,
@@ -382,29 +536,48 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.favorite_rounded,
-                            color: Color(0xFFFF5252),
-                            size: 18,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: LinearProgressIndicator(
-                                value: w.hp / kMaxHp,
-                                minHeight: 12,
-                                backgroundColor: Colors.black45,
-                                color: w.hp > 35
-                                    ? const Color(0xFF66BB6A)
-                                    : const Color(0xFFFF5252),
-                              ),
-                            ),
+                      if (w.youAreBoss)
+                        _bar(
+                          Icons.psychology_rounded,
+                          const Color(0xFFE040FB),
+                          w.boss!.brains / kMaxBrains,
+                          const Color(0xFFE040FB),
+                          '${w.boss!.brains.floor()} brains',
+                        )
+                      else
+                        _bar(
+                          Icons.favorite_rounded,
+                          const Color(0xFFFF5252),
+                          w.hp / kMaxHp,
+                          w.hp > 35
+                              ? const Color(0xFF66BB6A)
+                              : const Color(0xFFFF5252),
+                          null,
+                        ),
+                      // How the other person is doing.
+                      for (final o in w.survivors)
+                        if (w.youAreBoss || !identical(o, w.you)) ...[
+                          const SizedBox(height: 4),
+                          _bar(
+                            Icons.person_rounded,
+                            Colors.white70,
+                            o.hp / kMaxHp,
+                            const Color(0xFF4FC3F7),
+                            o.name,
+                            small: true,
                           ),
                         ],
-                      ),
+                      if (w.king case final k?) ...[
+                        const SizedBox(height: 4),
+                        _bar(
+                          Icons.workspace_premium_rounded,
+                          const Color(0xFFFFC107),
+                          k.hp / k.maxHp,
+                          const Color(0xFFFFC107),
+                          w.youAreBoss ? 'You (King)' : 'Zombie King',
+                          small: true,
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       Text(
                         w.phase == ZombiePhase.rest && w.wave > 0
@@ -412,6 +585,11 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                             : 'Zombies left: ${w.zombiesLeft}',
                         style: _shadowed(13, FontWeight.w700),
                       ),
+                      if (w.mode == ZombieMode.versus && w.king == null)
+                        Text(
+                          'The Zombie King comes at wave $kKingArrives',
+                          style: _shadowed(12, FontWeight.w700),
+                        ),
                     ],
                   ),
                 ),
@@ -441,6 +619,177 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _bar(
+    IconData icon,
+    Color iconColour,
+    double value,
+    Color colour,
+    String? label, {
+    bool small = false,
+  }) => Row(
+    children: [
+      Icon(icon, color: iconColour, size: small ? 14 : 18),
+      const SizedBox(width: 6),
+      Expanded(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: value.clamp(0.0, 1.0),
+            minHeight: small ? 7 : 12,
+            backgroundColor: Colors.black45,
+            color: colour,
+          ),
+        ),
+      ),
+      if (label != null) ...[
+        const SizedBox(width: 6),
+        Text(label, style: _shadowed(small ? 11 : 13, FontWeight.w700)),
+      ],
+    ],
+  );
+
+  /// The zombie player's buttons: pay brains to send zombies in where
+  /// you are floating.
+  Widget _orderButtons() {
+    final brains = _w.boss!.brains;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.end,
+      children: [
+        for (final o in ZombieOrder.values)
+          GestureDetector(
+            onTap: () => _order(o),
+            child: Container(
+              width: 70,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: brains >= o.cost
+                    ? const Color(0xCC7B1FA2)
+                    : Colors.black38,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.white70, width: 2),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    o.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 13,
+                    ),
+                  ),
+                  Text(
+                    '${o.cost} ${o.cost == 1 ? 'brain' : 'brains'}',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _message(String text) => Container(
+    color: const Color(0xFF13241A),
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(24),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 18),
+        ElevatedButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('BACK TO MENU'),
+        ),
+      ],
+    ),
+  );
+
+  /// Before your friend joins: show the room code to share.
+  Widget _waitingRoom() {
+    final net = _net!;
+    final setup = net.setup;
+    final role = setup.mode == ZombieMode.coop
+        ? 'Team up against the zombies'
+        : net.youAreZombie
+        ? 'You are the zombies!'
+        : 'You are the human!';
+    return Container(
+      color: const Color(0xFF13241A),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            role,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF69F0AE),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${setup.map.title} • ${kZombieLevels[setup.level]}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 22),
+          if (net.isHost && net.room.showCode) ...[
+            const Text(
+              'Tell your friend this code:',
+              style: TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              net.room.code,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 44,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 8,
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
+          const SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(color: Color(0xFF69F0AE)),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            !net.isHost
+                ? 'Joining...'
+                : net.room.showCode
+                ? 'Waiting for your friend...'
+                : 'Waiting for someone to join...',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 18),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('CANCEL'),
+          ),
+        ],
       ),
     );
   }
@@ -493,7 +842,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
   Widget _swapButton() {
     final next = _w.weapons[(_w.weaponIndex + 1) % _w.weapons.length];
     return GestureDetector(
-      onTap: () => _w.input.swap = true,
+      onTap: _swap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
@@ -522,7 +871,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
   Widget _grenadeButton() {
     final left = _w.grenades;
     return GestureDetector(
-      onTap: () => _w.input.grenade = true,
+      onTap: _grenade,
       child: Container(
         width: 56,
         height: 56,
@@ -549,8 +898,8 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
     );
   }
 
-  /// Hold to keep shooting.
-  Widget _shootButton() => Listener(
+  /// Hold to keep shooting (or smashing, for the Zombie King).
+  Widget _shootButton({String label = 'SHOOT'}) => Listener(
     onPointerDown: (e) {
       if (e.kind == PointerDeviceKind.touch) _touch = true;
       _shooting = true;
@@ -562,7 +911,7 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
       height: 74,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: inSafeZone(_w.player)
+        color: !_w.youAreBoss && inSafeZone(_w.player)
             ? Colors.black38
             : _shooting
             ? const Color(0xEEFF5252)
@@ -570,13 +919,13 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
         border: Border.all(color: Colors.white, width: 3),
       ),
       alignment: Alignment.center,
-      child: const Column(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.gps_fixed_rounded, color: Colors.white, size: 28),
+          const Icon(Icons.gps_fixed_rounded, color: Colors.white, size: 28),
           Text(
-            'SHOOT',
-            style: TextStyle(
+            label,
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 11,
               fontWeight: FontWeight.w900,
@@ -589,7 +938,22 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
 
   Widget _overCard() {
     final w = _w;
-    final best = w.wavesCleared >= _save.bestWave && w.wavesCleared > 0;
+    final best =
+        w.mode == ZombieMode.solo &&
+        w.wavesCleared >= _save.bestWave &&
+        w.wavesCleared > 0;
+    final versus = w.mode == ZombieMode.versus;
+    final title = !versus
+        ? 'THE ZOMBIES GOT YOU!'
+        : _youWon
+        ? 'YOU WIN!'
+        : 'YOU LOSE!';
+    final why = !versus
+        ? null
+        : w.winner == 'humans'
+        ? 'The Zombie King was beaten!'
+        : 'The zombies got the human!';
+    final coins = _coinsForYou;
     return Container(
       color: Colors.black54,
       alignment: Alignment.center,
@@ -605,11 +969,21 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'THE ZOMBIES GOT YOU!',
+            if (why != null) ...[
+              Text(
+                why,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 6),
+            ],
+            Text(
+              title,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(0xFFFF8A80),
+                color: versus && _youWon
+                    ? const Color(0xFF69F0AE)
+                    : const Color(0xFFFF8A80),
                 fontSize: 24,
                 fontWeight: FontWeight.w900,
               ),
@@ -637,10 +1011,10 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
                 ),
               ),
             ],
-            if (w.coinsEarned > 0) ...[
+            if (coins > 0) ...[
               const SizedBox(height: 10),
               Text(
-                '+${w.coinsEarned} coins',
+                '+$coins coins',
                 style: const TextStyle(
                   color: Color(0xFFFFD54F),
                   fontSize: 20,
@@ -649,21 +1023,22 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
               ),
             ],
             const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => setState(_start),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF43A047),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                child: const Text(
-                  'PLAY AGAIN',
-                  style: TextStyle(fontWeight: FontWeight.w900),
+            if (_net == null)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => setState(_start),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF43A047),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text(
+                    'PLAY AGAIN',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
                 ),
               ),
-            ),
             const SizedBox(height: 8),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),

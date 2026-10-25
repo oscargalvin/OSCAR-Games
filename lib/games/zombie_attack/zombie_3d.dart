@@ -74,7 +74,7 @@ class Zombie3dPainter extends CustomPainter {
         ).createShader(Offset.zero & size),
     );
 
-    final cam = view.camera(w.player, size);
+    final cam = view.camera(w.viewPos, size);
     final r = Renderer(
       cam,
       fog: dark ? const Color(0xFF2B2F4A) : const Color(0xFFD7ECFF),
@@ -91,7 +91,10 @@ class Zombie3dPainter extends CustomPainter {
     for (final z in w.zombies) {
       _zombie(r, z);
     }
-    _player(r);
+    for (var i = 0; i < w.survivors.length; i++) {
+      _player(r, w.survivors[i], i);
+    }
+    _ghost(r);
     for (final g in w.thrown) {
       final k = (g.t / Grenade.fuse * 1.4).clamp(0.0, 1.0);
       final at = _w(g.pos, 0.3 + sin(k * pi) * 2.2);
@@ -163,7 +166,7 @@ class Zombie3dPainter extends CustomPainter {
     }
     if (dark) {
       // Only a pool of light round you in the graveyard.
-      final me = cam.project(_w(w.player, 1)) ?? size.center(Offset.zero);
+      final me = cam.project(_w(w.viewPos, 1)) ?? size.center(Offset.zero);
       final radius = size.longestSide * 0.75;
       canvas.drawRect(
         Offset.zero & size,
@@ -178,6 +181,8 @@ class Zombie3dPainter extends CustomPainter {
           ).createShader(Rect.fromCircle(center: me, radius: radius)),
       );
     }
+    _smash(canvas, cam);
+    _nameTags(canvas, cam);
     _crosshair(canvas, size, cam);
     canvas.restore();
   }
@@ -192,9 +197,85 @@ class Zombie3dPainter extends CustomPainter {
     );
   }
 
+  /// The Zombie King player's smash: a shock ring in front of the King.
+  void _smash(Canvas canvas, Camera cam) {
+    final b = w.boss, k = w.king;
+    if (b == null || k == null || b.smashT <= 0) return;
+    final t = 1 - b.smashT / 0.3;
+    final at = k.pos + Offset.fromDirection(k.facing, k.r + 1);
+    _ball(
+      canvas,
+      cam,
+      _w(at, 0.3),
+      0.8 + t * 1.6,
+      Color.fromRGBO(206, 147, 216, 0.6 * (1 - t)),
+    );
+  }
+
+  /// Names over the other people in the game.
+  void _nameTags(Canvas canvas, Camera cam) {
+    if (w.mode == ZombieMode.solo) return;
+    for (var i = 0; i < w.survivors.length; i++) {
+      if (i == w.youIndex) continue;
+      final s = w.survivors[i];
+      final p = cam.project(_w(s.pos, 2.4));
+      if (p == null) continue;
+      final tp = TextPainter(
+        text: TextSpan(
+          text: s.alive ? s.name : '${s.name} (knocked out)',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            shadows: [Shadow(blurRadius: 3, color: Colors.black)],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, p - Offset(tp.width / 2, tp.height));
+    }
+  }
+
+  /// Where the zombie player is floating, before the King arrives.
+  void _ghost(Renderer r) {
+    final b = w.boss;
+    if (b == null || w.king != null) return;
+    final bob = sin(w.time * 3) * 0.2;
+    _shadow(r, b.pos, 1.6, const Color(0x70E040FB));
+    _box(
+      r,
+      _w(b.pos),
+      0.35,
+      0.35,
+      2.2 + bob,
+      0.7,
+      w.time,
+      const Color(0xFFCE93D8),
+    );
+    // Little glowing eyes.
+    for (final k in [-1.0, 1.0]) {
+      _box(
+        r,
+        _w(b.pos) +
+            V3(cos(w.time), sin(w.time), 0) * 0.36 +
+            V3(-sin(w.time), cos(w.time), 0) * (0.15 * k),
+        0.03,
+        0.07,
+        2.6 + bob,
+        0.12,
+        w.time,
+        const Color(0xFFFFEB3B),
+        lit: false,
+      );
+    }
+  }
+
   /// A small ring where your gun is pointing.
   void _crosshair(Canvas canvas, Size size, Camera cam) {
-    final at = w.player + Offset.fromDirection(w.aimAngle, 9);
+    if (w.youAreBoss && w.king == null) return;
+    final from = w.youAreBoss ? w.king!.pos : w.player;
+    final angle = w.youAreBoss ? w.king!.facing : w.aimAngle;
+    final at = from + Offset.fromDirection(angle, w.youAreBoss ? 4 : 9);
     final p = cam.project(_w(at, 1.2));
     if (p == null) return;
     final paint = Paint()
@@ -798,29 +879,37 @@ class Zombie3dPainter extends CustomPainter {
     }
   }
 
-  void _player(Renderer r) {
-    final yaw = _yaw(w.aimAngle);
-    _shadow(r, w.player, kPlayerR * 0.8);
-    final moving = w.input.move.distance > 0.1;
+  void _player(Renderer r, Survivor s, int index) {
+    final yaw = _yaw(s.aimAngle);
+    final shirtColour = index == 0
+        ? const Color(0xFF1E88E5)
+        : const Color(0xFFFB8C00);
+    if (!s.alive) {
+      // Knocked out: lying flat on the ground until the next wave.
+      _box(r, _w(s.pos), 0.9, 0.3, 0, 0.35, yaw, const Color(0xFF9E9E9E));
+      return;
+    }
+    _shadow(r, s.pos, kPlayerR * 0.8);
+    final moving = s.input.move.distance > 0.1;
     _body(
       r,
-      w.player,
+      s.pos,
       yaw,
       1,
       skin: const Color(0xFFFFCC80),
-      shirt: w.hurtT > 0 ? const Color(0xFFFF5252) : const Color(0xFF1E88E5),
+      shirt: s.hurtT > 0 ? const Color(0xFFFF5252) : shirtColour,
       trousers: const Color(0xFF283593),
       walk: moving ? w.time * 10 : 0,
       armsOut: false,
     );
-    final at = _w(w.player);
+    final at = _w(s.pos);
     final f = V3(cos(yaw), sin(yaw), 0), side = V3(-sin(yaw), cos(yaw), 0);
     // Hair, then the gun held out in front.
     _box(r, at - f * 0.03, 0.24, 0.24, 1.87, 0.1, yaw, const Color(0xFF5D4037));
-    if (w.gun.melee) {
-      _sword(r, at, yaw, side);
+    if (s.gun.melee) {
+      _sword(r, s, at, yaw, side);
     } else {
-      _gun(r, at, yaw, f, side);
+      _gun(r, s, at, yaw, f, side);
     }
     // Arms reaching forwards.
     for (final k in [-1.0, 1.0]) {
@@ -832,15 +921,15 @@ class Zombie3dPainter extends CustomPainter {
         1.2,
         0.16,
         yaw,
-        const Color(0xFF1E88E5),
+        shirtColour,
       );
     }
   }
 
   /// Your sword: held out to the right, sweeping across when you swing.
-  void _sword(Renderer r, V3 at, double yaw, V3 side) {
-    final k = w.swingT > 0 ? 1 - w.swingT / kSwingTime : 0.0;
-    final a = w.swingT > 0 ? yaw + 1.2 - 2.4 * k : yaw - 0.35;
+  void _sword(Renderer r, Survivor s, V3 at, double yaw, V3 side) {
+    final k = s.swingT > 0 ? 1 - s.swingT / kSwingTime : 0.0;
+    final a = s.swingT > 0 ? yaw + 1.2 - 2.4 * k : yaw - 0.35;
     final dir = V3(cos(a), sin(a), 0);
     final hand = at + V3(cos(yaw), sin(yaw), 0) * 0.45 - side * 0.12;
     _box(
@@ -863,10 +952,10 @@ class Zombie3dPainter extends CustomPainter {
       a,
       const Color(0xFFFFC107),
     );
-    _box(r, hand + dir * 1.0, 0.68, 0.06, 1.13, 0.08, a, w.gun.colour);
+    _box(r, hand + dir * 1.0, 0.68, 0.06, 1.13, 0.08, a, s.gun.colour);
   }
 
-  void _gun(Renderer r, V3 at, double yaw, V3 f, V3 side) {
+  void _gun(Renderer r, Survivor s, V3 at, double yaw, V3 f, V3 side) {
     final gunAt = at + f * 0.55 + side * -0.2;
     _box(r, gunAt, 0.42, 0.08, 1.15, 0.18, yaw, const Color(0xFF263238));
     _box(
@@ -877,7 +966,7 @@ class Zombie3dPainter extends CustomPainter {
       1.14,
       0.2,
       yaw,
-      w.gun.colour,
+      s.gun.colour,
       lit: false,
     );
   }

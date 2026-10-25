@@ -187,6 +187,7 @@ class ZombieSave {
   String gun = 'pistol';
   int bestWave = 0;
   int kills = 0;
+  String name = ''; // shown to friends in 2-player games
 
   Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -200,6 +201,7 @@ class ZombieSave {
       if (!guns.contains(gun)) gun = 'pistol';
       bestWave = m['bestWave'] as int? ?? 0;
       kills = m['kills'] as int? ?? 0;
+      name = m['name'] as String? ?? '';
     } catch (_) {
       // A broken save starts fresh.
     }
@@ -215,6 +217,7 @@ class ZombieSave {
         'gun': gun,
         'bestWave': bestWave,
         'kills': kills,
+        'name': name,
       }),
     );
   }

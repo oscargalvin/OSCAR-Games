@@ -2473,7 +2473,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       // Boost Ball rooms share the lobby: leave them out.
       final ours = [
         for (final r in rooms)
-          if (!r.mapId.startsWith('bb:')) r,
+          if (!r.mapId.startsWith('bb:') && !r.mapId.startsWith('za:')) r,
       ];
       if (mounted) setState(() => _waitingRooms = ours);
     });
@@ -2529,6 +2529,7 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
               (r) =>
                   r.teamSize == size &&
                   !r.mapId.startsWith('bb:') &&
+                  !r.mapId.startsWith('za:') &&
                   !r.friends &&
                   !r.playing &&
                   r.players < size * 2 &&
@@ -2576,6 +2577,10 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
       if (room.mapId.startsWith('bb:')) {
         room.close();
         throw 'That code is for a Boost Ball game. Open Boost Ball to join it.';
+      }
+      if (room.mapId.startsWith('za:')) {
+        room.close();
+        throw 'That code is for Zombie Attack. Open Zombie Attack to join it.';
       }
     } catch (e) {
       if (mounted) {

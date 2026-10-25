@@ -28,6 +28,14 @@ bool inSafeZone(Offset p) => kSafeZones.any((z) => z.contains(p));
 /// How long a sword swing shows for.
 const double kSwingTime = 0.25;
 
+/// In Zombie vs Human, the wave when the zombie player turns up as the
+/// Zombie King.
+const int kKingArrives = 4;
+
+/// The zombie player's brains: they pay for zombies with them.
+const double kMaxBrains = 10;
+const double kBrainsPerSecond = 0.8;
+
 enum ZombieKind {
   walker(3, 2.6, 0.85),
   runner(2, 4.8, 0.7),
@@ -40,17 +48,35 @@ enum ZombieKind {
   const ZombieKind(this.hp, this.speed, this.radius);
 }
 
+/// Zombies the zombie player can send in, and what they cost in brains.
+enum ZombieOrder {
+  walker('Walker', 1, ZombieKind.walker),
+  runner('Runner', 2, ZombieKind.runner),
+  sword('Sword', 3, ZombieKind.walker),
+  tank('Tank', 5, ZombieKind.tank);
+
+  final String title;
+  final int cost;
+  final ZombieKind kind;
+  const ZombieOrder(this.title, this.cost, this.kind);
+}
+
+/// Playing alone, two people against the zombies, or one person against a
+/// friend who plays the zombies.
+enum ZombieMode { solo, coop, versus }
+
 class Zombie {
   final int id;
   final ZombieKind kind;
   Offset pos;
   double hp;
-  final double maxHp;
+  double maxHp;
   double hitCool = 0;
   double flash = 0; // > 0 just after being hit
   double wobble; // for the shuffling walk
   double facing = 0;
   bool sword = false; // carries a sword, and drops it when beaten
+  bool controlled = false; // the zombie player is driving this one
 
   Zombie(this.id, this.kind, this.pos, double hpScale, this.wobble)
     : hp = kind.hp * hpScale,
@@ -102,7 +128,7 @@ class Poof {
   Poof(this.pos, this.size);
 }
 
-/// What the player is pressing this frame.
+/// What a player is pressing this frame.
 class ZombieInput {
   Offset move = Offset.zero; // length 0 to 1
   Offset? aim; // which way to shoot (null = not aiming)
@@ -110,6 +136,41 @@ class ZombieInput {
   bool autoAim = false; // shoot the nearest zombie by itself (touch help)
   bool grenade = false; // set for one frame to throw
   bool swap = false; // set for one frame to change weapon
+}
+
+/// A person fighting the zombies.
+class Survivor {
+  String name;
+  Offset pos = const Offset(kWorldW / 2, kWorldH / 2);
+  double hp = kMaxHp;
+  double aimAngle = -pi / 2;
+  double fireCool = 0;
+  double hurtT = 0;
+  double swingT = 0; // > 0 while a sword swing is showing
+  int grenades = 2;
+  bool keptSword = false; // won the 5% roll this game
+  final ZombieInput input = ZombieInput();
+  final List<Gun> weapons;
+  int weaponIndex = 0;
+
+  Survivor(this.name, Gun gun) : weapons = [gun];
+
+  Gun get gun => weapons[weaponIndex.clamp(0, weapons.length - 1)];
+  bool get alive => hp > 0;
+}
+
+/// The friend playing the zombies in Zombie vs Human. They float round
+/// the map sending zombies in, then become the Zombie King at wave 4.
+class ZombieBoss {
+  String name;
+  Offset pos = const Offset(kWorldW / 2, 6);
+  double brains = 3;
+  final ZombieInput input = ZombieInput();
+  final List<ZombieOrder> orders = []; // zombies they asked for
+  int kingId = -1; // the King they drive, once it arrives
+  double smashCool = 0;
+  double smashT = 0; // > 0 while a smash shows
+  ZombieBoss(this.name);
 }
 
 enum ZombiePhase { play, rest, over }
@@ -127,26 +188,27 @@ enum ZombieEvent {
   swing,
   newWeapon, // picked up a sword
   keepWeapon, // ...and it's yours to keep!
+  kingArrives, // the zombie player turned up as the Zombie King
+  smash, // the Zombie King player smashed
+  spawned, // the zombie player sent a zombie in
 }
 
 class ZombieWorld {
   final ZombieMap map;
   final int level; // 0 easy, 1 normal, 2 hard
-  final List<Gun> weapons;
-  int weaponIndex = 0;
-  Gun get gun => weapons[weaponIndex];
-  double swingT = 0; // > 0 while a sword swing is showing
-  bool keptSword = false; // won the 5% roll this game
+  final ZombieMode mode;
   final Random rnd;
   final List<Rect> blocks;
 
-  Offset player = const Offset(kWorldW / 2, kWorldH / 2);
-  double hp = kMaxHp;
-  double aimAngle = -pi / 2;
-  double fireCool = 0;
-  double hurtT = 0;
-  int grenades = 2;
-  final ZombieInput input = ZombieInput();
+  /// Everyone fighting the zombies. On this phone you are
+  /// survivors[youIndex], or the zombie player when youIndex is -1.
+  final List<Survivor> survivors;
+  int youIndex = 0;
+  final ZombieBoss? boss;
+
+  /// False on a friend's phone: the room maker's phone runs the real game
+  /// and this one just carries things on between updates.
+  bool authority = true;
 
   final List<Zombie> zombies = [];
   final List<Bullet> bullets = [];
@@ -162,6 +224,9 @@ class ZombieWorld {
   int wavesCleared = 0;
   int kills = 0;
   int coinsEarned = 0;
+
+  /// Who won a Zombie vs Human game: 'humans' or 'zombies'.
+  String? winner;
   int _toSpawn = 0;
   double _spawnT = 0;
   int _nextId = 0;
@@ -170,16 +235,63 @@ class ZombieWorld {
   ZombieWorld({
     this.map = ZombieMap.town,
     this.level = 1,
+    this.mode = ZombieMode.solo,
     Gun? gun,
+    Gun? friendGun,
+    String name = 'You',
+    String friendName = 'Friend',
     Random? random,
-  }) : weapons = [gun ?? kGuns.first],
+  }) : survivors = [
+         Survivor(name, gun ?? kGuns.first),
+         if (mode == ZombieMode.coop)
+           Survivor(friendName, friendGun ?? kGuns.first),
+       ],
+       boss = mode == ZombieMode.versus ? ZombieBoss(friendName) : null,
        rnd = random ?? Random(),
-       blocks = buildBlocks(map);
+       blocks = buildBlocks(map) {
+    if (survivors.length == 2) {
+      survivors[0].pos = const Offset(kWorldW / 2 - 1.5, kWorldH / 2);
+      survivors[1].pos = const Offset(kWorldW / 2 + 1.5, kWorldH / 2);
+    }
+  }
+
+  // ---- you ---------------------------------------------------------------
+
+  bool get youAreBoss => youIndex < 0;
+  Survivor get you => survivors[youIndex.clamp(0, survivors.length - 1)];
+
+  Offset get player => you.pos;
+  set player(Offset p) => you.pos = p;
+  double get hp => you.hp;
+  set hp(double v) => you.hp = v;
+  double get aimAngle => you.aimAngle;
+  set aimAngle(double v) => you.aimAngle = v;
+  double get hurtT => you.hurtT;
+  double get swingT => you.swingT;
+  int get grenades => you.grenades;
+  bool get keptSword => you.keptSword;
+  ZombieInput get input => youAreBoss ? boss!.input : you.input;
+  List<Gun> get weapons => you.weapons;
+  int get weaponIndex => you.weaponIndex;
+  Gun get gun => you.gun;
+
+  /// Where the camera follows on this phone.
+  Offset get viewPos => youAreBoss ? (king?.pos ?? boss!.pos) : player;
+
+  /// The King the zombie player is driving, if it has arrived.
+  Zombie? get king {
+    final b = boss;
+    if (b == null || b.kingId < 0) return null;
+    for (final z in zombies) {
+      if (z.id == b.kingId) return z;
+    }
+    return null;
+  }
 
   double get _zombieSpeed => const [0.8, 1.0, 1.18][level];
   double get _zombieDamage => const [6.0, 10.0, 14.0][level];
-  bool get bossWave => wave % 5 == 0;
-  int get zombiesLeft => _toSpawn + zombies.length;
+  bool get bossWave => mode != ZombieMode.versus && wave % 5 == 0;
+  int get zombiesLeft => _toSpawn + zombies.where((z) => !z.controlled).length;
 
   /// Obstacles for each map. The middle is always kept clear for you.
   static List<Rect> buildBlocks(ZombieMap map) {
@@ -245,18 +357,67 @@ class ZombieWorld {
     }
     poofs.removeWhere((p) => p.t > 0.6);
     if (phase == ZombiePhase.over) return;
+    if (!authority) {
+      _coast(dt);
+      return;
+    }
 
-    _movePlayer(dt);
-    _shoot(dt);
+    for (final s in survivors) {
+      _moveSurvivor(s, dt);
+      _shoot(s, dt);
+    }
+    _moveBoss(dt);
     _moveBullets(dt);
     _moveGrenades(dt);
     _moveZombies(dt);
     _pickups(dt);
     _waves(dt);
-    if (hp <= 0) {
-      hp = 0;
+    for (final s in survivors) {
+      if (s.hp < 0) s.hp = 0;
+    }
+    if (survivors.every((s) => !s.alive)) {
       phase = ZombiePhase.over;
+      if (mode == ZombieMode.versus) winner = 'zombies';
       events.add(ZombieEvent.dead);
+    }
+  }
+
+  /// On a friend's phone: keep things moving smoothly until the next
+  /// update from the room maker's phone arrives.
+  void _coast(double dt) {
+    if (!youAreBoss && you.alive) {
+      final s = you;
+      var m = s.input.move;
+      if (m.distance > 1) m = m / m.distance;
+      s.pos = _slide(s.pos + m * kPlayerSpeed * dt, kPlayerR);
+      final aim = s.input.aim;
+      if (aim != null && aim.distance > 0.1) s.aimAngle = aim.direction;
+    }
+    final b = boss;
+    if (b != null && youAreBoss && b.kingId < 0) {
+      b.pos = _clampWorld(b.pos + _unit(b.input.move) * 14 * dt);
+    }
+    for (final s in survivors) {
+      s.hurtT = max(0, s.hurtT - dt);
+      s.swingT = max(0, s.swingT - dt);
+    }
+    for (final x in bullets) {
+      x.pos += x.vel * dt;
+    }
+    for (final g in thrown) {
+      g.t += dt;
+    }
+    for (final z in zombies) {
+      z.flash = max(0, z.flash - dt);
+      z.wobble += dt * (z.kind == ZombieKind.runner ? 9 : 5);
+      if (z.controlled) continue;
+      final t = _target(z.pos);
+      if (t == null) continue;
+      final to = t.pos - z.pos;
+      final d = to.distance;
+      if (d > z.r + kPlayerR) {
+        z.pos = _slide(z.pos + to / d * z.kind.speed * _zombieSpeed * dt, z.r);
+      }
     }
   }
 
@@ -267,9 +428,27 @@ class ZombieWorld {
         wave++;
         phase = ZombiePhase.play;
         _toSpawn = 3 + wave * 3 - (level == 0 ? 1 : 0);
+        if (mode == ZombieMode.coop) _toSpawn = (_toSpawn * 1.5).round();
+        // The zombie player sends extra zombies in, so fewer come by
+        // themselves.
+        if (mode == ZombieMode.versus) {
+          _toSpawn = max(2, (_toSpawn * 0.6).round());
+        }
         if (bossWave) _toSpawn = max(1, _toSpawn - 4);
         _spawnT = 0.3;
         if (bossWave) _spawn(ZombieKind.king);
+        // Anyone knocked out last wave comes back.
+        for (final s in survivors) {
+          if (!s.alive) {
+            s
+              ..hp = kMaxHp / 2
+              ..hurtT = 0;
+          }
+        }
+        final b = boss;
+        if (b != null && wave >= kKingArrives && b.kingId < 0) {
+          _kingArrives(b);
+        }
         events.add(ZombieEvent.waveStart);
       }
       return;
@@ -284,9 +463,8 @@ class ZombieWorld {
           : wave >= 3 && roll < 0.35
           ? ZombieKind.runner
           : ZombieKind.walker;
-      _spawn(kind);
+      final z = _spawn(kind);
       // From wave 2, some walkers and runners carry a sword.
-      final z = zombies.isEmpty ? null : zombies.last;
       if (z != null &&
           wave >= 2 &&
           z.kind != ZombieKind.tank &&
@@ -294,7 +472,7 @@ class ZombieWorld {
         z.sword = true;
       }
     }
-    if (_toSpawn == 0 && zombies.isEmpty) {
+    if (_toSpawn == 0 && zombies.every((z) => z.controlled)) {
       wavesCleared++;
       coinsEarned += kWaveCoins[level] + (bossWave ? 50 : 0);
       phase = ZombiePhase.rest;
@@ -303,8 +481,8 @@ class ZombieWorld {
     }
   }
 
-  void _spawn(ZombieKind kind) {
-    // Come in from a random edge, away from you.
+  Zombie? _spawn(ZombieKind kind) {
+    // Come in from a random edge, away from everyone.
     for (var i = 0; i < 20; i++) {
       final side = rnd.nextInt(4);
       final t = rnd.nextDouble();
@@ -314,31 +492,132 @@ class ZombieWorld {
         2 => Offset(1.5, t * kWorldH),
         _ => Offset(kWorldW - 1.5, t * kWorldH),
       };
-      if ((p - player).distance < 14) continue;
+      if (survivors.any((s) => (p - s.pos).distance < 14)) continue;
       if (kSafeZones.any((z) => z.inflate(3).contains(p))) continue;
       if (blocks.any((b) => b.inflate(kind.radius).contains(p))) continue;
-      final hpScale = 1 + (wave - 1) * 0.08;
-      zombies.add(
-        Zombie(_nextId++, kind, p, hpScale, rnd.nextDouble() * 2 * pi),
-      );
-      return;
+      return _add(kind, p);
+    }
+    return null;
+  }
+
+  Zombie _add(ZombieKind kind, Offset p) {
+    final hpScale = 1 + (max(1, wave) - 1) * 0.08;
+    final z = Zombie(_nextId++, kind, p, hpScale, rnd.nextDouble() * 2 * pi);
+    zombies.add(z);
+    return z;
+  }
+
+  // ---- the zombie player -------------------------------------------------
+
+  void _moveBoss(double dt) {
+    final b = boss;
+    if (b == null) return;
+    b.brains = min(kMaxBrains, b.brains + kBrainsPerSecond * dt);
+    b.smashCool = max(0, b.smashCool - dt);
+    b.smashT = max(0, b.smashT - dt);
+    final k = king;
+    if (k == null) {
+      // Floating over the map, choosing where to send zombies in.
+      b.pos = _clampWorld(b.pos + _unit(b.input.move) * 14 * dt);
+    } else {
+      b.pos = k.pos;
+    }
+    for (final order in [...b.orders]) {
+      b.orders.remove(order);
+      if (b.brains < order.cost) continue;
+      final at = _bossSpawnPoint(b.pos, order.kind);
+      if (at == null) continue;
+      b.brains -= order.cost;
+      final z = _add(order.kind, at);
+      if (order == ZombieOrder.sword) z.sword = true;
+      events.add(ZombieEvent.spawned);
     }
   }
 
-  // ---- you ---------------------------------------------------------------
-
-  void _movePlayer(double dt) {
-    hurtT = max(0, hurtT - dt);
-    var m = input.move;
-    if (m.distance > 1) m = m / m.distance;
-    player = _slide(player + m * kPlayerSpeed * dt, kPlayerR);
+  /// Somewhere near [near] for a new zombie: not in a wall or safe zone,
+  /// and not right on top of anyone.
+  Offset? _bossSpawnPoint(Offset near, ZombieKind kind) {
+    for (var i = 0; i < 25; i++) {
+      final p = i == 0
+          ? near
+          : _clampWorld(
+              near +
+                  Offset.fromDirection(
+                    rnd.nextDouble() * 2 * pi,
+                    1.0 + i * 0.4,
+                  ),
+            );
+      if (survivors.any((s) => s.alive && (p - s.pos).distance < 7)) continue;
+      if (kSafeZones.any((z) => z.inflate(kind.radius + 0.5).contains(p))) {
+        continue;
+      }
+      if (blocks.any((b) => b.inflate(kind.radius).contains(p))) continue;
+      return p;
+    }
+    return null;
   }
 
-  Zombie? nearestZombie(double within) {
+  void _kingArrives(ZombieBoss b) {
+    final at =
+        _bossSpawnPoint(b.pos, ZombieKind.king) ??
+        _bossSpawnPoint(const Offset(kWorldW / 2, 4), ZombieKind.king) ??
+        const Offset(kWorldW / 2, 4);
+    final z = _add(ZombieKind.king, at)
+      ..controlled = true
+      ..hp = 55
+      ..maxHp = 55;
+    b.kingId = z.id;
+    events.add(ZombieEvent.kingArrives);
+  }
+
+  /// The Zombie King player walks and smashes.
+  void _driveKing(Zombie z, double dt) {
+    final b = boss!;
+    final move = _unit(b.input.move);
+    final next = z.pos + move * 5.5 * dt;
+    z.pos = _keepOutOfSafeZones(_slide(next, z.r), z.r);
+    if (move.distance > 0.1) z.wobble += dt * 5;
+    final aim = b.input.aim;
+    if (aim != null && aim.distance > 0.1) {
+      z.facing = aim.direction;
+    } else if (move.distance > 0.1) {
+      z.facing = move.direction;
+    }
+    if (!b.input.fire || b.smashCool > 0) return;
+    b.smashCool = 0.9;
+    b.smashT = 0.3;
+    events.add(ZombieEvent.smash);
+    final ahead = Offset.fromDirection(z.facing);
+    for (final s in survivors) {
+      if (!s.alive || inSafeZone(s.pos)) continue;
+      final to = s.pos - z.pos;
+      final d = to.distance;
+      if (d > z.r + 2.2) continue;
+      if (d > 0.01 && (to.dx * ahead.dx + to.dy * ahead.dy) / d < cos(1.1)) {
+        continue;
+      }
+      _hurt(s, 22);
+      final push = d > 0.01 ? to / d : ahead;
+      s.pos = _slide(s.pos + push * 1.5, kPlayerR);
+    }
+  }
+
+  // ---- survivors ---------------------------------------------------------
+
+  void _moveSurvivor(Survivor s, double dt) {
+    s.hurtT = max(0, s.hurtT - dt);
+    if (!s.alive) return;
+    var m = s.input.move;
+    if (m.distance > 1) m = m / m.distance;
+    s.pos = _slide(s.pos + m * kPlayerSpeed * dt, kPlayerR);
+  }
+
+  Zombie? nearestZombie(double within, [Offset? from]) {
+    final at = from ?? player;
     Zombie? best;
     var bestD = within;
     for (final z in zombies) {
-      final d = (z.pos - player).distance - z.r;
+      final d = (z.pos - at).distance - z.r;
       if (d < bestD) {
         bestD = d;
         best = z;
@@ -347,71 +626,85 @@ class ZombieWorld {
     return best;
   }
 
-  void _shoot(double dt) {
-    fireCool = max(0, fireCool - dt);
+  void _shoot(Survivor s, double dt) {
+    s.fireCool = max(0, s.fireCool - dt);
+    s.swingT = max(0, s.swingT - dt);
+    final input = s.input;
+    if (!s.alive) {
+      input
+        ..grenade = false
+        ..swap = false;
+      return;
+    }
     var aim = input.aim;
     var fire = input.fire;
     if ((aim == null || aim.distance < 0.1) && (input.autoAim || fire)) {
       // Touch help: point at the nearest zombie in range and shoot it.
-      final z = nearestZombie(gun.range * 0.95);
-      aim = z == null ? null : z.pos - player;
+      final z = nearestZombie(s.gun.range * 0.95, s.pos);
+      aim = z == null ? null : z.pos - s.pos;
       fire = z != null;
     }
-    if (aim != null && aim.distance > 0.1) aimAngle = aim.direction;
-    swingT = max(0, swingT - dt);
+    if (aim != null && aim.distance > 0.1) s.aimAngle = aim.direction;
     if (input.swap) {
       input.swap = false;
-      if (weapons.length > 1) {
-        weaponIndex = (weaponIndex + 1) % weapons.length;
-        fireCool = 0.15;
+      if (s.weapons.length > 1) {
+        s.weaponIndex = (s.weaponIndex + 1) % s.weapons.length;
+        s.fireCool = 0.15;
       }
     }
     // No shooting, swinging or throwing from inside a safe zone.
-    final safe = inSafeZone(player);
+    final safe = inSafeZone(s.pos);
     if (input.grenade) {
       input.grenade = false;
-      if (grenades > 0 && !safe) {
-        grenades--;
+      if (s.grenades > 0 && !safe) {
+        s.grenades--;
         final to = _slide(
-          player + Offset.fromDirection(aimAngle, kGrenadeRange),
+          s.pos + Offset.fromDirection(s.aimAngle, kGrenadeRange),
           0.3,
         );
-        thrown.add(Grenade(player, to));
+        thrown.add(Grenade(s.pos, to));
       }
     }
-    if (!fire || fireCool > 0 || safe) return;
-    fireCool = 1 / gun.fireRate;
+    if (!fire || s.fireCool > 0 || safe) return;
+    final gun = s.gun;
+    s.fireCool = 1 / gun.fireRate;
     if (gun.melee) {
-      _swing();
+      _swing(s);
       return;
     }
     for (var i = 0; i < gun.pellets; i++) {
       final spread = gun.pellets == 1
           ? (rnd.nextDouble() - 0.5) * gun.spread
           : -gun.spread / 2 + gun.spread * i / (gun.pellets - 1);
-      final a = aimAngle + spread;
+      final a = s.aimAngle + spread;
       final dir = Offset.fromDirection(a);
-      bullets.add(Bullet(player + dir * 1.1, dir * gun.speed, gun));
+      bullets.add(Bullet(s.pos + dir * 1.1, dir * gun.speed, gun));
     }
     events.add(ZombieEvent.shoot);
   }
 
   /// A sword slice: hits every zombie in front of you, within reach.
-  void _swing() {
-    swingT = kSwingTime;
+  void _swing(Survivor s) {
+    s.swingT = kSwingTime;
     events.add(ZombieEvent.swing);
-    final ahead = Offset.fromDirection(aimAngle);
+    final ahead = Offset.fromDirection(s.aimAngle);
     for (final z in zombies) {
-      final to = z.pos - player;
+      final to = z.pos - s.pos;
       final d = to.distance;
-      if (d > gun.range + z.r) continue;
+      if (d > s.gun.range + z.r) continue;
       if (d > 0.01) {
         final cosA = (to.dx * ahead.dx + to.dy * ahead.dy) / d;
         if (cosA < cos(1.2) && d > z.r + kPlayerR) continue;
       }
-      _damage(z, gun.damage, (d > 0.01 ? to / d : ahead) * 2.5);
+      _damage(z, s.gun.damage, (d > 0.01 ? to / d : ahead) * 2.5);
     }
     _bury();
+  }
+
+  void _hurt(Survivor s, double amount) {
+    s.hp -= amount;
+    s.hurtT = 0.35;
+    events.add(ZombieEvent.hurt);
   }
 
   // ---- bullets and bangs -------------------------------------------------
@@ -482,6 +775,13 @@ class ZombieWorld {
       kills++;
       poofs.add(Poof(z.pos, z.r * 1.8));
       events.add(ZombieEvent.kill);
+      if (z.controlled) {
+        // The zombie player's King is beaten: the humans win!
+        phase = ZombiePhase.over;
+        winner = 'humans';
+        coinsEarned += 100;
+        return true;
+      }
       final roll = rnd.nextDouble();
       if (z.sword) {
         pickups.add(Pickup(PickupKind.sword, z.pos));
@@ -496,12 +796,33 @@ class ZombieWorld {
 
   // ---- zombies -----------------------------------------------------------
 
+  /// The person a zombie at [p] goes after: the nearest one still standing.
+  Survivor? _target(Offset p) {
+    Survivor? best;
+    var bestD = double.infinity;
+    for (final s in survivors) {
+      if (!s.alive) continue;
+      final d = (s.pos - p).distance;
+      if (d < bestD) {
+        bestD = d;
+        best = s;
+      }
+    }
+    return best;
+  }
+
   void _moveZombies(double dt) {
-    for (final z in zombies) {
+    for (final z in [...zombies]) {
       z.hitCool = max(0, z.hitCool - dt);
       z.flash = max(0, z.flash - dt);
+      if (z.controlled) {
+        _driveKing(z, dt);
+        continue;
+      }
       z.wobble += dt * (z.kind == ZombieKind.runner ? 9 : 5);
-      final to = player - z.pos;
+      final target = _target(z.pos);
+      if (target == null) continue;
+      final to = target.pos - z.pos;
       final d = to.distance;
       if (d > 0.01) z.facing = to.direction;
       // Shuffle towards you, swaying a bit.
@@ -518,12 +839,11 @@ class ZombieWorld {
       }
       z.pos = _keepOutOfSafeZones(_slide(next, z.r), z.r);
       // Bite! (Not while you're in a safe zone.)
-      if (d < z.r + kPlayerR + 0.1 && z.hitCool <= 0 && !inSafeZone(player)) {
+      if (d < z.r + kPlayerR + 0.1 &&
+          z.hitCool <= 0 &&
+          !inSafeZone(target.pos)) {
         z.hitCool = 0.9;
-        final bite = _zombieDamage * (z.kind == ZombieKind.king ? 2 : 1);
-        hp -= bite;
-        hurtT = 0.35;
-        events.add(ZombieEvent.hurt);
+        _hurt(target, _zombieDamage * (z.kind == ZombieKind.king ? 2 : 1));
       }
     }
   }
@@ -531,16 +851,18 @@ class ZombieWorld {
   void _pickups(double dt) {
     for (final p in pickups) {
       p.life -= dt;
-      if ((p.pos - player).distance < kPlayerR + 0.9) {
+      for (final s in survivors) {
+        if (!s.alive || p.life <= 0) continue;
+        if ((p.pos - s.pos).distance >= kPlayerR + 0.9) continue;
         p.life = 0;
         events.add(ZombieEvent.pickup);
         switch (p.kind) {
           case PickupKind.health:
-            hp = min(kMaxHp, hp + 30);
+            s.hp = min(kMaxHp, s.hp + 30);
           case PickupKind.grenade:
-            grenades = min(5, grenades + 1);
+            s.grenades = min(5, s.grenades + 1);
           case PickupKind.sword:
-            _gotSword();
+            _gotSword(s);
         }
       }
     }
@@ -549,19 +871,19 @@ class ZombieWorld {
 
   /// A dropped sword: use it for the rest of this game, and there's a
   /// small chance it's yours to keep.
-  void _gotSword() {
+  void _gotSword(Survivor s) {
     final sword = gunById('sword');
-    var i = weapons.indexWhere((g) => g.id == sword.id);
+    var i = s.weapons.indexWhere((g) => g.id == sword.id);
     if (i < 0) {
-      weapons.add(sword);
-      i = weapons.length - 1;
+      s.weapons.add(sword);
+      i = s.weapons.length - 1;
       events.add(ZombieEvent.newWeapon);
-      if (!keptSword && rnd.nextDouble() < kKeepSwordChance) {
-        keptSword = true;
+      if (!s.keptSword && rnd.nextDouble() < kKeepSwordChance) {
+        s.keptSword = true;
         events.add(ZombieEvent.keepWeapon);
       }
     }
-    weaponIndex = i;
+    s.weaponIndex = i;
   }
 
   /// Pushes a zombie back out of any safe zone it walked into.
@@ -582,6 +904,11 @@ class ZombieWorld {
   }
 
   // ---- walls -------------------------------------------------------------
+
+  static Offset _unit(Offset m) => m.distance > 1 ? m / m.distance : m;
+
+  static Offset _clampWorld(Offset p) =>
+      Offset(p.dx.clamp(1, kWorldW - 1), p.dy.clamp(1, kWorldH - 1));
 
   bool _blocked(Offset p, double r) =>
       p.dx < 0 ||

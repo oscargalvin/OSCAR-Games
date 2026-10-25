@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../services/sound_service.dart';
+import '../outplay/outplay_net.dart';
 import 'zombie_data.dart';
 import 'zombie_game.dart';
+import 'zombie_net.dart';
+import 'zombie_sim.dart';
 
 const _bg = Color(0xFF13241A);
 const _panel = Color(0xFF1F3A29);
@@ -11,7 +14,15 @@ const _gold = Color(0xFFFFD54F);
 
 /// Zombie Attack menu: pick a map, a level and a gun, then survive.
 class ZombieScreen extends StatefulWidget {
-  const ZombieScreen({super.key});
+  /// How to go online (swapped for pretend links in tests).
+  final OutplayLink? Function() makeLink;
+  final OutplayDirectory? Function() makeDirectory;
+
+  const ZombieScreen({
+    super.key,
+    this.makeLink = createLink,
+    this.makeDirectory = createDirectory,
+  });
 
   @override
   State<ZombieScreen> createState() => _ZombieScreenState();
@@ -21,6 +32,9 @@ class _ZombieScreenState extends State<ZombieScreen> {
   final _save = ZombieSave.instance;
   ZombieMap _map = ZombieMap.town;
   int _level = 1;
+  bool _versus = false; // 2 players: zombie vs human instead of teaming up
+  bool _beZombie = false; // in zombie vs human, you play the zombies
+  String? _busy; // what we're waiting for online
 
   @override
   void initState() {
@@ -36,6 +50,167 @@ class _ZombieScreenState extends State<ZombieScreen> {
       MaterialPageRoute(
         builder: (_) =>
             ZombieGameScreen(map: _map, level: _level, gunId: _save.gun),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<bool> _askName() async {
+    if (_save.name.trim().isNotEmpty) return true;
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Pick a player name'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 12,
+          decoration: const InputDecoration(hintText: 'Your name'),
+          onSubmitted: (v) => Navigator.of(context).pop(v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(ctrl.text),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    final clean = (name ?? '').trim();
+    if (clean.isEmpty) return false;
+    setState(() => _save.name = clean);
+    await _save.save();
+    return true;
+  }
+
+  Future<String?> _askCode() async {
+    final ctrl = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Type your friend's room code"),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 4,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(hintText: 'ABCD'),
+          onSubmitted: (v) => Navigator.of(context).pop(v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(ctrl.text),
+            child: const Text('JOIN'),
+          ),
+        ],
+      ),
+    );
+    final clean = (code ?? '').trim().toUpperCase();
+    return clean.length == 4 ? clean : null;
+  }
+
+  void _say(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// 2 players online. [code] joins a friend's room; [friends] makes a room
+  /// with a code to share; otherwise it looks for someone who picked the
+  /// same game, or waits for one.
+  Future<void> _playOnline({bool friends = false, String? code}) async {
+    if (!await _askName() || !mounted) return;
+    final make = widget.makeLink;
+    final dir = widget.makeDirectory();
+    if (make() == null || dir == null) {
+      _say('2 players only works on the website.');
+      return;
+    }
+    final setup = ZombieRoomSetup(
+      _versus ? ZombieMode.versus : ZombieMode.coop,
+      _map,
+      _level,
+      hostIsZombie: _versus && _beZombie,
+    );
+    OutplayRoom? room;
+    try {
+      if (code != null) {
+        setState(() => _busy = 'Joining $code...');
+        room = await OutplayRoom.join(() => make()!, code);
+        if (!isZombieRoom(room.mapId)) {
+          room.close();
+          throw 'That code is for a different game, not Zombie Attack.';
+        }
+      } else if (friends) {
+        setState(() => _busy = 'Making a room...');
+        room = await OutplayRoom.host(
+          () => make()!,
+          setup.roomName,
+          teamSize: 1,
+          showCode: true,
+        );
+      } else {
+        setState(() => _busy = 'Looking for a player...');
+        // Someone waiting for the same game, playing the other side.
+        final want = ZombieRoomSetup(
+          setup.mode,
+          _map,
+          _level,
+          hostIsZombie: _versus && !_beZombie,
+        ).roomName;
+        var rooms = const <RoomInfo>[];
+        dir.browse((r) => rooms = r);
+        await Future<void>.delayed(const Duration(milliseconds: 2500));
+        dir.stopBrowse();
+        for (final r in rooms.where(
+          (r) => r.mapId == want && !r.friends && !r.playing,
+        )) {
+          try {
+            room = await OutplayRoom.join(() => make()!, r.code);
+            break;
+          } catch (_) {
+            // Gone or full: try the next one.
+          }
+        }
+        room ??= await OutplayRoom.host(
+          () => make()!,
+          setup.roomName,
+          teamSize: 1,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _busy = null);
+        _say('$e');
+      }
+      return;
+    }
+    if (!mounted) {
+      room.close();
+      return;
+    }
+    setState(() => _busy = null);
+    final session = ZombieSession(
+      room: room,
+      lister: room.isHost && !room.showCode ? dir : null,
+      myName: _save.name.trim(),
+      myGun: _save.gun,
+    );
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ZombieGameScreen(
+          map: session.setup.map,
+          level: session.setup.level,
+          gunId: _save.gun,
+          session: session,
+        ),
       ),
     );
     if (mounted) setState(() {});
@@ -148,6 +323,9 @@ class _ZombieScreenState extends State<ZombieScreen> {
               ),
             ),
             const SizedBox(height: 22),
+            _heading('2 PLAYERS'),
+            _twoPlayers(),
+            const SizedBox(height: 22),
             _heading('GUN SHOP'),
             for (final g in kGuns)
               if (!g.dropOnly || _save.guns.contains(g.id)) _gunTile(g),
@@ -190,6 +368,117 @@ class _ZombieScreenState extends State<ZombieScreen> {
             ],
           ),
         ),
+      ],
+    ),
+  );
+
+  Widget _choice(String label, bool on, VoidCallback tap) => Expanded(
+    child: ChoiceChip(
+      label: SizedBox(
+        width: double.infinity,
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: on ? Colors.black : Colors.white,
+          ),
+        ),
+      ),
+      selected: on,
+      showCheckmark: false,
+      selectedColor: _green,
+      backgroundColor: _bg,
+      onSelected: (_) => setState(tap),
+    ),
+  );
+
+  /// Play with a friend on another phone or tablet.
+  Widget _twoPlayers() => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: _panel,
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            _choice('Team up', !_versus, () => _versus = false),
+            const SizedBox(width: 8),
+            _choice('Zombie vs Human', _versus, () => _versus = true),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _versus
+              ? 'One of you is the human. The other is the zombies: send '
+                    'zombies in with brains, then become the Zombie King at '
+                    'wave $kKingArrives!'
+              : 'Two humans against the zombies, on the map and level you '
+                    'picked above.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        if (_versus) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _choice('Be the human', !_beZombie, () => _beZombie = false),
+              const SizedBox(width: 8),
+              _choice('Be the zombies', _beZombie, () => _beZombie = true),
+            ],
+          ),
+        ],
+        const SizedBox(height: 12),
+        if (_busy != null)
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Text(
+              _busy!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _green),
+            ),
+          )
+        else ...[
+          ElevatedButton.icon(
+            onPressed: () => _playOnline(),
+            icon: const Icon(Icons.public_rounded),
+            label: const Text('FIND A PLAYER'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF7B1FA2),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _playOnline(friends: true),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('MAKE A ROOM'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () async {
+                    final code = await _askCode();
+                    if (code != null) await _playOnline(code: code);
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('JOIN A CODE'),
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     ),
   );

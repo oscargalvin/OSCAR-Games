@@ -6,7 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:oscar_games/games/zombie_attack/zombie_3d.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_data.dart';
+import 'package:oscar_games/games/outplay/outplay_net.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_game.dart';
+import 'package:oscar_games/games/zombie_attack/zombie_net.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_screen.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_sim.dart';
 
@@ -300,6 +302,216 @@ void main() {
     await shoot.up();
     await tester.pumpWidget(const SizedBox());
   });
+
+  test('room names round-trip', () {
+    const setup = ZombieRoomSetup(
+      ZombieMode.versus,
+      ZombieMap.snow,
+      2,
+      hostIsZombie: true,
+    );
+    final back = ZombieRoomSetup.parse(setup.roomName)!;
+    expect(back.mode, ZombieMode.versus);
+    expect(back.map, ZombieMap.snow);
+    expect(back.level, 2);
+    expect(back.hostIsZombie, isTrue);
+    expect(back.zombieHere(true), isTrue);
+    expect(back.zombieHere(false), isFalse);
+    expect(ZombieRoomSetup.parse('bb:classic'), isNull);
+  });
+
+  test('two people team up against the zombies online', () async {
+    final (host, guest) = await _pair(
+      const ZombieRoomSetup(ZombieMode.coop, ZombieMap.town, 1),
+    );
+    final h = host.world!, g = guest.world!;
+    expect(h.survivors.map((s) => s.name), ['Oscar', 'Friend']);
+    expect(g.survivors.map((s) => s.name), ['Oscar', 'Friend']);
+    expect(h.youIndex, 0);
+    expect(g.youIndex, 1);
+    expect(h.survivors[0].gun.id, 'shotgun');
+    expect(g.authority, isFalse);
+
+    // The friend walks right: they move on the room maker's phone too.
+    final start = h.survivors[1].pos;
+    for (var t = 0.0; t < 1; t += 1 / 30) {
+      g.input.move = const Offset(1, 0);
+      host.update(1 / 30);
+      guest.update(1 / 30);
+    }
+    expect(h.survivors[1].pos.dx, greaterThan(start.dx + 4));
+
+    // Waves come for both and show up on the friend's phone.
+    _both(host, guest, 4);
+    expect(h.wave, 1);
+    expect(g.wave, 1);
+    expect(g.zombies.length, h.zombies.length);
+    expect(h.zombiesLeft, greaterThan(6)); // more zombies for two
+
+    // The friend's grenade is thrown by the room maker's phone.
+    guest.grenade();
+    _both(host, guest, 0.2);
+    expect(h.survivors[1].grenades, 1);
+    expect(g.survivors[1].grenades, 1);
+  });
+
+  test('zombie vs human: send zombies, then become the King', () async {
+    final (host, guest) = await _pair(
+      const ZombieRoomSetup(
+        ZombieMode.versus,
+        ZombieMap.town,
+        0,
+        hostIsZombie: true,
+      ),
+    );
+    final h = host.world!, g = guest.world!;
+    expect(host.youAreZombie, isTrue);
+    expect(guest.youAreZombie, isFalse);
+    expect(h.youAreBoss, isTrue);
+    expect(g.youAreBoss, isFalse);
+    expect(h.survivors.single.name, 'Friend');
+    expect(h.boss!.name, 'Oscar');
+
+    // The zombie player sends a runner in once they have the brains.
+    _both(host, guest, 3);
+    final before = h.zombies.length;
+    h.boss!.pos = const Offset(10, 32);
+    h.boss!.brains = 5;
+    host.order(ZombieOrder.runner);
+    _both(host, guest, 0.1);
+    expect(h.zombies.length, greaterThan(before));
+    expect(h.boss!.brains, lessThan(4));
+
+    // Skip ahead to wave 4: the King arrives and the zombie player drives it.
+    h.wave = kKingArrives - 1;
+    h.zombies.clear();
+    for (var t = 0.0; t < 60 && h.king == null; t += 1 / 30) {
+      h.zombies.removeWhere((z) => !z.controlled);
+      host.update(1 / 30);
+      guest.update(1 / 30);
+    }
+    final king = h.king!;
+    expect(king.controlled, isTrue);
+    _both(host, guest, 0.2);
+    expect(g.king, isNotNull);
+    final kingStart = king.pos;
+    h.boss!.input.move = const Offset(1, 0);
+    _both(host, guest, 0.5);
+    expect(king.pos.dx, greaterThan(kingStart.dx + 1));
+
+    // The human beats the King: the humans win on both phones.
+    king.hp = 0.5;
+    h.survivors.single.pos = king.pos + const Offset(0, 6);
+    h.survivors.single.aimAngle = -pi / 2;
+    for (var t = 0.0; t < 3 && h.phase != ZombiePhase.over; t += 1 / 30) {
+      g.input
+        ..aim = king.pos - h.survivors.single.pos
+        ..fire = true;
+      host.update(1 / 30);
+      guest.update(1 / 30);
+    }
+    _both(host, guest, 0.2);
+    expect(h.winner, 'humans');
+    expect(g.winner, 'humans');
+    expect(g.phase, ZombiePhase.over);
+  });
+
+  test('the King smashes people, and wins if they all go down', () {
+    final w = ZombieWorld(mode: ZombieMode.versus, random: Random(3))
+      ..youIndex = -1;
+    w.wave = kKingArrives - 1;
+    w.phaseT = 0.01;
+    w.step(1 / 60);
+    final king = w.king!;
+    final s = w.survivors.single;
+    s.pos = king.pos + const Offset(2.5, 0);
+    w.boss!.input
+      ..aim = const Offset(1, 0)
+      ..fire = true;
+    for (var t = 0.0; t < 10 && w.phase != ZombiePhase.over; t += 1 / 60) {
+      s.pos = king.pos + const Offset(2.5, 0);
+      w.zombies.removeWhere((z) => !z.controlled);
+      w.step(1 / 60);
+    }
+    expect(w.winner, 'zombies');
+  });
+
+  testWidgets('2-player screens: waiting room, then zombie buttons', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final hub = LoopbackHub();
+    const setup = ZombieRoomSetup(
+      ZombieMode.versus,
+      ZombieMap.town,
+      1,
+      hostIsZombie: true,
+    );
+    final room = (await tester.runAsync(
+      () => OutplayRoom.host(
+        hub.makeLink,
+        setup.roomName,
+        teamSize: 1,
+        showCode: true,
+      ),
+    ))!;
+    final host = ZombieSession(room: room, myName: 'Oscar');
+    await tester.pumpWidget(MaterialApp(home: ZombieGameScreen(session: host)));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text(room.code), findsOneWidget);
+    expect(find.text('You are the zombies!'), findsOneWidget);
+
+    final guestRoom = (await tester.runAsync(
+      () => OutplayRoom.join(hub.makeLink, room.code),
+    ))!;
+    final guest = ZombieSession(room: guestRoom, myName: 'Friend');
+    for (var i = 0; i < 10 && !host.started; i++) {
+      guest.update(1 / 30);
+      await tester.pump(const Duration(milliseconds: 33));
+    }
+    expect(host.started, isTrue);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Walker'), findsOneWidget);
+    expect(find.text('Tank'), findsOneWidget);
+    expect(find.text('SHOOT'), findsNothing);
+    expect(find.text('The Zombie King comes at wave 4'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    guest.close();
+  });
+}
+
+Future<(ZombieSession, ZombieSession)> _pair(ZombieRoomSetup setup) async {
+  final hub = LoopbackHub();
+  final hostRoom = await OutplayRoom.host(
+    hub.makeLink,
+    setup.roomName,
+    teamSize: 1,
+    showCode: true,
+  );
+  final host = ZombieSession(
+    room: hostRoom,
+    myName: 'Oscar',
+    myGun: 'shotgun',
+    random: Random(1),
+  );
+  final guestRoom = await OutplayRoom.join(hub.makeLink, hostRoom.code);
+  final guest = ZombieSession(room: guestRoom, myName: 'Friend');
+  for (var i = 0; i < 20 && !(host.started && guest.started); i++) {
+    host.update(1 / 30);
+    guest.update(1 / 30);
+  }
+  expect(host.started, isTrue);
+  expect(guest.started, isTrue);
+  return (host, guest);
+}
+
+void _both(ZombieSession a, ZombieSession b, double seconds) {
+  for (var t = 0.0; t < seconds; t += 1 / 30) {
+    a.update(1 / 30);
+    b.update(1 / 30);
+  }
 }
 
 ZombieWorld _world(WidgetTester tester) {
