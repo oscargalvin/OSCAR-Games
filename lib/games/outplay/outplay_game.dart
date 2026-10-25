@@ -181,7 +181,10 @@ class _Kart {
   final Offset pos;
   final double heading;
   final Color color;
-  const _Kart(this.pos, this.heading, this.color);
+
+  /// Karts with two goats stacked on top fling you sky high.
+  final bool twoGoats;
+  const _Kart(this.pos, this.heading, this.color, {this.twoGoats = false});
 }
 
 class _Tracer {
@@ -997,6 +1000,15 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
         for (final p in _people) {
           if (!p.alive || p.remote || p.kartT > 0 || p.z > 0.35) continue;
           if ((p.pos - k.pos).distance > 0.55 + _personRadius) continue;
+          if (k.twoGoats) {
+            // Two goats: fling them sky high, all the way to the top of
+            // the map.
+            p.kartT = 2.6;
+            p.vz = 13;
+            p.fling = Offset(0, -3.2 * max(0.0, p.pos.dy - 1.6));
+            if (p.isYou) _addFeed('Two goats flung you SKY HIGH!');
+            continue;
+          }
           // Boing! Launched into the air, no damage.
           p.kartT = 1.2;
           p.vz = 6.5;
@@ -1075,7 +1087,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
           final a = _map.loopPoint(along), b = _map.loopPoint(along + 0.05);
           final heading = (b - a).direction;
           final out = Offset.fromDirection(heading - pi / 2, lane);
-          return _Kart(a + out, heading, _shirts[(i * 3) % _shirts.length]);
+          return _Kart(
+            a + out,
+            heading,
+            _shirts[(i * 3) % _shirts.length],
+            twoGoats: i % 3 == 1,
+          );
         }(),
     ];
   }
@@ -4156,35 +4173,40 @@ class _ViewPainter extends CustomPainter {
           b(at(fw, side * 0.33, 0.1), 0.1, 0.05, 0.1, const Color(0xFF212121));
         }
       }
-      // The goat: body, head, horns, ears and a little beard.
-      b(at(-0.1, 0, 0.36), 0.14, 0.13, 0.14, goat);
-      b(at(0.05, 0, 0.58), 0.1, 0.09, 0.09, goat);
-      for (final side in [-1.0, 1.0]) {
-        b(
-          at(0.02, side * 0.06, 0.71),
-          0.02,
-          0.02,
-          0.05,
-          const Color(0xFF8D6E63),
-        );
-        b(
-          at(0.03, side * 0.12, 0.6),
-          0.03,
-          0.04,
-          0.015,
-          const Color(0xFFEEEEEE),
-        );
-        sc.quad(
-          at(0.152, side * 0.04, 0.61),
-          r * 0.015,
-          kUp * 0.015,
-          const Color(0xFF15172A),
-          normal: f,
-          lit: false,
-          decal: true,
-        );
+      // The goat: body, head, horns, ears and a little beard. A second
+      // goat stands on the first one's back.
+      for (final up in [0.0, if (k.twoGoats) 0.42]) {
+        V3 at(double fw, double rt, double h) =>
+            op3(k.pos, h + up) + f * (fw - up * 0.2) + r * rt;
+        b(at(-0.1, 0, 0.36), 0.14, 0.13, 0.14, goat);
+        b(at(0.05, 0, 0.58), 0.1, 0.09, 0.09, goat);
+        for (final side in [-1.0, 1.0]) {
+          b(
+            at(0.02, side * 0.06, 0.71),
+            0.02,
+            0.02,
+            0.05,
+            const Color(0xFF8D6E63),
+          );
+          b(
+            at(0.03, side * 0.12, 0.6),
+            0.03,
+            0.04,
+            0.015,
+            const Color(0xFFEEEEEE),
+          );
+          sc.quad(
+            at(0.152, side * 0.04, 0.61),
+            r * 0.015,
+            kUp * 0.015,
+            const Color(0xFF15172A),
+            normal: f,
+            lit: false,
+            decal: true,
+          );
+        }
+        b(at(0.12, 0, 0.47), 0.02, 0.02, 0.04, const Color(0xFFBDBDBD));
       }
-      b(at(0.12, 0, 0.47), 0.02, 0.02, 0.04, const Color(0xFFBDBDBD));
     });
   }
 
