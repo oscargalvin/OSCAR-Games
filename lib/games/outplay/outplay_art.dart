@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'outplay_3d.dart';
 import 'outplay_data.dart';
 
 const Color kOutplayInk = Color(0xFF15172A);
@@ -1441,12 +1442,7 @@ class _WeaponIconPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.translate(size.width / 2, size.height / 2);
-    final rotate = look == WeaponLook.scythe;
-    if (rotate) canvas.translate(0, size.height * 0.2);
-    paintWeapon(canvas, look, color, size.width * 0.9, skin: skin);
-    canvas.restore();
+    paintWeaponIcon3D(canvas, size, look, color, skin: skin);
   }
 
   @override

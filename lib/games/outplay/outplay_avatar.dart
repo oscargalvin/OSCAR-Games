@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../../services/sound_service.dart';
+import 'outplay_3d.dart';
 import 'outplay_art.dart';
 import 'outplay_data.dart';
 
@@ -472,16 +473,7 @@ class _AvatarPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Leave room above the head for tall hats.
-    final top = size.height * 0.16;
-    final h = size.height - top;
-    final w = h * 0.5;
-    paintAvatar(
-      canvas,
-      avatar,
-      Rect.fromLTWH((size.width - w) / 2, top, w, h),
-      facing: facing,
-    );
+    paintAvatar3D(canvas, size, avatar, turn: facing ? 0.3 : pi + 0.3);
   }
 
   @override

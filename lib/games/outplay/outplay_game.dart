@@ -6,6 +6,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/sound_service.dart';
+import '../boost_ball/boost_ball_3d.dart' show V3;
+import 'outplay_3d.dart';
 import 'outplay_art.dart';
 import 'outplay_avatar.dart';
 import 'outplay_data.dart';
@@ -3224,20 +3226,12 @@ class _OutplayGameScreenState extends State<OutplayGameScreen>
 // Drawing the first-person view.
 // ===========================================================================
 
-class _Sprite {
-  final double dist;
-  final void Function(Canvas canvas) draw;
-  _Sprite(this.dist, this.draw);
-}
-
 class _ViewPainter extends CustomPainter {
   final _OutplayGameScreenState s;
   _ViewPainter(this.s);
 
   late double _w, _h, _horizon, _proj, _camZ;
   late Offset _cam, _dir, _plane;
-  late List<double> _zbuf;
-  late double _colW;
 
   OutplayMap get map => s._map;
 
@@ -3256,11 +3250,13 @@ class _ViewPainter extends CustomPainter {
     _plane = Offset(-_dir.dy, _dir.dx) * tan(_fov / 2);
 
     _paintSky(canvas);
-    _paintFloor(canvas);
-    _paintWalls(canvas);
-    _paintStrap(canvas);
-    _paintRopes(canvas);
-    _paintSprites(canvas);
+    _paintWorld(canvas);
+    final pose = _weaponPose();
+    _muzzle =
+        (pose == null
+            ? null
+            : _s3.project(pose.$1 + pose.$2.unit * (pose.$4 / 2))) ??
+        Offset(_w * 0.47, _h * 0.66);
     _paintTracers(canvas);
     _paintHooks(canvas);
     if (map.id == 'leaf_maze') _paintFallingLeaves(canvas);
@@ -3439,48 +3435,6 @@ class _ViewPainter extends CustomPainter {
     return (cx + cy).isEven ? map.floorA : map.floorB;
   }
 
-  void _paintFloor(Canvas canvas) {
-    final rowH = max(4.0, _h / 110);
-    const cols = 72;
-    final colW = _w / cols;
-    final left = _dir - _plane;
-    final right = _dir + _plane;
-    final paint = Paint();
-    for (var y = _horizon; y < _h; y += rowH) {
-      final p = y + rowH / 2 - _horizon;
-      final rowDist = _camZ * _proj / p;
-      final fog = (rowDist / 14).clamp(0.0, 0.7);
-      var runStart = 0;
-      Color? runColor;
-      for (var i = 0; i <= cols; i++) {
-        Color? c;
-        if (i < cols) {
-          final f = (i + 0.5) / cols;
-          final ray = left + (right - left) * f;
-          final wx = _cam.dx + ray.dx * rowDist;
-          final wy = _cam.dy + ray.dy * rowDist;
-          c = Color.lerp(_floorColor(wx, wy), map.skyBottom, fog);
-        }
-        if (c != runColor) {
-          if (runColor != null) {
-            paint.color = runColor;
-            canvas.drawRect(
-              Rect.fromLTWH(
-                runStart * colW,
-                y,
-                (i - runStart) * colW + 0.6,
-                rowH + 0.6,
-              ),
-              paint,
-            );
-          }
-          runColor = c;
-          runStart = i;
-        }
-      }
-    }
-  }
-
   late final Rect? _ring = map.ring?.inflate(0.0);
 
   Color _wallColor(String c) {
@@ -3520,248 +3474,6 @@ class _ViewPainter extends CustomPainter {
     }
   }
 
-  void _paintWalls(Canvas canvas) {
-    final rays = (_w / 3).round().clamp(90, 220);
-    _colW = _w / rays;
-    _zbuf = List.filled(rays, 1e9);
-    final paint = Paint();
-    final edge = Paint();
-    for (var i = 0; i < rays; i++) {
-      final f = (i + 0.5) / rays * 2 - 1;
-      final ray = _dir + _plane * f;
-      final hit = s._cast(_cam, ray.direction);
-      // Straighten the fish-eye: use distance along the view direction.
-      final perp = max(
-        0.05,
-        hit.dist * (ray.dx * _dir.dx + ray.dy * _dir.dy) / ray.distance,
-      );
-      _zbuf[i] = perp;
-      final top = _horizon + (_camZ - map.wallHeight) * _proj / perp;
-      final bottom = _horizon + _camZ * _proj / perp;
-      var color = _wallColor(hit.cell);
-      if (hit.side == 1) color = Color.lerp(color, Colors.black, 0.22)!;
-      // Darker block edges so walls look like blocks.
-      if (hit.wallX < 0.06 || hit.wallX > 0.94) {
-        color = Color.lerp(color, Colors.black, 0.3)!;
-      }
-      color = Color.lerp(color, map.skyBottom, (perp / 16).clamp(0.0, 0.65))!;
-      paint.color = color;
-      final x = i * _colW;
-      canvas.drawRect(Rect.fromLTRB(x, top, x + _colW + 0.6, bottom), paint);
-      final wallH = bottom - top;
-      if (hit.cell == 'W' && (hit.wallX * 6).floor().isEven) {
-        // Stripy old wallpaper.
-        edge.color = Color.lerp(color, Colors.white, 0.08)!;
-        canvas.drawRect(Rect.fromLTRB(x, top, x + _colW + 0.6, bottom), edge);
-      }
-      if (hit.cell == 'Y') {
-        // Stacks of tyres with red and white bands.
-        final band = (hit.wallX * 4).floor().isEven
-            ? const Color(0xFFE53935)
-            : Colors.white;
-        edge.color = Color.lerp(
-          band,
-          map.skyBottom,
-          (perp / 16).clamp(0.0, 0.65),
-        )!;
-        canvas.drawRect(
-          Rect.fromLTWH(x, top + wallH * 0.42, _colW + 0.6, wallH * 0.16),
-          edge,
-        );
-      }
-      if (hit.cell == 'H') {
-        // Straw lines on the hay bales.
-        edge.color = Color.lerp(color, Colors.brown, 0.3)!;
-        for (final f in [0.3, 0.7]) {
-          canvas.drawRect(
-            Rect.fromLTWH(x, top + wallH * f, _colW + 0.6, wallH * 0.05),
-            edge,
-          );
-        }
-      }
-      if (hit.cell == 'D') {
-        // Bookshelves: shelves with coloured books.
-        for (var r = 0; r < 4; r++) {
-          final y0 = top + wallH * (0.08 + r * 0.23);
-          final book = ((hit.wallX * 9).floor() + r * 3) % 4;
-          edge.color = Color.lerp(
-            const [
-              Color(0xFFC62828),
-              Color(0xFF2E7D32),
-              Color(0xFF1565C0),
-              Color(0xFFF9A825),
-            ][book],
-            map.skyBottom,
-            (perp / 16).clamp(0.0, 0.65),
-          )!;
-          canvas.drawRect(
-            Rect.fromLTWH(x, y0, _colW + 0.6, wallH * 0.18),
-            edge,
-          );
-        }
-      }
-      if (hit.cell == 'X' || hit.cell == 'J') {
-        // The round holes in a croc, in rows up the wall.
-        edge.color = Color.lerp(color, Colors.black, 0.45)!;
-        final perUnit = wallH / map.wallHeight; // screen size of 1 block
-        final dx = ((hit.wallX * 3) % 1 - 0.5) / 0.3;
-        if (dx.abs() < 1) {
-          final half = sqrt(1 - dx * dx) * perUnit * 0.1;
-          final holeRows = max(2, (map.wallHeight * 2.5).round());
-          for (var r = 0; r < holeRows; r++) {
-            // Stagger every other row like the real thing.
-            if (r.isOdd && ((hit.wallX * 3).floor().isEven)) continue;
-            final cy = top + wallH * (r + 0.7) / (holeRows + 0.4);
-            canvas.drawRect(
-              Rect.fromLTRB(x, cy - half, x + _colW + 0.6, cy + half),
-              edge,
-            );
-          }
-        }
-        // The rounded rim along the top.
-        edge.color = Color.lerp(color, Colors.white, 0.18)!;
-        canvas.drawRect(
-          Rect.fromLTWH(x, top, _colW + 0.6, max(1, perUnit * 0.12)),
-          edge,
-        );
-      }
-      if (hit.cell == 'A') {
-        // Rows of cheering fans in the stands.
-        const shirts = [
-          Color(0xFFEF5350),
-          Color(0xFFFFCA28),
-          Color(0xFF42A5F5),
-          Color(0xFF66BB6A),
-          Color(0xFFAB47BC),
-          Color(0xFFFFFFFF),
-        ];
-        final col = (hit.wallX * 5).floor();
-        final fx = (hit.wallX * 5) % 1;
-        if (fx > 0.15 && fx < 0.85) {
-          for (var r = 0; r < 4; r++) {
-            final seed = (col * 7 + r * 13 + hit.cell.hashCode) % shirts.length;
-            final bounce = sin(s._clock * 6 + col + r * 2) > 0.6 ? 0.03 : 0.0;
-            final y0 = top + wallH * (0.12 + r * 0.22 - bounce);
-            edge.color = Color.lerp(
-              shirts[seed],
-              map.skyBottom,
-              (perp / 16).clamp(0.0, 0.6),
-            )!;
-            canvas.drawRect(
-              Rect.fromLTWH(x, y0 + wallH * 0.06, _colW + 0.6, wallH * 0.09),
-              edge,
-            );
-            if (fx > 0.3 && fx < 0.7) {
-              edge.color = Color.lerp(
-                const Color(0xFFFFCC80),
-                map.skyBottom,
-                (perp / 16).clamp(0.0, 0.6),
-              )!;
-              canvas.drawRect(
-                Rect.fromLTWH(x, y0, _colW + 0.6, wallH * 0.06),
-                edge,
-              );
-            }
-          }
-        }
-      }
-      // Brick and crate details.
-      if (hit.cell == 'R' || hit.cell == 'C') {
-        edge.color = Color.lerp(color, Colors.black, 0.25)!;
-        final rows = hit.cell == 'R' ? 4 : 3;
-        for (var r = 1; r < rows; r++) {
-          final yy = top + (bottom - top) * r / rows;
-          canvas.drawRect(
-            Rect.fromLTWH(x, yy, _colW + 0.6, max(1, (bottom - top) / 60)),
-            edge,
-          );
-        }
-      }
-    }
-  }
-
-  /// The boxing ring's ropes, hidden where a post or wall is in front.
-  void _paintRopes(Canvas canvas) {
-    final ring = _ring;
-    if (ring == null) return;
-    final corners = [
-      ring.topLeft,
-      ring.topRight,
-      ring.bottomRight,
-      ring.bottomLeft,
-    ];
-    const colours = [Color(0xFFE53935), Colors.white, Color(0xFF1E88E5)];
-    final paint = Paint()..strokeCap = StrokeCap.round;
-    for (var side = 0; side < 4; side++) {
-      final a = corners[side], b = corners[(side + 1) % 4];
-      for (var r = 0; r < 3; r++) {
-        final z = 0.35 + r * 0.22;
-        paint.color = colours[r];
-        const steps = 20;
-        for (var i = 0; i < steps; i++) {
-          final p0 = Offset.lerp(a, b, i / steps)!;
-          final p1 = Offset.lerp(a, b, (i + 1) / steps)!;
-          final t = _toCamera((p0 + p1) / 2);
-          if (t.dy < 0.2) continue;
-          final s0 = _project(p0, z), s1 = _project(p1, z);
-          if (s0 == null || s1 == null) continue;
-          final col = (((s0.dx + s1.dx) / 2) / _colW).floor();
-          if (col >= 0 && col < _zbuf.length && _zbuf[col] < t.dy) continue;
-          paint.strokeWidth = (_proj / t.dy * 0.03).clamp(1.0, 4.0);
-          canvas.drawLine(s0, s1, paint);
-        }
-      }
-    }
-  }
-
-  /// The croc's heel strap, arching over the back of the shoe.
-  void _paintStrap(Canvas canvas) {
-    final sx = map.strapX;
-    if (sx == null) return;
-    final col = sx.floor();
-    var y0 = -1, y1 = -1;
-    for (var y = 0; y < map.height; y++) {
-      if (!map.solidAt(col, y)) {
-        if (y0 < 0) y0 = y;
-        y1 = y;
-      }
-    }
-    if (y0 < 0) return;
-    final a = y0.toDouble(), b = y1 + 1.0;
-    final h = map.wallHeight;
-    const steps = 24;
-    final band = Paint()..color = const Color(0xFF689F38);
-    final ink = Paint()
-      ..color = kOutplayInk
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    Offset world(double t) => Offset(sx + sin(pi * t) * 2.6, a + (b - a) * t);
-    double height(double t) => h - 0.15 + sin(pi * t) * 0.9;
-    for (var i = 0; i < steps; i++) {
-      final t0 = i / steps, t1 = (i + 1) / steps;
-      final p0 = world(t0), p1 = world(t1);
-      final q = [
-        _project(p0, height(t0)),
-        _project(p1, height(t1)),
-        _project(p1, height(t1) + 0.55),
-        _project(p0, height(t0) + 0.55),
-      ];
-      if (q.any((e) => e == null)) continue;
-      final path = Path()..addPolygon([for (final e in q) e!], true);
-      canvas.drawPath(path, band);
-      canvas.drawPath(path, ink);
-    }
-    // The round rivets that hold the strap on.
-    for (final t in [0.0, 1.0]) {
-      final c = _project(world(t), height(t) + 0.27);
-      final edge = _project(world(t) + const Offset(0.3, 0), height(t) + 0.27);
-      if (c == null || edge == null) continue;
-      final r = max(3.0, (edge - c).distance);
-      canvas.drawCircle(c, r, Paint()..color = const Color(0xFFFFCA28));
-      canvas.drawCircle(c, r, ink);
-    }
-  }
-
   /// Camera-space position of a world point: (sideways, forward).
   Offset _toCamera(Offset p) {
     final d = p - _cam;
@@ -3780,107 +3492,575 @@ class _ViewPainter extends CustomPainter {
     return Offset(sx, sy);
   }
 
-  void _paintSprites(Canvas canvas) {
-    final sprites = <_Sprite>[];
+  // -------------------------------------------------------------------------
+  // The world in 3D.
+  // -------------------------------------------------------------------------
 
-    void billboard(
-      Offset pos,
-      double z0,
-      double height,
-      double width,
-      void Function(Canvas, Rect, double scale) draw,
-    ) {
-      final t = _toCamera(pos);
-      if (t.dy < 0.2) return;
-      final sx = _w / 2 * (1 + t.dx / t.dy);
-      final scale = _proj / t.dy;
-      final top = _horizon + (_camZ - z0 - height) * scale;
-      final bottom = _horizon + (_camZ - z0) * scale;
-      final halfW = width * scale / 2;
-      final rect = Rect.fromLTRB(sx - halfW, top, sx + halfW, bottom);
-      if (rect.right < 0 || rect.left > _w) return;
-      sprites.add(
-        _Sprite(t.dy, (c) {
-          // Only draw the parts not hidden behind walls.
-          final clip = Path();
-          final first = max(0, (rect.left / _colW).floor());
-          final last = min(_zbuf.length - 1, (rect.right / _colW).floor());
-          var any = false;
-          for (var i = first; i <= last; i++) {
-            if (_zbuf[i] > t.dy) {
-              clip.addRect(Rect.fromLTWH(i * _colW, 0, _colW + 0.8, _h));
-              any = true;
-            }
+  late Scene3D _s3;
+  Offset _muzzle = Offset.zero;
+
+  /// Close enough to bother drawing, and not far behind you.
+  bool _near(Offset p, double r) {
+    final d = p - _cam;
+    return d.distance < r && d.dx * _dir.dx + d.dy * _dir.dy > -1.5;
+  }
+
+  void _paintWorld(Canvas canvas) {
+    // Far-off ground, past where the floor tiles stop.
+    canvas.drawRect(
+      Rect.fromLTRB(0, _horizon, _w, _h),
+      Paint()..color = Color.lerp(map.floorA, map.skyBottom, 0.65)!,
+    );
+    final sc = _s3 = Scene3D(
+      op3(_cam, _camZ),
+      opDir(s._you.angle),
+      _proj,
+      Offset(_w / 2, _horizon),
+      fog: map.skyBottom,
+    );
+    _addFloor(sc);
+    _addWalls(sc);
+    _addRing(sc);
+    _addStrap(sc);
+    _addThings(sc);
+    sc.draw(canvas);
+  }
+
+  void _addFloor(Scene3D sc) {
+    final fancy =
+        _ring != null ||
+        map.hazard == MapHazard.lava ||
+        map.hazard == MapHazard.water ||
+        map.hazard == MapHazard.karts;
+    void tile(double x0, double y0, double x1, double y1, Color c) => sc.poly(
+      [
+        op3(Offset(x0, y0), 0),
+        op3(Offset(x1, y0), 0),
+        op3(Offset(x1, y1), 0),
+        op3(Offset(x0, y1), 0),
+      ],
+      c,
+      lit: false,
+      floor: true,
+    );
+    for (var y = 0; y < map.height; y++) {
+      for (var x = 0; x < map.width; x++) {
+        if (map.solidAt(x, y)) continue;
+        final mid = Offset(x + 0.5, y + 0.5);
+        if (!_near(mid, 40)) continue;
+        final n = !fancy ? 1 : (_near(mid, 10) ? 3 : 2);
+        for (var j = 0; j < n; j++) {
+          for (var i = 0; i < n; i++) {
+            final x0 = x + i / n, y0 = y + j / n;
+            // One sample per tile, off the middle so the croc bumps
+            // (drawn below) don't paint the whole square.
+            final c = n == 1
+                ? _floorColor(x + 0.25, y + 0.25)
+                : _floorColor(x0 + 0.5 / n, y0 + 0.5 / n);
+            tile(x0, y0, x0 + 1 / n, y0 + 1 / n, c);
           }
-          if (!any) return;
-          c.save();
-          c.clipPath(clip);
-          draw(c, rect, scale);
-          c.restore();
-        }),
+        }
+      }
+    }
+    if (map.hazard == MapHazard.cars) {
+      // White road edges and a dashed yellow middle line.
+      const top = OutplayMap.roadTop, bottom = OutplayMap.roadBottom;
+      final w = map.width.toDouble();
+      tile(0, top, w, top + 0.12, Colors.white);
+      tile(0, bottom - 0.12, w, bottom, Colors.white);
+      final mid = (top + bottom) / 2;
+      for (var x = 0.0; x < w; x += 2) {
+        tile(x, mid - 0.08, x + 1, mid + 0.08, const Color(0xFFFFEB3B));
+      }
+    }
+    if (map.hazard == MapHazard.bouncy) {
+      // The bumps on a croc's footbed.
+      for (var y = 0; y < map.height; y++) {
+        for (var x = 0; x < map.width; x++) {
+          final mid = Offset(x + 0.5, y + 0.5);
+          if (map.solidAt(x, y) || !_near(mid, 9)) continue;
+          sc.box(
+            op3(mid, 0.02),
+            const V3(1, 0, 0),
+            const V3(0, 1, 0),
+            kUp,
+            0.07,
+            0.07,
+            0.02,
+            const Color(0xFFA9D672),
+          );
+        }
+      }
+    }
+  }
+
+  void _addWalls(Scene3D sc) {
+    final h = map.wallHeight;
+    final eye = op3(_cam, _camZ);
+    for (var y = 0; y < map.height; y++) {
+      for (var x = 0; x < map.width; x++) {
+        final cell = map.cell(x, y);
+        if (!OutplayMap.isSolid(cell)) continue;
+        final mid = Offset(x + 0.5, y + 0.5);
+        if (!_near(mid, 26)) continue;
+        final colour = _wallColor(cell);
+        if (cell == 'P' || cell == 'U' || cell == 'N') {
+          // A padded ring post.
+          sc.group(() {
+            sc.box(
+              op3(mid, 0.55),
+              const V3(1, 0, 0),
+              const V3(0, 1, 0),
+              kUp,
+              0.22,
+              0.22,
+              0.55,
+              colour,
+              top: Color.lerp(colour, Colors.white, 0.3),
+            );
+          }, bias: 0.1);
+          continue;
+        }
+        for (final (dx, dy) in const [(1, 0), (-1, 0), (0, 1), (0, -1)]) {
+          if (map.solidAt(x + dx, y + dy)) continue;
+          final fc = mid + Offset(dx * 0.5, dy * 0.5);
+          final normal = V3(dx.toDouble(), -dy.toDouble(), 0);
+          if (normal.dot(eye - op3(fc, h / 2)) <= 0) continue;
+          final along = dx != 0 ? const V3(0, 1, 0) : const V3(1, 0, 0);
+          sc.group(() {
+            sc.quad(
+              op3(fc, h / 2),
+              along * 0.5,
+              kUp * (h / 2),
+              colour,
+              normal: normal,
+            );
+            if (_near(fc, 11)) {
+              _wallDetail(sc, cell, colour, fc, along, normal, h, x + y);
+            }
+          }, bias: 0.35);
+        }
+        if (_camZ > h) {
+          sc.quad(
+            op3(mid, h),
+            const V3(0.5, 0, 0),
+            const V3(0, 0.5, 0),
+            Color.lerp(colour, Colors.white, 0.12)!,
+            normal: kUp,
+          );
+        }
+      }
+    }
+  }
+
+  /// Bricks, books, croc holes and fans on a wall face.
+  void _wallDetail(
+    Scene3D sc,
+    String cell,
+    Color colour,
+    Offset fc,
+    V3 along,
+    V3 normal,
+    double h,
+    int seed,
+  ) {
+    // A patch from [a0] to [a1] across the face and [z0] to [z1] up it.
+    void patch(double a0, double a1, double z0, double z1, Color c) {
+      final centre =
+          op3(fc, (z0 + z1) / 2) +
+          along * ((a0 + a1) / 2 - 0.5) +
+          normal * 0.006;
+      sc.quad(
+        centre,
+        along * ((a1 - a0) / 2),
+        kUp * ((z1 - z0) / 2),
+        c,
+        normal: normal,
+        decal: true,
       );
     }
 
+    final dark = Color.lerp(colour, Colors.black, 0.3)!;
+    // Darker block edges so walls look like blocks.
+    patch(0, 0.03, 0, h, dark);
+    patch(0.97, 1, 0, h, dark);
+    switch (cell) {
+      case 'R': // bricks
+        final mortar = Color.lerp(colour, Colors.black, 0.25)!;
+        for (var r = 0; r < 4; r++) {
+          final z = h * r / 4;
+          if (r > 0) patch(0, 1, z - 0.012, z + 0.012, mortar);
+          final off = r.isEven ? 0.5 : 0.25;
+          patch(off - 0.012, off + 0.012, z, z + h / 4, mortar);
+          if (r.isOdd) patch(0.75 - 0.012, 0.75 + 0.012, z, z + h / 4, mortar);
+        }
+      case 'C': // crate planks and frame
+        final wood = Color.lerp(colour, Colors.black, 0.25)!;
+        for (final z in [h / 3, h * 2 / 3]) {
+          patch(0, 1, z - 0.015, z + 0.015, wood);
+        }
+        patch(0, 1, h - 0.06, h, wood);
+        patch(0, 1, 0, 0.06, wood);
+        patch(0, 0.07, 0, h, wood);
+        patch(0.93, 1, 0, h, wood);
+      case '#': // stone blocks
+        final seam = Color.lerp(colour, Colors.black, 0.2)!;
+        patch(0, 1, h / 2 - 0.012, h / 2 + 0.012, seam);
+        patch(0.5 - 0.012, 0.5 + 0.012, 0, h / 2, seam);
+      case 'B': // panels
+        final edge = Color.lerp(colour, Colors.white, 0.25)!;
+        patch(0.1, 0.9, h * 0.1, h * 0.13, edge);
+        patch(0.1, 0.9, h * 0.87, h * 0.9, edge);
+      case 'W': // stripy wallpaper
+        final stripe = Color.lerp(colour, Colors.white, 0.1)!;
+        for (var i = 0; i < 3; i++) {
+          patch(i / 3 + 0.05, i / 3 + 0.2, 0, h, stripe);
+        }
+      case 'Y': // tyres with red and white bands
+        for (var i = 0; i < 4; i++) {
+          patch(
+            i / 4,
+            (i + 1) / 4,
+            h * 0.42,
+            h * 0.58,
+            i.isEven ? const Color(0xFFE53935) : Colors.white,
+          );
+        }
+      case 'H': // straw lines on hay
+        final straw = Color.lerp(colour, Colors.brown, 0.3)!;
+        for (final f in [0.3, 0.7]) {
+          patch(0, 1, h * f, h * f + 0.05, straw);
+        }
+      case 'G': // leafy hedge
+        final leaf = Color.lerp(colour, Colors.black, 0.22)!;
+        for (var i = 0; i < 6; i++) {
+          final a = ((seed * 7 + i * 13) % 10) / 10;
+          final z = ((seed * 3 + i * 7) % 9) / 9 * h * 0.85;
+          patch(a, a + 0.12, z, z + 0.12, leaf);
+        }
+      case 'D': // bookshelves
+        const books = [
+          Color(0xFFC62828),
+          Color(0xFF2E7D32),
+          Color(0xFF1565C0),
+          Color(0xFFF9A825),
+        ];
+        for (var r = 0; r < 4; r++) {
+          final z0 = h * (0.08 + r * 0.23);
+          for (var b = 0; b < 6; b++) {
+            patch(
+              0.06 + b * 0.148,
+              0.19 + b * 0.148,
+              z0,
+              z0 + h * 0.18,
+              books[(b + r * 3 + seed) % 4],
+            );
+          }
+        }
+      case 'X' || 'J': // croc holes and a rounded rim
+        final hole = Color.lerp(colour, Colors.black, 0.45)!;
+        final rows = max(2, (h * 2.5).round());
+        for (var r = 0; r < rows; r++) {
+          for (var c = 0; c < 3; c++) {
+            if (r.isOdd && c.isEven) continue;
+            final a = (c + 0.5) / 3, z = h * (r + 0.7) / (rows + 0.4);
+            patch(a - 0.07, a + 0.07, z - 0.07, z + 0.07, hole);
+          }
+        }
+        patch(0, 1, h - 0.1, h, Color.lerp(colour, Colors.white, 0.18)!);
+      case 'A': // cheering fans in the stands
+        const shirts = [
+          Color(0xFFEF5350),
+          Color(0xFFFFCA28),
+          Color(0xFF42A5F5),
+          Color(0xFF66BB6A),
+          Color(0xFFAB47BC),
+          Color(0xFFFFFFFF),
+        ];
+        for (var col = 0; col < 5; col++) {
+          for (var r = 0; r < 4; r++) {
+            final bounce = sin(s._clock * 6 + col + r * 2 + seed) > 0.6
+                ? 0.04
+                : 0.0;
+            final z = h * (0.1 + r * 0.22) + bounce;
+            final a = (col + 0.5) / 5;
+            patch(
+              a - 0.07,
+              a + 0.07,
+              z,
+              z + h * 0.09,
+              shirts[(col * 7 + r * 13 + seed) % shirts.length],
+            );
+            patch(
+              a - 0.035,
+              a + 0.035,
+              z + h * 0.09,
+              z + h * 0.14,
+              const Color(0xFFFFCC80),
+            );
+          }
+        }
+    }
+  }
+
+  /// The boxing ring's ropes.
+  void _addRing(Scene3D sc) {
+    final ring = _ring;
+    if (ring == null) return;
+    final corners = [
+      ring.topLeft,
+      ring.topRight,
+      ring.bottomRight,
+      ring.bottomLeft,
+    ];
+    const colours = [Color(0xFFE53935), Colors.white, Color(0xFF1E88E5)];
+    for (var side = 0; side < 4; side++) {
+      final a = corners[side], b = corners[(side + 1) % 4];
+      final dir = op3(b, 0) - op3(a, 0);
+      final along = dir.unit;
+      final across = along.cross(kUp).unit;
+      const pieces = 8;
+      for (var i = 0; i < pieces; i++) {
+        final mid = Offset.lerp(a, b, (i + 0.5) / pieces)!;
+        if (!_near(mid, 26)) continue;
+        for (var r = 0; r < 3; r++) {
+          sc.box(
+            op3(mid, 0.35 + r * 0.22),
+            along,
+            across,
+            kUp,
+            dir.length / pieces / 2,
+            0.025,
+            0.025,
+            colours[r],
+          );
+        }
+      }
+    }
+  }
+
+  /// The croc's heel strap, arching over the back of the shoe.
+  void _addStrap(Scene3D sc) {
+    final sx = map.strapX;
+    if (sx == null) return;
+    final col = sx.floor();
+    var y0 = -1, y1 = -1;
+    for (var y = 0; y < map.height; y++) {
+      if (!map.solidAt(col, y)) {
+        if (y0 < 0) y0 = y;
+        y1 = y;
+      }
+    }
+    if (y0 < 0) return;
+    final a = y0.toDouble(), b = y1 + 1.0;
+    final h = map.wallHeight;
+    const steps = 24;
+    Offset world(double t) => Offset(sx + sin(pi * t) * 2.6, a + (b - a) * t);
+    double height(double t) => h - 0.15 + sin(pi * t) * 0.9;
+    for (var i = 0; i < steps; i++) {
+      final t0 = i / steps, t1 = (i + 1) / steps;
+      final p0 = world(t0), p1 = world(t1);
+      sc.poly([
+        op3(p0, height(t0)),
+        op3(p1, height(t1)),
+        op3(p1, height(t1) + 0.55),
+        op3(p0, height(t0) + 0.55),
+      ], const Color(0xFF689F38));
+    }
+    // The round rivets that hold the strap on.
+    for (final t in [0.0, 1.0]) {
+      sc.box(
+        op3(world(t), height(t) + 0.27),
+        const V3(1, 0, 0),
+        const V3(0, 1, 0),
+        kUp,
+        0.2,
+        0.2,
+        0.2,
+        const Color(0xFFFFCA28),
+      );
+    }
+  }
+
+  void _addThings(Scene3D sc) {
+    const xAxis = V3(1, 0, 0), yAxis = V3(0, 1, 0);
     for (final p in s._people) {
-      if (p.isYou || !p.alive) continue;
-      billboard(
+      if (p.isYou || !p.alive || !_near(p.pos, 30)) continue;
+      final snakeOut =
+          s._hooks.any((h) => identical(h.owner, p)) || p.netHook != null;
+      addPerson(
+        sc,
+        p.look,
         p.pos,
         p.z,
-        0.92,
-        0.62,
-        (c, r, scale) => _drawPerson(c, p, r, scale),
+        p.angle,
+        walk: p.walkCycle,
+        hurt: p.hurtT > 0,
+        slow: p.slowT > 0,
+        held: snakeOut ? null : (p.gun?.look ?? p.held.look),
+        heldColour: p.gun?.color ?? p.held.color,
+        skin: p.skinOf(p.heldId),
+        swing: p.swingT > 0 ? sin(p.swingT / 0.22 * pi) : 0,
       );
+      final f = opDir(p.angle);
+      final head = op3(p.pos, p.z + 1.12);
+      final depth = sc.depthOf(op3(p.pos, p.z + 0.5));
+      if (p.flashT > 0 && p.gun != null) {
+        final r = f.cross(kUp).unit;
+        sc.box(
+          op3(p.pos, p.z + 0.62) + f * 0.6 + r * 0.06,
+          f,
+          r,
+          kUp,
+          0.06,
+          0.06,
+          0.06,
+          const Color(0xEEFFF176),
+        );
+      }
+      // Name and health above their head.
+      sc.later(depth - 0.05, (c) {
+        final at = sc.project(head);
+        if (at == null || depth < 0.3) return;
+        final scale = _proj / depth;
+        final friend = s._allies(p, s._you);
+        _text(
+          c,
+          p.name,
+          at - Offset(0, max(9, scale * 0.07)),
+          (scale * 0.1).clamp(9.0, 16.0),
+          friend ? const Color(0xFF80D8FF) : Colors.white,
+        );
+        final bar = Rect.fromCenter(
+          center: at,
+          width: max(30.0, scale * 0.55),
+          height: max(4, scale * 0.03),
+        );
+        c.drawRect(bar, Paint()..color = Colors.black54);
+        c.drawRect(
+          Rect.fromLTWH(bar.left, bar.top, bar.width * p.hp / 100, bar.height),
+          Paint()
+            ..color = friend
+                ? const Color(0xFF40C4FF)
+                : const Color(0xFFEF5350),
+        );
+      });
     }
     for (final car in s._cars) {
-      billboard(car.pos, 0, 0.72, 1.5, (c, r, scale) => _drawCar(c, car, r));
+      if (!_near(car.pos, 30)) continue;
+      _addCar(sc, car);
     }
     for (final k in s._karts) {
-      billboard(k.pos, 0, 0.62, 1.0, (c, r, scale) => _drawKart(c, k, r));
+      if (!_near(k.pos, 30)) continue;
+      _addKart(sc, k);
     }
     final ghosts = s._ghosts;
     for (var i = 0; i < ghosts.length; i++) {
+      final g = ghosts[i];
+      if (!_near(g, 30)) continue;
       final bob = 0.25 + 0.12 * sin(s._clock * 2 + i);
-      billboard(ghosts[i], bob, 0.75, 0.6, (c, r, scale) => _drawGhost(c, r));
+      // Ghosts always look at you.
+      final f = (op3(_cam, 0) - op3(g, 0)).unit;
+      final r = f.cross(kUp).unit;
+      const body = Color(0xCCF3E5F5);
+      sc.group(() {
+        sc.box(op3(g, bob + 0.3), f, r, kUp, 0.25, 0.27, 0.3, body);
+        sc.box(op3(g, bob + 0.66), f, r, kUp, 0.2, 0.22, 0.08, body);
+        for (final side in [-1.0, 0.0, 1.0]) {
+          sc.box(
+            op3(g, bob - 0.04) + r * (side * 0.17),
+            f,
+            r,
+            kUp,
+            0.07,
+            0.07,
+            0.05,
+            body,
+          );
+        }
+        const eye = Color(0xFF1A1033);
+        for (final side in [-1.0, 1.0]) {
+          sc.quad(
+            op3(g, bob + 0.48) + f * 0.252 + r * (side * 0.1),
+            r * 0.045,
+            kUp * 0.05,
+            eye,
+            normal: f,
+            lit: false,
+            decal: true,
+          );
+        }
+        sc.quad(
+          op3(g, bob + 0.3) + f * 0.252,
+          r * 0.06,
+          kUp * 0.06,
+          eye,
+          normal: f,
+          lit: false,
+          decal: true,
+        );
+      });
     }
     for (final b in s._balls) {
+      if (!_near(b.pos, 30)) continue;
+      final f = op3(b.vel, 0).unit;
+      final r = f.cross(kUp).unit;
       if (b.gun.look == WeaponLook.rpgMini) {
         // A little rocket with a fiery tail.
-        billboard(b.pos, 0.36, 0.16, 0.16, (c, r, scale) {
-          c.drawCircle(
-            r.center,
-            r.width * 0.9,
-            Paint()
-              ..color = const Color(0x99FFAB00)
-              ..maskFilter = MaskFilter.blur(BlurStyle.normal, r.width * 0.3),
+        sc.group(() {
+          sc.box(
+            op3(b.pos, 0.42),
+            f,
+            r,
+            kUp,
+            0.12,
+            0.05,
+            0.05,
+            const Color(0xFF455A64),
+            front: const Color(0xFFE53935),
           );
-          c.drawOval(r, Paint()..color = const Color(0xFF455A64));
-          c.drawCircle(
-            r.center,
-            r.width * 0.28,
-            Paint()..color = const Color(0xFFFF6D00),
+          sc.box(
+            op3(b.pos, 0.42) - f * 0.18,
+            f,
+            r,
+            kUp,
+            0.07,
+            0.06,
+            0.06,
+            const Color(0xDDFF6D00),
           );
         });
         continue;
       }
-      final size = b.gun.look == WeaponLook.bubble ? 0.42 : 0.24;
-      billboard(b.pos, 0.38, size, size, (c, r, scale) {
-        c.drawOval(r, Paint()..color = b.gun.shotColor.withValues(alpha: 0.85));
-        c.drawOval(
-          r,
-          Paint()
-            ..color = Colors.black26
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = max(1, r.width * 0.06),
+      final size = b.gun.look == WeaponLook.bubble ? 0.21 : 0.12;
+      final spin = s._clock * 5;
+      sc.group(() {
+        sc.box(
+          op3(b.pos, 0.45),
+          V3(cos(spin), sin(spin), 0),
+          V3(-sin(spin), cos(spin), 0),
+          kUp,
+          size / 2,
+          size / 2,
+          size / 2,
+          b.gun.shotColor.withValues(alpha: 0.9),
         );
       });
     }
     for (final p in s._pops) {
+      if (!_near(p.pos, 30)) continue;
       final k = p.t / 0.35;
       final r = p.radius * (0.5 + k);
-      billboard(p.pos, 0.2, r, r * 2, (c, rect, scale) {
-        c.drawOval(
-          rect,
-          Paint()..color = p.color.withValues(alpha: 0.5 * (1 - k)),
+      sc.group(() {
+        sc.box(
+          op3(p.pos, 0.3),
+          xAxis,
+          yAxis,
+          kUp,
+          r,
+          r,
+          r * 0.5,
+          p.color.withValues(alpha: 0.45 * (1 - k)),
         );
       });
     }
@@ -3892,292 +4072,193 @@ class _ViewPainter extends CustomPainter {
       ]) {
         final at = map.padCentre(pad.$1);
         if (at == null) continue;
-        // Signs stand just behind their pad.
-        billboard(
-          at + const Offset(0, -0.7),
-          0.25,
-          1.0,
-          1.6,
-          (c, r, scale) => _drawSign(c, r, pad.$2, pad.$3),
-        );
+        _addSign(sc, at + const Offset(0, -0.7), pad.$2, pad.$3);
       }
     }
     for (final p in s._popups) {
-      billboard(p.pos, 1.0 + p.t * 0.6, 0.25, 0.6, (c, r, scale) {
+      final at3 = op3(p.pos, 1.1 + p.t * 0.6);
+      final depth = sc.depthOf(at3);
+      if (depth < 0.3) continue;
+      sc.later(depth - 0.1, (c) {
+        final at = sc.project(at3);
+        if (at == null) return;
         _text(
           c,
           p.text,
-          r.center,
-          (r.height).clamp(10.0, 30.0),
+          at,
+          (_proj / depth * 0.25).clamp(10.0, 30.0),
           p.color.withValues(alpha: 1 - p.t / 0.7),
         );
       });
     }
-
-    sprites.sort((a, b) => b.dist.compareTo(a.dist));
-    for (final sp in sprites) {
-      sp.draw(canvas);
-    }
   }
 
-  void _drawPerson(Canvas c, _Person p, Rect r, double scale) {
-    final w = r.width, h = r.height;
-    final step = sin(p.walkCycle) * w * 0.08;
-
-    // Which way are they facing compared to you?
-    final toYou = (s._you.pos - p.pos).direction;
-    final facing =
-        cos(_OutplayGameScreenState._angleDiff(p.angle, toYou)) > -0.2;
-
-    paintAvatar(c, p.look, r, facing: facing, step: step, hurt: p.hurtT > 0);
-    final body = RRect.fromRectAndRadius(
-      Rect.fromLTWH(r.left + w * 0.18, r.top + h * 0.3, w * 0.64, h * 0.34),
-      Radius.circular(w * 0.12),
-    );
-    if (facing) {
-      // What they're holding, pointed at you.
-      c.save();
-      c.translate(r.center.dx, r.top + h * 0.5);
-      c.rotate(-pi / 2 + 0.3);
-      final g = p.gun;
-      paintWeapon(
-        c,
-        g?.look ?? p.held.look,
-        g?.color ?? p.held.color,
-        w * 0.6,
-        skin: p.skinOf(p.heldId),
+  void _addCar(Scene3D sc, _Car car) {
+    final f = V3(car.speed >= 0 ? 1 : -1, 0, 0);
+    final r = f.cross(kUp).unit;
+    V3 at(double fw, double rt, double up) =>
+        op3(car.pos, up) + f * fw + r * rt;
+    sc.group(() {
+      sc.box(at(0, 0, 0.3), f, r, kUp, 0.75, 0.36, 0.15, car.color);
+      sc.box(
+        at(-0.08, 0, 0.58),
+        f,
+        r,
+        kUp,
+        0.4,
+        0.32,
+        0.13,
+        const Color(0xFFB3E5FC),
+        top: car.color,
       );
-      c.restore();
-      if (p.flashT > 0) {
-        c.drawCircle(
-          Offset(r.center.dx + w * 0.05, r.top + h * 0.38),
-          w * 0.14,
-          Paint()..color = const Color(0xDDFFF176),
+      for (final fw in [-0.48, 0.48]) {
+        for (final side in [-1.0, 1.0]) {
+          sc.box(
+            at(fw, side * 0.36, 0.14),
+            f,
+            r,
+            kUp,
+            0.14,
+            0.05,
+            0.14,
+            const Color(0xFF212121),
+          );
+        }
+      }
+      for (final side in [-1.0, 1.0]) {
+        sc.box(
+          at(0.76, side * 0.24, 0.32),
+          f,
+          r,
+          kUp,
+          0.01,
+          0.07,
+          0.04,
+          const Color(0xFFFFF59D),
         );
       }
-    }
-    if (p.slowT > 0) {
-      c.drawRRect(body, Paint()..color = const Color(0x6681D4FA));
-    }
-
-    // Name and health above their head.
-    final tag = Offset(r.center.dx, r.top - max(10, h * 0.1));
-    _text(
-      c,
-      p.name,
-      tag - Offset(0, max(9, h * 0.07)),
-      (h * 0.11).clamp(9.0, 16.0),
-      // Teammates' names are blue.
-      s._allies(p, s._you) ? const Color(0xFF80D8FF) : Colors.white,
-    );
-    final barW = max(30.0, w * 0.9);
-    final bar = Rect.fromCenter(
-      center: tag,
-      width: barW,
-      height: max(4, h * 0.035),
-    );
-    c.drawRect(bar, Paint()..color = Colors.black54);
-    c.drawRect(
-      Rect.fromLTWH(bar.left, bar.top, bar.width * p.hp / 100, bar.height),
-      Paint()
-        ..color = s._allies(p, s._you)
-            ? const Color(0xFF40C4FF)
-            : const Color(0xFFEF5350),
-    );
-  }
-
-  void _drawGhost(Canvas c, Rect r) {
-    final w = r.width, h = r.height;
-    final body = Path()
-      ..moveTo(r.left, r.bottom)
-      ..lineTo(r.left, r.top + w / 2)
-      ..arcToPoint(
-        Offset(r.right, r.top + w / 2),
-        radius: Radius.circular(w / 2),
-      )
-      ..lineTo(r.right, r.bottom);
-    // Wavy bottom edge.
-    for (var i = 1; i <= 4; i++) {
-      final x = r.right - w * i / 4;
-      body.lineTo(x + w / 8, r.bottom - h * (i.isOdd ? 0.12 : 0));
-      body.lineTo(x, r.bottom);
-    }
-    body.close();
-    c.drawPath(body, Paint()..color = const Color(0xCCF3E5F5));
-    c.drawPath(
-      body,
-      Paint()
-        ..color = const Color(0x88311B92)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = max(1, w * 0.04),
-    );
-    final eye = Paint()..color = const Color(0xFF1A1033);
-    c.drawOval(
-      Rect.fromCenter(
-        center: Offset(r.center.dx - w * 0.17, r.top + h * 0.33),
-        width: w * 0.15,
-        height: h * 0.14,
-      ),
-      eye,
-    );
-    c.drawOval(
-      Rect.fromCenter(
-        center: Offset(r.center.dx + w * 0.17, r.top + h * 0.33),
-        width: w * 0.15,
-        height: h * 0.14,
-      ),
-      eye,
-    );
-    c.drawOval(
-      Rect.fromCenter(
-        center: Offset(r.center.dx, r.top + h * 0.55),
-        width: w * 0.2,
-        height: h * 0.16,
-      ),
-      eye,
-    );
-  }
-
-  void _drawCar(Canvas c, _Car car, Rect r) {
-    final w = r.width, h = r.height;
-    final ink = Paint()
-      ..color = kOutplayInk
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = max(1, w * 0.015);
-    final bodyR = RRect.fromRectAndRadius(
-      Rect.fromLTWH(r.left, r.top + h * 0.35, w, h * 0.45),
-      Radius.circular(h * 0.12),
-    );
-    final roof = RRect.fromRectAndRadius(
-      Rect.fromLTWH(r.left + w * 0.2, r.top, w * 0.6, h * 0.42),
-      Radius.circular(h * 0.15),
-    );
-    c.drawRRect(roof, Paint()..color = car.color);
-    c.drawRRect(roof, ink);
-    c.drawRect(
-      Rect.fromLTWH(r.left + w * 0.26, r.top + h * 0.07, w * 0.48, h * 0.26),
-      Paint()..color = const Color(0xFFB3E5FC),
-    );
-    c.drawRRect(bodyR, Paint()..color = car.color);
-    c.drawRRect(bodyR, ink);
-    for (final fx in [0.2, 0.8]) {
-      final wheel = Offset(r.left + w * fx, r.top + h * 0.82);
-      c.drawCircle(wheel, h * 0.17, Paint()..color = const Color(0xFF212121));
-      c.drawCircle(wheel, h * 0.07, Paint()..color = const Color(0xFF9E9E9E));
-    }
-    c.drawCircle(
-      Offset(r.left + w * 0.06, r.top + h * 0.5),
-      h * 0.06,
-      Paint()..color = const Color(0xFFFFF59D),
-    );
-    c.drawCircle(
-      Offset(r.right - w * 0.06, r.top + h * 0.5),
-      h * 0.06,
-      Paint()..color = const Color(0xFFFFF59D),
-    );
+    });
   }
 
   /// A go-kart with a goat driving it.
-  void _drawKart(Canvas c, _Kart k, Rect r) {
-    final w = r.width, h = r.height;
-    final ink = Paint()
-      ..color = kOutplayInk
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = max(1, w * 0.02);
-    // Goat: white head, curly horns, little beard.
-    final head = Rect.fromLTWH(
-      r.left + w * 0.36,
-      r.top + h * 0.1,
-      w * 0.28,
-      h * 0.34,
-    );
-    for (final side in [-1.0, 1.0]) {
-      final horn = Path()
-        ..moveTo(head.center.dx + side * w * 0.06, head.top + h * 0.04)
-        ..quadraticBezierTo(
-          head.center.dx + side * w * 0.2,
-          head.top - h * 0.12,
-          head.center.dx + side * w * 0.2,
-          head.top + h * 0.06,
+  void _addKart(Scene3D sc, _Kart k) {
+    final f = opDir(k.heading);
+    final r = f.cross(kUp).unit;
+    V3 at(double fw, double rt, double up) => op3(k.pos, up) + f * fw + r * rt;
+    void b(V3 p, double hx, double hy, double hz, Color c) =>
+        sc.box(p, f, r, kUp, hx, hy, hz, c);
+    const goat = Color(0xFFF5F5F5);
+    sc.group(() {
+      b(at(0, 0, 0.16), 0.48, 0.3, 0.08, k.color);
+      b(at(0.4, 0, 0.26), 0.06, 0.12, 0.04, Colors.white);
+      for (final fw in [-0.32, 0.32]) {
+        for (final side in [-1.0, 1.0]) {
+          b(at(fw, side * 0.33, 0.1), 0.1, 0.05, 0.1, const Color(0xFF212121));
+        }
+      }
+      // The goat: body, head, horns, ears and a little beard.
+      b(at(-0.1, 0, 0.36), 0.14, 0.13, 0.14, goat);
+      b(at(0.05, 0, 0.58), 0.1, 0.09, 0.09, goat);
+      for (final side in [-1.0, 1.0]) {
+        b(
+          at(0.02, side * 0.06, 0.71),
+          0.02,
+          0.02,
+          0.05,
+          const Color(0xFF8D6E63),
         );
-      c.drawPath(
-        horn,
-        Paint()
-          ..color = const Color(0xFF8D6E63)
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeWidth = max(1.5, w * 0.035),
-      );
-      // Floppy ears.
-      c.drawOval(
-        Rect.fromCenter(
-          center: Offset(head.center.dx + side * w * 0.17, head.top + h * 0.12),
-          width: w * 0.1,
-          height: h * 0.06,
-        ),
-        Paint()..color = const Color(0xFFEEEEEE),
-      );
-    }
-    c.drawOval(head, Paint()..color = const Color(0xFFF5F5F5));
-    c.drawOval(head, ink);
-    for (final side in [-1.0, 1.0]) {
-      c.drawCircle(
-        Offset(head.center.dx + side * w * 0.05, head.top + h * 0.13),
-        max(1.0, w * 0.02),
-        Paint()..color = kOutplayInk,
-      );
-    }
-    final beard = Path()
-      ..moveTo(head.center.dx - w * 0.03, head.bottom - h * 0.02)
-      ..lineTo(head.center.dx, head.bottom + h * 0.1)
-      ..lineTo(head.center.dx + w * 0.03, head.bottom - h * 0.02)
-      ..close();
-    c.drawPath(beard, Paint()..color = const Color(0xFFBDBDBD));
-    // The kart.
-    final body = RRect.fromRectAndRadius(
-      Rect.fromLTWH(r.left + w * 0.05, r.top + h * 0.45, w * 0.9, h * 0.33),
-      Radius.circular(h * 0.1),
-    );
-    c.drawRRect(body, Paint()..color = k.color);
-    c.drawRRect(body, ink);
-    c.drawRect(
-      Rect.fromLTWH(r.left + w * 0.4, r.top + h * 0.5, w * 0.2, h * 0.12),
-      Paint()..color = Colors.white,
-    );
-    for (final fx in [0.16, 0.84]) {
-      final wheel = Offset(r.left + w * fx, r.top + h * 0.82);
-      c.drawCircle(wheel, h * 0.16, Paint()..color = const Color(0xFF212121));
-      c.drawCircle(wheel, h * 0.06, Paint()..color = const Color(0xFF9E9E9E));
-    }
+        b(
+          at(0.03, side * 0.12, 0.6),
+          0.03,
+          0.04,
+          0.015,
+          const Color(0xFFEEEEEE),
+        );
+        sc.quad(
+          at(0.152, side * 0.04, 0.61),
+          r * 0.015,
+          kUp * 0.015,
+          const Color(0xFF15172A),
+          normal: f,
+          lit: false,
+          decal: true,
+        );
+      }
+      b(at(0.12, 0, 0.47), 0.02, 0.02, 0.04, const Color(0xFFBDBDBD));
+    });
   }
 
-  void _drawSign(Canvas c, Rect r, String label, Color color) {
-    final pole = Rect.fromLTWH(
-      r.center.dx - r.width * 0.04,
-      r.top + r.height * 0.3,
-      r.width * 0.08,
-      r.height * 0.7,
+  void _addSign(Scene3D sc, Offset at, String label, Color colour) {
+    const f = V3(0, -1, 0); // the signs face down the map
+    const r = V3(-1, 0, 0);
+    final eye = op3(_cam, _camZ);
+    final board = op3(at, 1.0);
+    final depth = sc.depthOf(board);
+    sc.group(() {
+      sc.box(op3(at, 0.4), f, r, kUp, 0.04, 0.04, 0.4, const Color(0xFF90A4AE));
+      sc.box(board, f, r, kUp, 0.04, 0.8, 0.2, colour);
+    }, depth: depth);
+    // The words, on whichever side you can see.
+    final front = f.dot(eye - board) > 0;
+    final face = board + f * (front ? 0.045 : -0.045);
+    sc.later(depth - 0.01, (c) {
+      paintOnPlane(c, sc, face, r * (front ? -1 : 1), kUp * -1, 1.6, 0.4, (
+        c,
+        w,
+        h,
+      ) {
+        _text(
+          c,
+          label,
+          Offset(w / 2, h / 2),
+          h * 0.42,
+          Colors.white,
+          maxWidth: w * 0.95,
+        );
+      });
+    });
+  }
+
+  /// Where your weapon is: its middle, which way it points, which way is
+  /// down for it and how long it is.
+  (V3, V3, V3, double)? _weaponPose() {
+    final you = s._you;
+    if (!you.alive) return null;
+    final sc = _s3;
+    // Placed by where it should land on screen, so it sits in the corner
+    // the same way on a tall or a wide screen.
+    final m = min(_w, _h);
+    final k = m / _proj;
+    V3 at(double sx, double sy, double z) => sc.camToWorld(
+      V3((sx - _w / 2) / _proj * z, -(sy - _horizon) / _proj * z, z),
     );
-    c.drawRect(pole, Paint()..color = const Color(0xFF90A4AE));
-    final board = RRect.fromRectAndRadius(
-      Rect.fromLTWH(r.left, r.top, r.width, r.height * 0.36),
-      Radius.circular(r.height * 0.06),
-    );
-    c.drawRRect(board, Paint()..color = color);
-    c.drawRRect(
-      board,
-      Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = max(1, r.width * 0.02),
-    );
-    _text(
-      c,
-      label,
-      board.center,
-      (r.height * 0.13).clamp(7.0, 26.0),
-      Colors.white,
-      maxWidth: r.width * 0.95,
+    final bobX = sin(you.walkCycle * 0.5) * 6;
+    final bobY = (cos(you.walkCycle) * 4).abs();
+    if (you.gun != null) {
+      final r = s._recoil;
+      return (
+        at(_w - 0.28 * m + bobX, _horizon + 0.35 * m + bobY + r * 14, 0.55),
+        sc.fromCamDir(-0.3, 0.06 + r * 0.1, 1),
+        sc.fromCamDir(-0.3, -1, 0.15),
+        0.354 * k,
+      );
+    }
+    if (s._hooks.any((h) => identical(h.owner, you))) return null;
+    final held = you.held;
+    final swing = you.swingT > 0 ? sin(you.swingT / 0.22 * pi) : 0.0;
+    final big =
+        held.look == WeaponLook.scythe ||
+        held.look == WeaponLook.slapper ||
+        held.look == WeaponLook.snake;
+    return (
+      at(
+        _w - 0.25 * m - swing * 0.3 * m + bobX,
+        _horizon + 0.25 * m + swing * 0.05 * m + bobY,
+        0.5,
+      ),
+      sc.fromCamDir(-0.2 - swing * 1.4, 0.75 - swing * 0.9, 0.6 + swing * 0.4),
+      sc.fromCamDir(-0.5, -0.3, 0.6),
+      (big ? 0.477 : 0.323) * k,
     );
   }
 
@@ -4204,8 +4285,6 @@ class _ViewPainter extends CustomPainter {
     )..layout(maxWidth: maxWidth ?? double.infinity);
     tp.paint(c, centre - Offset(tp.width / 2, tp.height / 2));
   }
-
-  Offset get _muzzle => Offset(_w * 0.47, _h * 0.66);
 
   /// The thrown Sizzler: a wiggly green snake from the thrower's hand to
   /// its head, which is biting whoever it caught.
@@ -4327,52 +4406,32 @@ class _ViewPainter extends CustomPainter {
   }
 
   void _paintWeapon(Canvas canvas) {
+    final pose = _weaponPose();
+    if (pose == null) return;
     final you = s._you;
-    if (!you.alive) return;
     final gun = you.gun;
-    final bobX = sin(you.walkCycle * 0.5) * 6;
-    final bobY = (cos(you.walkCycle) * 4).abs();
-    canvas.save();
-    if (gun != null) {
-      canvas.translate(_w * 0.6 + bobX, _h * 0.95 + bobY + s._recoil * 14);
-      canvas.rotate(-pi / 2 - 0.38 - s._recoil * 0.08);
-      paintWeapon(
-        canvas,
-        gun.look,
-        gun.color,
-        min(_w, _h) * 0.68,
-        skin: you.skinOf(gun.id),
-      );
-      if (you.flashT > 0 && gun.look != WeaponLook.flamer) {
-        canvas.drawCircle(
-          Offset(min(_w, _h) * 0.36, 0),
-          16,
-          Paint()..color = gun.shotColor.withValues(alpha: 0.8),
-        );
-      }
-    } else if (!s._hooks.any((h) => identical(h.owner, you))) {
-      // Melee swings across the screen (the Sizzler leaves your hand
-      // while it's thrown).
-      final m = you.held;
-      final swing = you.swingT > 0 ? sin(you.swingT / 0.22 * pi) : 0.0;
-      canvas.translate(
-        _w * (0.72 - swing * 0.25) + bobX,
-        _h * (0.82 - swing * 0.08) + bobY,
-      );
-      canvas.rotate(-pi / 2 + 0.5 - swing * 1.1);
-      final big =
-          m.look == WeaponLook.scythe ||
-          m.look == WeaponLook.slapper ||
-          m.look == WeaponLook.snake;
-      paintWeapon(
-        canvas,
-        m.look,
-        m.color,
-        min(_w, _h) * (big ? 0.55 : 0.36),
-        skin: you.skinOf(m.id),
+    final (mid, along, down, length) = pose;
+    final tip = paintWeapon3D(
+      canvas,
+      _s3,
+      gun?.look ?? you.held.look,
+      gun?.color ?? you.held.color,
+      mid,
+      along,
+      down,
+      length,
+      skin: you.skinOf(you.heldId),
+    );
+    if (gun != null &&
+        tip != null &&
+        you.flashT > 0 &&
+        gun.look != WeaponLook.flamer) {
+      canvas.drawCircle(
+        tip,
+        16,
+        Paint()..color = gun.shotColor.withValues(alpha: 0.8),
       );
     }
-    canvas.restore();
   }
 
   void _paintOverlays(Canvas canvas) {
