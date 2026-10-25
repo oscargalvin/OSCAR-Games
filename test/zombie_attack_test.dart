@@ -1,0 +1,169 @@
+import 'dart:math';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:oscar_games/games/zombie_attack/zombie_data.dart';
+import 'package:oscar_games/games/zombie_attack/zombie_game.dart';
+import 'package:oscar_games/games/zombie_attack/zombie_screen.dart';
+import 'package:oscar_games/games/zombie_attack/zombie_sim.dart';
+
+/// Runs the world for [seconds] with whatever the input is.
+void _run(ZombieWorld w, double seconds) {
+  for (var t = 0.0; t < seconds; t += 1 / 60) {
+    w.step(1 / 60);
+    if (w.phase == ZombiePhase.over) return;
+  }
+}
+
+void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    ZombieSave.instance
+      ..coins = 0
+      ..guns = {'pistol'}
+      ..gun = 'pistol'
+      ..bestWave = 0
+      ..kills = 0;
+  });
+
+  test('every map leaves the middle clear and blocks inside the world', () {
+    for (final m in ZombieMap.values) {
+      final w = ZombieWorld(map: m, random: Random(1));
+      expect(w.blocks, isNotEmpty);
+      for (final b in w.blocks) {
+        expect(b.contains(w.player), isFalse, reason: '${m.name} $b');
+        expect(b.left >= 0 && b.right <= kWorldW, isTrue);
+        expect(b.top >= 0 && b.bottom <= kWorldH, isTrue);
+      }
+    }
+  });
+
+  test('waves start, zombies come for you and bite', () {
+    final w = ZombieWorld(random: Random(2));
+    _run(w, 3);
+    expect(w.wave, 1);
+    expect(w.phase, ZombiePhase.play);
+    expect(w.zombiesLeft, 6);
+    // Standing still and not shooting: the zombies catch you.
+    _run(w, 40);
+    expect(w.hp, lessThan(kMaxHp));
+  });
+
+  test('auto aim clears waves and earns coins', () {
+    final w = ZombieWorld(level: 0, random: Random(3))..input.autoAim = true;
+    _run(w, 60);
+    expect(w.kills, greaterThan(5));
+    expect(w.wavesCleared, greaterThanOrEqualTo(1));
+    expect(w.coinsEarned, greaterThanOrEqualTo(kWaveCoins[0]));
+  });
+
+  test('doing nothing on hard ends the game', () {
+    final w = ZombieWorld(level: 2, random: Random(4));
+    _run(w, 200);
+    expect(w.phase, ZombiePhase.over);
+    expect(w.hp, 0);
+  });
+
+  test('a grenade blows up a crowd', () {
+    final w = ZombieWorld(random: Random(5));
+    _run(w, 3); // wave 1 starts
+    w.zombies.clear();
+    for (var i = 0; i < 4; i++) {
+      w.zombies.add(
+        Zombie(
+          100 + i,
+          ZombieKind.walker,
+          w.player + Offset(-0.5 + i * 0.3, -kGrenadeRange),
+          1,
+          0,
+        ),
+      );
+    }
+    w.aimAngle = -pi / 2;
+    w.input.grenade = true;
+    final before = w.grenades;
+    _run(w, 1.2);
+    expect(w.grenades, before - 1);
+    expect(w.kills, greaterThanOrEqualTo(3));
+  });
+
+  test('the rocket launcher splashes nearby zombies', () {
+    final w = ZombieWorld(gun: gunById('rocket'), random: Random(6));
+    _run(w, 3);
+    w.zombies.clear();
+    for (var i = 0; i < 3; i++) {
+      w.zombies.add(
+        Zombie(
+          200 + i,
+          ZombieKind.walker,
+          w.player + Offset(-1 + i.toDouble(), -8),
+          1,
+          0,
+        ),
+      );
+    }
+    w.input.aim = const Offset(0, -1);
+    w.input.fire = true;
+    _run(w, 0.6);
+    expect(w.kills, 3);
+  });
+
+  testWidgets('menu buys a gun with coins and starts a game', (tester) async {
+    tester.view.physicalSize = const Size(375, 667) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    ZombieSave.instance.coins = 350;
+
+    await tester.pumpWidget(const MaterialApp(home: ZombieScreen()));
+    await tester.pumpAndSettle();
+    expect(find.text('350'), findsOneWidget);
+
+    await tester.scrollUntilVisible(find.text('Shotgun'), 200);
+    await tester.tap(find.text('Shotgun'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('BUY'));
+    await tester.pumpAndSettle();
+    expect(ZombieSave.instance.coins, 50);
+    expect(ZombieSave.instance.gun, 'shotgun');
+    expect(find.text('USING'), findsOneWidget);
+
+    // Too expensive: nothing is bought.
+    await tester.scrollUntilVisible(find.text('Rocket Launcher'), 200);
+    await tester.tap(find.text('Rocket Launcher'));
+    await tester.pumpAndSettle();
+    expect(find.text('BUY'), findsNothing);
+    expect(ZombieSave.instance.guns, isNot(contains('rocket')));
+
+    await tester.scrollUntilVisible(find.text('PLAY'), -200);
+    await tester.tap(find.text('PLAY'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(ZombieGameScreen), findsOneWidget);
+    expect(find.text('WAVE 1'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('losing pays your coins and shows the end card', (tester) async {
+    tester.view.physicalSize = const Size(844, 390) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: ZombieGameScreen(level: 2)),
+    );
+    // Stand still until the zombies win.
+    for (var i = 0; i < 400; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      if (find.text('THE ZOMBIES GOT YOU!').evaluate().isNotEmpty) break;
+    }
+    expect(find.text('THE ZOMBIES GOT YOU!'), findsOneWidget);
+    expect(find.text('PLAY AGAIN'), findsOneWidget);
+
+    await tester.tap(find.text('PLAY AGAIN'));
+    await tester.pump();
+    expect(find.text('THE ZOMBIES GOT YOU!'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+}

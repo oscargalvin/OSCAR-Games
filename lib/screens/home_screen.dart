@@ -17,6 +17,7 @@ import '../games/board_game/board_game_screen.dart';
 import '../games/fly_or_crash/fly_or_crash_screen.dart';
 import '../games/outplay/outplay_screen.dart';
 import '../games/boost_ball/boost_ball_screen.dart';
+import '../games/zombie_attack/zombie_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -52,6 +53,19 @@ class _HomeScreenState extends State<HomeScreen> {
       color: AppTheme.blue,
       secondaryColor: AppTheme.warning,
       screenBuilder: () => const BoostBallScreen(),
+      difficulty: 'Medium',
+    ),
+    GameInfo(
+      id: 'zombie_attack',
+      title: 'Zombie Attack',
+      subtitle: 'Survive the waves',
+      description:
+          'Zombies are coming! Run, shoot and throw grenades to survive '
+          'as many waves as you can, then spend your coins on new guns.',
+      icon: Icons.coronavirus_rounded,
+      color: AppTheme.success,
+      secondaryColor: AppTheme.danger,
+      screenBuilder: () => const ZombieScreen(),
       difficulty: 'Medium',
     ),
     GameInfo(
@@ -171,6 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // Hand-picked tile colours so neighbouring games never clash.
   static const Map<String, Color> _tileColors = {
     'outplay': Color(0xFF4FC3F7), // arena blue
+    'zombie_attack': Color(0xFF4DD4AC), // zombie mint
     'fly_or_crash': Color(0xFFFFFFFF), // boarding-pass white
     'board_game': Color(0xFFFFC93C), // sunflower
     'world_cup': Color(0xFF3DDC84), // pitch green

@@ -26,6 +26,9 @@ import 'package:oscar_games/games/target_shooter/shop_screen.dart';
 import 'package:oscar_games/games/target_shooter/target_game_screen.dart';
 import 'package:oscar_games/games/target_shooter/world_select_screen.dart';
 import 'package:oscar_games/games/tic_tac_toe/tic_tac_toe_screen.dart';
+import 'package:oscar_games/games/zombie_attack/zombie_data.dart';
+import 'package:oscar_games/games/zombie_attack/zombie_game.dart';
+import 'package:oscar_games/games/zombie_attack/zombie_screen.dart';
 
 /// Common phone viewports (logical pixels): small Android, iPhone SE,
 /// iPhone 14, and a large Android.
@@ -84,6 +87,10 @@ final _screens = <String, Widget Function()>{
   'boost_ball': () => const BoostBallScreen(),
   'boost_ball_1v1': () => const BoostBallGameScreen(),
   'boost_ball_3v3': () => const BoostBallGameScreen(teamSize: 3, difficulty: 2),
+  'zombie_attack': () => const ZombieScreen(),
+  'zombie_town': () => const ZombieGameScreen(),
+  'zombie_graveyard': () =>
+      const ZombieGameScreen(map: ZombieMap.graveyard, level: 2),
   'board_game': () => const BoardGameScreen(),
   'boat_fishing': () => const BoatFishingScreen(),
   'tic_tac_toe': () => const TicTacToeScreen(),
