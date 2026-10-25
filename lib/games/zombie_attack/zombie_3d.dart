@@ -879,11 +879,16 @@ class Zombie3dPainter extends CustomPainter {
     }
   }
 
+  static const _shirts = [
+    Color(0xFF1E88E5), // blue
+    Color(0xFFFB8C00), // orange
+    Color(0xFF43A047), // green
+    Color(0xFFD81B60), // pink
+  ];
+
   void _player(Renderer r, Survivor s, int index) {
     final yaw = _yaw(s.aimAngle);
-    final shirtColour = index == 0
-        ? const Color(0xFF1E88E5)
-        : const Color(0xFFFB8C00);
+    final shirtColour = _shirts[index % _shirts.length];
     if (!s.alive) {
       // Knocked out: lying flat on the ground until the next wave.
       _box(r, _w(s.pos), 0.9, 0.3, 0, 0.35, yaw, const Color(0xFF9E9E9E));

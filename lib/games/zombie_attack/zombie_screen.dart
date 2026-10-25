@@ -32,7 +32,8 @@ class _ZombieScreenState extends State<ZombieScreen> {
   final _save = ZombieSave.instance;
   ZombieMap _map = ZombieMap.town;
   int _level = 1;
-  bool _versus = false; // 2 players: zombie vs human instead of teaming up
+  int _players = 1; // 1 plays here; 2 to 4 play online
+  bool _versus = false; // online: zombie vs human instead of teaming up
   bool _beZombie = false; // in zombie vs human, you play the zombies
   String? _busy; // what we're waiting for online
 
@@ -130,7 +131,7 @@ class _ZombieScreenState extends State<ZombieScreen> {
     final make = widget.makeLink;
     final dir = widget.makeDirectory();
     if (make() == null || dir == null) {
-      _say('2 players only works on the website.');
+      _say('Playing with friends only works on the website.');
       return;
     }
     final setup = ZombieRoomSetup(
@@ -138,6 +139,7 @@ class _ZombieScreenState extends State<ZombieScreen> {
       _map,
       _level,
       hostIsZombie: _versus && _beZombie,
+      players: _players,
     );
     OutplayRoom? room;
     try {
@@ -153,24 +155,35 @@ class _ZombieScreenState extends State<ZombieScreen> {
         room = await OutplayRoom.host(
           () => make()!,
           setup.roomName,
-          teamSize: 1,
+          teamSize: setup.roomTeamSize,
           showCode: true,
         );
       } else {
         setState(() => _busy = 'Looking for a player...');
-        // Someone waiting for the same game, playing the other side.
-        final want = ZombieRoomSetup(
-          setup.mode,
-          _map,
-          _level,
-          hostIsZombie: _versus && !_beZombie,
-        ).roomName;
+        // Someone waiting for the same game. With 2 players they must be
+        // playing the other side; with more, the room maker picks who is
+        // the zombies.
+        final want = {
+          for (final z in [true, false])
+            if (_players > 2 || !_versus || z != _beZombie)
+              ZombieRoomSetup(
+                setup.mode,
+                _map,
+                _level,
+                hostIsZombie: _versus && z,
+                players: _players,
+              ).roomName,
+        };
         var rooms = const <RoomInfo>[];
         dir.browse((r) => rooms = r);
         await Future<void>.delayed(const Duration(milliseconds: 2500));
         dir.stopBrowse();
         for (final r in rooms.where(
-          (r) => r.mapId == want && !r.friends && !r.playing,
+          (r) =>
+              want.contains(r.mapId) &&
+              !r.friends &&
+              !r.playing &&
+              r.players < _players,
         )) {
           try {
             room = await OutplayRoom.join(() => make()!, r.code);
@@ -182,7 +195,7 @@ class _ZombieScreenState extends State<ZombieScreen> {
         room ??= await OutplayRoom.host(
           () => make()!,
           setup.roomName,
-          teamSize: 1,
+          teamSize: setup.roomTeamSize,
         );
       }
     } catch (e) {
@@ -303,28 +316,31 @@ class _ZombieScreenState extends State<ZombieScreen> {
             const SizedBox(height: 14),
             _heading('LEVEL'),
             _levels(),
-            const SizedBox(height: 18),
-            SizedBox(
-              height: 58,
-              child: ElevatedButton.icon(
-                onPressed: _play,
-                icon: const Icon(Icons.play_arrow_rounded, size: 30),
-                label: const Text(
-                  'PLAY',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF43A047),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
+            const SizedBox(height: 14),
+            _heading('PLAYERS'),
+            _playerCount(),
+            const SizedBox(height: 14),
+            if (_players == 1)
+              SizedBox(
+                height: 58,
+                child: ElevatedButton.icon(
+                  onPressed: _play,
+                  icon: const Icon(Icons.play_arrow_rounded, size: 30),
+                  label: const Text(
+                    'PLAY',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF43A047),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 22),
-            _heading('2 PLAYERS'),
-            _twoPlayers(),
+              )
+            else
+              _online(),
             const SizedBox(height: 22),
             _heading('GUN SHOP'),
             for (final g in kGuns)
@@ -393,8 +409,17 @@ class _ZombieScreenState extends State<ZombieScreen> {
     ),
   );
 
-  /// Play with a friend on another phone or tablet.
-  Widget _twoPlayers() => Container(
+  Widget _playerCount() => Row(
+    children: [
+      for (var n = 1; n <= 4; n++) ...[
+        if (n > 1) const SizedBox(width: 8),
+        _choice('$n', n == _players, () => _players = n),
+      ],
+    ],
+  );
+
+  /// Play with friends on other phones or tablets.
+  Widget _online() => Container(
     padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
       color: _panel,
@@ -413,11 +438,15 @@ class _ZombieScreenState extends State<ZombieScreen> {
         const SizedBox(height: 8),
         Text(
           _versus
-              ? 'One of you is the human. The other is the zombies: send '
-                    'zombies in with brains, then become the Zombie King at '
-                    'wave $kKingArrives!'
-              : 'Two humans against the zombies, on the map and level you '
-                    'picked above.',
+              ? _players == 2
+                    ? 'One of you is the human. The other is the zombies: send '
+                          'zombies in with brains, then become the Zombie King '
+                          'at wave $kKingArrives!'
+                    : 'One player is the zombies: they send zombies in with '
+                          'brains, then become the Zombie King at wave '
+                          '$kKingArrives! Everyone else is a human.'
+              : '$_players humans against the zombies, on the map and level '
+                    'you picked above.',
           style: const TextStyle(color: Colors.white70),
         ),
         if (_versus) ...[
@@ -444,7 +473,7 @@ class _ZombieScreenState extends State<ZombieScreen> {
           ElevatedButton.icon(
             onPressed: () => _playOnline(),
             icon: const Icon(Icons.public_rounded),
-            label: const Text('FIND A PLAYER'),
+            label: Text(_players == 2 ? 'FIND A PLAYER' : 'FIND PLAYERS'),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF7B1FA2),
               foregroundColor: Colors.white,

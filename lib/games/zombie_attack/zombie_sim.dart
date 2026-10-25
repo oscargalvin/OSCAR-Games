@@ -153,6 +153,7 @@ class Survivor {
   int grenades = 2;
   bool keptSword = false; // won the 5% roll this game
   double jumpZ = 0; // how high off the ground you are
+  bool gone = false; // left the game, so doesn't come back next wave
   double jumpV = 0;
   final ZombieInput input = ZombieInput();
   final List<Gun> weapons;
@@ -245,18 +246,32 @@ class ZombieWorld {
     Gun? friendGun,
     String name = 'You',
     String friendName = 'Friend',
+
+    /// Everyone fighting the zombies in a game for 2 to 4 players: their
+    /// names and guns. Leave out for the usual one or two.
+    List<(String, Gun)>? people,
+    String? bossName,
     Random? random,
-  }) : survivors = [
-         Survivor(name, gun ?? kGuns.first),
-         if (mode == ZombieMode.coop)
-           Survivor(friendName, friendGun ?? kGuns.first),
-       ],
-       boss = mode == ZombieMode.versus ? ZombieBoss(friendName) : null,
+  }) : survivors = people != null
+           ? [for (final (n, g) in people) Survivor(n, g)]
+           : [
+               Survivor(name, gun ?? kGuns.first),
+               if (mode == ZombieMode.coop)
+                 Survivor(friendName, friendGun ?? kGuns.first),
+             ],
+       boss = mode == ZombieMode.versus
+           ? ZombieBoss(bossName ?? friendName)
+           : null,
        rnd = random ?? Random(),
        blocks = buildBlocks(map) {
-    if (survivors.length == 2) {
-      survivors[0].pos = const Offset(kWorldW / 2 - 1.5, kWorldH / 2);
-      survivors[1].pos = const Offset(kWorldW / 2 + 1.5, kWorldH / 2);
+    // Stand in a little circle in the middle.
+    final n = survivors.length;
+    if (n > 1) {
+      for (var i = 0; i < n; i++) {
+        survivors[i].pos =
+            const Offset(kWorldW / 2, kWorldH / 2) +
+            Offset.fromDirection(pi + i * 2 * pi / n, 1.6);
+      }
     }
   }
 
@@ -434,7 +449,8 @@ class ZombieWorld {
         wave++;
         phase = ZombiePhase.play;
         _toSpawn = 3 + wave * 3 - (level == 0 ? 1 : 0);
-        if (mode == ZombieMode.coop) _toSpawn = (_toSpawn * 1.5).round();
+        // More people, more zombies.
+        _toSpawn = (_toSpawn * (1 + 0.5 * (survivors.length - 1))).round();
         // The zombie player sends extra zombies in, so fewer come by
         // themselves.
         if (mode == ZombieMode.versus) {
@@ -445,7 +461,7 @@ class ZombieWorld {
         if (bossWave) _spawn(ZombieKind.king);
         // Anyone knocked out last wave comes back.
         for (final s in survivors) {
-          if (!s.alive) {
+          if (!s.alive && !s.gone) {
             s
               ..hp = kMaxHp / 2
               ..hurtT = 0;
@@ -570,8 +586,9 @@ class ZombieWorld {
         const Offset(kWorldW / 2, 4);
     final z = _add(ZombieKind.king, at)
       ..controlled = true
-      ..hp = 55
-      ..maxHp = 55;
+      // Tougher when there are more people to beat it.
+      ..hp = 55.0 + 35 * (survivors.length - 1)
+      ..maxHp = 55.0 + 35 * (survivors.length - 1);
     b.kingId = z.id;
     events.add(ZombieEvent.kingArrives);
   }

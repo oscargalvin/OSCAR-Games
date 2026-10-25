@@ -133,6 +133,10 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
       events.addAll(_w.events);
     }
     _noticeChanges();
+    if (_net != null && _net!.notes.isNotEmpty) {
+      _say(_net!.notes.last.toUpperCase());
+      _net!.notes.clear();
+    }
     _bannerT = max(0, _bannerT - dt);
     _shake = max(0, _shake - dt * 3);
     _soundT = max(0, _soundT - dt);
@@ -747,7 +751,12 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
         ? 'Team up against the zombies'
         : net.youAreZombie
         ? 'You are the zombies!'
+        : setup.players > 2 && !net.isHost
+        ? 'Zombie vs Humans'
+        : setup.players > 2
+        ? 'You are a human!'
         : 'You are the human!';
+    final here = net.waiting;
     return Container(
       color: const Color(0xFF13241A),
       alignment: Alignment.center,
@@ -794,13 +803,35 @@ class _ZombieGameScreenState extends State<ZombieGameScreen>
           ),
           const SizedBox(height: 10),
           Text(
-            !net.isHost
+            here.isEmpty
                 ? 'Joining...'
-                : net.room.showCode
-                ? 'Waiting for your friend...'
-                : 'Waiting for someone to join...',
-            style: const TextStyle(color: Colors.white70),
+                : '${here.length} of ${setup.players} players here',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
           ),
+          if (here.isNotEmpty)
+            Text(
+              here.join(', '),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          const SizedBox(height: 4),
+          Text(
+            net.room.showCode
+                ? 'Waiting for your friends...'
+                : 'Waiting for more players...',
+            style: const TextStyle(color: Colors.white54),
+          ),
+          if (net.isHost && here.length >= 2 && here.length < setup.players)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: FilledButton(
+                onPressed: net.startNow,
+                child: Text('START WITH ${here.length}'),
+              ),
+            ),
           const SizedBox(height: 18),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),

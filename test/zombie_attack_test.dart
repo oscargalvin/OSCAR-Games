@@ -318,7 +318,102 @@ void main() {
     expect(back.hostIsZombie, isTrue);
     expect(back.zombieHere(true), isTrue);
     expect(back.zombieHere(false), isFalse);
+    expect(back.players, 2);
     expect(ZombieRoomSetup.parse('bb:classic'), isNull);
+    // Older room names without a player count are for 2.
+    expect(ZombieRoomSetup.parse('za:coop:town:1:h')!.players, 2);
+    final four = ZombieRoomSetup.parse(
+      const ZombieRoomSetup(
+        ZombieMode.coop,
+        ZombieMap.farm,
+        1,
+        players: 4,
+      ).roomName,
+    )!;
+    expect(four.players, 4);
+    expect(four.roomTeamSize, 2);
+  });
+
+  test('four people team up online', () async {
+    final s = await _group(
+      const ZombieRoomSetup(ZombieMode.coop, ZombieMap.farm, 1, players: 4),
+      4,
+    );
+    final h = s.first.world!;
+    expect(h.survivors.map((x) => x.name), [
+      'Oscar',
+      'Friend 1',
+      'Friend 2',
+      'Friend 3',
+    ]);
+    for (var i = 0; i < 4; i++) {
+      expect(s[i].world!.youIndex, i);
+      expect(s[i].world!.survivors.length, 4);
+    }
+    // The third friend walks: it shows on the room maker's phone and on
+    // the first friend's phone.
+    final start = h.survivors[3].pos;
+    for (var t = 0.0; t < 1; t += 1 / 30) {
+      s[3].world!.input.move = const Offset(1, 0);
+      for (final x in s) {
+        x.update(1 / 30);
+      }
+    }
+    expect(h.survivors[3].pos.dx, greaterThan(start.dx + 4));
+    expect(
+      s[1].world!.survivors[3].pos.dx,
+      closeTo(h.survivors[3].pos.dx, 1.5),
+    );
+    // Way more zombies for four.
+    _all(s, 4);
+    expect(h.wave, 1);
+    expect(h.zombiesLeft, greaterThan(12));
+
+    // Someone leaves: they're out for good, the others play on.
+    s[2].close();
+    _all([s[0], s[1], s[3]], 0.5);
+    expect(h.survivors[2].gone, isTrue);
+    expect(h.survivors[2].alive, isFalse);
+    expect(h.phase, isNot(ZombiePhase.over));
+  });
+
+  test('three players: one is the zombies, two are humans', () async {
+    final s = await _group(
+      const ZombieRoomSetup(ZombieMode.versus, ZombieMap.town, 1, players: 3),
+      3,
+    );
+    final h = s.first.world!;
+    expect(h.survivors.map((x) => x.name), ['Oscar', 'Friend 2']);
+    expect(h.boss!.name, 'Friend 1');
+    expect(s[1].youAreZombie, isTrue);
+    expect(s[1].world!.youAreBoss, isTrue);
+    expect(s[2].world!.youIndex, 1);
+    // The zombie player sends a zombie in from their phone.
+    _all(s, 3);
+    h.boss!.brains = 5;
+    final before = h.boss!.brains;
+    s[1].order(ZombieOrder.walker);
+    _all(s, 0.1);
+    expect(h.boss!.brains, lessThan(before));
+  });
+
+  test('a full game turns away anyone extra', () async {
+    final s = await _group(
+      const ZombieRoomSetup(ZombieMode.coop, ZombieMap.town, 1, players: 3),
+      3,
+    );
+    final hub = _lastHub!;
+    final late = ZombieSession(
+      room: await OutplayRoom.join(hub.makeLink, s.first.room.code),
+      myName: 'Late',
+    );
+    for (var i = 0; i < 10; i++) {
+      s.first.update(1 / 30);
+      late.update(1 / 30);
+    }
+    expect(late.started, isFalse);
+    expect(late.ended, 'That game is already full.');
+    expect(s.first.world!.survivors.length, 3);
   });
 
   test('two people team up against the zombies online', () async {
@@ -525,12 +620,55 @@ void main() {
   });
 }
 
+LoopbackHub? _lastHub;
+
+/// The room maker plus [n] - 1 friends, all in a started game.
+Future<List<ZombieSession>> _group(ZombieRoomSetup setup, int n) async {
+  final hub = _lastHub = LoopbackHub();
+  final hostRoom = await OutplayRoom.host(
+    hub.makeLink,
+    setup.roomName,
+    teamSize: setup.roomTeamSize,
+    showCode: true,
+  );
+  final all = [
+    ZombieSession(room: hostRoom, myName: 'Oscar', random: Random(1)),
+  ];
+  for (var i = 1; i < n; i++) {
+    final room = await OutplayRoom.join(hub.makeLink, hostRoom.code);
+    all.add(ZombieSession(room: room, myName: 'Friend $i'));
+    // Let each one say hello before the next joins, so the order is known.
+    for (var k = 0; k < 3; k++) {
+      for (final x in all) {
+        x.update(1 / 30);
+      }
+    }
+  }
+  for (var i = 0; i < 20 && !all.every((x) => x.started); i++) {
+    for (final x in all) {
+      x.update(1 / 30);
+    }
+  }
+  for (final x in all) {
+    expect(x.started, isTrue);
+  }
+  return all;
+}
+
+void _all(List<ZombieSession> s, double seconds) {
+  for (var t = 0.0; t < seconds; t += 1 / 30) {
+    for (final x in s) {
+      x.update(1 / 30);
+    }
+  }
+}
+
 Future<(ZombieSession, ZombieSession)> _pair(ZombieRoomSetup setup) async {
   final hub = LoopbackHub();
   final hostRoom = await OutplayRoom.host(
     hub.makeLink,
     setup.roomName,
-    teamSize: 1,
+    teamSize: setup.roomTeamSize,
     showCode: true,
   );
   final host = ZombieSession(

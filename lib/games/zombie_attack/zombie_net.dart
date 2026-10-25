@@ -11,22 +11,25 @@ const String kZombieRoomPrefix = 'za:';
 
 bool isZombieRoom(String mapId) => mapId.startsWith(kZombieRoomPrefix);
 
-/// What a 2-player room is: the mode, map, level, and (for Zombie vs
-/// Human) whether the room maker plays the zombies.
+/// What an online room is: the mode, map, level, how many players, and
+/// (for Zombie vs Human) whether the room maker plays the zombies.
 class ZombieRoomSetup {
   final ZombieMode mode;
   final ZombieMap map;
   final int level;
   final bool hostIsZombie;
+  final int players; // 2 to 4
   const ZombieRoomSetup(
     this.mode,
     this.map,
     this.level, {
     this.hostIsZombie = false,
+    this.players = 2,
   });
 
   String get roomName =>
-      '$kZombieRoomPrefix${mode.name}:${map.name}:$level:${hostIsZombie ? 'z' : 'h'}';
+      '$kZombieRoomPrefix${mode.name}:${map.name}:$level:'
+      '${hostIsZombie ? 'z' : 'h'}:$players';
 
   static ZombieRoomSetup? parse(String mapId) {
     if (!isZombieRoom(mapId)) return null;
@@ -41,12 +44,19 @@ class ZombieRoomSetup {
       ZombieMap.byName(parts[1]),
       (int.tryParse(parts[2]) ?? 1).clamp(0, 2),
       hostIsZombie: parts[3] == 'z',
+      players: parts.length > 4 ? (int.tryParse(parts[4]) ?? 2).clamp(2, 4) : 2,
     );
   }
 
-  /// True if this phone plays the zombies.
+  /// The OutplayRoom team size that lets enough people in (it allows
+  /// teamSize * 2 - 1 joiners; the session turns away anyone extra).
+  int get roomTeamSize => players <= 2 ? 1 : 2;
+
+  /// Whether this phone plays the zombies, if it can tell before the game
+  /// starts (with 3 or 4 players the room maker decides who when it does).
   bool zombieHere(bool isHost) =>
-      mode == ZombieMode.versus && (hostIsZombie == isHost);
+      mode == ZombieMode.versus &&
+      (isHost ? hostIsZombie : players == 2 && !hostIsZombie);
 }
 
 double _r(double v) => (v * 100).roundToDouble() / 100;
@@ -54,9 +64,18 @@ double _d(Object? v) => (v as num?)?.toDouble() ?? 0;
 int _i(Object? v) => (v as num?)?.toInt() ?? 0;
 Offset _o(Object? x, Object? y) => Offset(_d(x), _d(y));
 
-/// A 2-player game of Zombie Attack. The room maker's phone runs the real
-/// game and sends the other phone what is happening 15 times a second; the
-/// other phone sends what its player is pressing.
+/// Someone in an online game.
+class ZombiePlayer {
+  final String id;
+  final String name;
+  final String gun;
+  bool zombie = false; // plays the zombies in Zombie vs Human
+  ZombiePlayer(this.id, this.name, this.gun);
+}
+
+/// An online game of Zombie Attack for 2 to 4 players. The room maker's
+/// phone runs the real game and sends everyone what is happening 15 times
+/// a second; the others send what their player is pressing.
 class ZombieSession {
   final OutplayRoom room;
   final OutplayDirectory? lister;
@@ -66,7 +85,11 @@ class ZombieSession {
 
   ZombieWorld? world;
 
-  /// Set when the game can't go on (the other player left).
+  /// Everyone in the game, room maker first. Until it starts, the room
+  /// maker's list of who has joined.
+  final List<ZombiePlayer> players = [];
+
+  /// Set when the game can't go on (the room maker left).
   String? ended;
 
   /// Things that happened (joins, leaves) for the screen to show.
@@ -74,7 +97,19 @@ class ZombieSession {
 
   bool get isHost => room.isHost;
   bool get started => world != null;
-  bool get youAreZombie => setup.zombieHere(isHost);
+  int get needed => setup.players;
+
+  /// True if this phone plays the zombies.
+  bool get youAreZombie {
+    if (setup.mode != ZombieMode.versus) return false;
+    if (started) return world!.youAreBoss;
+    return setup.zombieHere(isHost);
+  }
+
+  /// Names of everyone waiting for the game to start.
+  List<String> get waiting =>
+      isHost ? [for (final p in players) p.name] : _waiting;
+  List<String> _waiting = const [];
 
   double _sendT = 0;
   double _helloT = 0;
@@ -92,20 +127,21 @@ class ZombieSession {
     setup =
         ZombieRoomSetup.parse(room.mapId) ??
         const ZombieRoomSetup(ZombieMode.coop, ZombieMap.town, 1);
+    if (isHost) players.add(ZombiePlayer(room.myId, myName, myGun));
   }
 
   /// Reads messages, sends ours and moves the game on.
   void update(double dt) {
-    // Step first so news from the other phone (and its sounds) lands after
-    // this frame's events are cleared.
+    // Step first so news from the other phones (and its sounds) lands
+    // after this frame's events are cleared.
     world?.step(dt);
     for (final m in room.takeMessages()) {
       _receive(m);
     }
     final w = world;
-    if (isHost) {
+    if (isHost && w == null) {
       _listT -= dt;
-      if (lister != null && _listT <= 0 && !room.showCode && w == null) {
+      if (lister != null && _listT <= 0 && !room.showCode) {
         _listT = 2;
         lister!.announce(
           RoomInfo(
@@ -113,11 +149,19 @@ class ZombieSession {
             name: myName,
             avatar: const [],
             mapId: room.mapId,
-            players: 1,
+            players: players.length,
             playing: false,
-            teamSize: 1,
+            teamSize: setup.roomTeamSize,
           ),
         );
+      }
+      _helloT -= dt;
+      if (_helloT <= 0) {
+        _helloT = 1;
+        room.send({
+          't': 'lobby',
+          'n': [for (final p in players) p.name],
+        });
       }
     } else if (w == null) {
       _helloT -= dt;
@@ -140,6 +184,7 @@ class ZombieSession {
       final aim = inp.aim;
       room.send({
         't': 'in',
+        'id': room.myId,
         'm': [_r(inp.move.dx), _r(inp.move.dy)],
         'a': aim == null ? null : [_r(aim.dx), _r(aim.dy)],
         'f': inp.fire,
@@ -156,7 +201,7 @@ class ZombieSession {
   void jump() {
     // Your own jump shows straight away on your phone.
     world?.input.jump = true;
-    if (!isHost) room.send({'t': 'act', 'j': 1});
+    if (!isHost) room.send({'t': 'act', 'id': room.myId, 'j': 1});
   }
 
   void order(ZombieOrder o) =>
@@ -166,81 +211,109 @@ class ZombieSession {
     if (isHost) {
       local();
     } else {
-      room.send({'t': 'act', ...what});
+      room.send({'t': 'act', 'id': room.myId, ...what});
     }
   }
 
-  void _start(String friendName, String friendGun) {
-    if (!isHost || started) return;
+  /// Everyone is here: the room maker starts the game.
+  void startNow() {
+    if (!isHost || started || players.length < 2) return;
+    if (setup.mode == ZombieMode.versus) {
+      // The room maker picked a side; if they're a human, whoever joined
+      // first plays the zombies.
+      final z = setup.hostIsZombie ? players.first : players[1];
+      z.zombie = true;
+    }
     room.start();
-    final hostZombie = youAreZombie;
-    world = _build(
-      hostName: myName,
-      hostGun: myGun,
-      guestName: friendName,
-      guestGun: friendGun,
-      hostZombie: hostZombie,
-    );
-    room.send({
-      't': 'go',
-      'hn': myName,
-      'hg': myGun,
-      'gn': friendName,
-      'gg': friendGun,
-    });
     lister?.unannounce();
+    final roster = [
+      for (final p in players)
+        {'id': p.id, 'n': p.name, 'gun': p.gun, 'z': p.zombie},
+    ];
+    world = _build();
+    room.send({'t': 'go', 'players': roster});
   }
 
-  ZombieWorld _build({
-    required String hostName,
-    required String hostGun,
-    required String guestName,
-    required String guestGun,
-    required bool hostZombie,
-  }) {
-    final coop = setup.mode == ZombieMode.coop;
-    // In Zombie vs Human the only survivor is whoever isn't the zombie.
-    final humanName = coop || !hostZombie ? hostName : guestName;
-    final humanGun = coop || !hostZombie ? hostGun : guestGun;
-    final otherName = coop || !hostZombie ? guestName : hostName;
+  ZombieWorld _build() {
+    final humans = players.where((p) => !p.zombie).toList();
+    final zombie = players.where((p) => p.zombie).firstOrNull;
     final w = ZombieWorld(
       map: setup.map,
       level: setup.level,
       mode: setup.mode,
-      gun: gunById(humanGun),
-      friendGun: gunById(guestGun),
-      name: humanName,
-      friendName: otherName,
+      people: [for (final p in humans) (p.name, gunById(p.gun))],
+      bossName: zombie?.name,
       random: _rnd,
     )..authority = isHost;
-    if (coop) {
-      w.youIndex = isHost ? 0 : 1;
-    } else {
-      w.youIndex = youAreZombie ? -1 : 0;
-    }
+    w.youIndex = zombie?.id == room.myId
+        ? -1
+        : humans.indexWhere((p) => p.id == room.myId).clamp(0, 3);
     return w;
+  }
+
+  /// Which survivor a player id drives (or null for the zombie player).
+  Survivor? _survivorOf(ZombieWorld w, String id) {
+    final humans = players.where((p) => !p.zombie).toList();
+    final i = humans.indexWhere((p) => p.id == id);
+    return i < 0 || i >= w.survivors.length ? null : w.survivors[i];
+  }
+
+  ZombieInput? _inputOf(ZombieWorld w, String id) {
+    final p = players.where((p) => p.id == id).firstOrNull;
+    if (p == null) return null;
+    if (p.zombie) return w.boss?.input;
+    return _survivorOf(w, id)?.input;
   }
 
   void _receive(Map<String, dynamic> m) {
     switch (m['t']) {
       case 'hi' when isHost:
-        if (started) return;
-        final name = (m['n'] as String? ?? 'Friend').trim();
-        notes.add('$name joined');
-        _start(name.isEmpty ? 'Friend' : name, m['gun'] as String? ?? 'pistol');
+        final id = m['id'] as String? ?? '';
+        if (id.isEmpty || players.any((p) => p.id == id)) return;
+        if (started || players.length >= needed) {
+          room.send({'t': 'full', 'to': id});
+          return;
+        }
+        final name = (m['n'] as String? ?? '').trim();
+        players.add(
+          ZombiePlayer(
+            id,
+            name.isEmpty ? 'Player ${players.length + 1}' : name,
+            m['gun'] as String? ?? 'pistol',
+          ),
+        );
+        notes.add('${players.last.name} joined');
+        if (players.length >= needed) startNow();
+      case 'lobby' when !isHost:
+        _waiting = [for (final n in (m['n'] as List?) ?? const []) '$n'];
+      case 'full' when !isHost && !started:
+        if (m['to'] == room.myId) ended = 'That game is already full.';
       case 'go' when !isHost:
         if (started) return;
-        world = _build(
-          hostName: m['hn'] as String? ?? 'Friend',
-          hostGun: m['hg'] as String? ?? 'pistol',
-          guestName: myName,
-          guestGun: myGun,
-          hostZombie: setup.hostIsZombie,
-        );
+        final list = m['players'];
+        if (list is! List) return;
+        final mine = list.whereType<Map>().any((p) => p['id'] == room.myId);
+        if (!mine) {
+          ended = 'That game started without you.';
+          return;
+        }
+        players
+          ..clear()
+          ..addAll([
+            for (final p in list.whereType<Map>())
+              ZombiePlayer(
+                p['id'] as String? ?? '',
+                p['n'] as String? ?? 'Player',
+                p['gun'] as String? ?? 'pistol',
+              )..zombie = p['z'] == true,
+          ]);
+        world = _build();
       case 'in' when isHost:
         final w = world;
         if (w == null) return;
-        final inp = _theirInput(w);
+        final id = m['id'] as String? ?? '';
+        final inp = _inputOf(w, id);
+        if (inp == null) return;
         final mv = m['m'];
         if (mv is List && mv.length == 2) inp.move = _o(mv[0], mv[1]);
         final a = m['a'];
@@ -249,25 +322,29 @@ class ZombieSession {
         // Their phone moves them straight away: trust where it says they
         // are unless it's miles off.
         final p = m['p'];
-        final theyAreHuman = w.mode == ZombieMode.coop || youAreZombie;
-        if (p is List && p.length == 2 && theyAreHuman) {
-          final s = w.survivors[w.mode == ZombieMode.coop ? 1 : 0];
+        final s = _survivorOf(w, id);
+        if (p is List && p.length == 2 && s != null && s.alive) {
           final at = _o(p[0], p[1]);
-          if (s.alive && (at - s.pos).distance < 3) s.pos = at;
+          if ((at - s.pos).distance < 3) s.pos = at;
         }
         final b = m['b'];
         final boss = w.boss;
-        if (b is List && b.length == 2 && boss != null && boss.kingId < 0) {
-          boss.pos = _o(b[0], b[1]);
+        final isZombie = players.any((x) => x.id == id && x.zombie);
+        if (b is List && b.length == 2 && boss != null && isZombie) {
+          if (boss.kingId < 0) boss.pos = _o(b[0], b[1]);
         }
       case 'act' when isHost:
         final w = world;
         if (w == null) return;
-        if (m['g'] != null) _theirInput(w).grenade = true;
-        if (m['s'] != null) _theirInput(w).swap = true;
-        if (m['j'] != null) _theirInput(w).jump = true;
+        final id = m['id'] as String? ?? '';
+        final inp = _inputOf(w, id);
+        if (inp == null) return;
+        if (m['g'] != null) inp.grenade = true;
+        if (m['s'] != null) inp.swap = true;
+        if (m['j'] != null) inp.jump = true;
         final o = m['o'];
-        if (o != null && w.boss != null) {
+        final isZombie = players.any((x) => x.id == id && x.zombie);
+        if (o != null && w.boss != null && isZombie) {
           final i = _i(o);
           if (i >= 0 && i < ZombieOrder.values.length) {
             w.boss!.orders.add(ZombieOrder.values[i]);
@@ -277,28 +354,33 @@ class ZombieSession {
         final w = world;
         if (w != null) _apply(w, m);
       case 'bye':
+        final id = m['id'] as String? ?? '';
+        final who = players.where((p) => p.id == id).firstOrNull;
         final w = world;
-        if (w == null || w.phase == ZombiePhase.over) return;
-        if (w.mode == ZombieMode.coop) {
-          notes.add('Your friend left. Keep going!');
-          // Their player drops out of the game.
-          final s = w.survivors[isHost ? 1 : 0];
-          s.hp = 0;
+        if (w == null) {
+          // Left the waiting room.
+          if (isHost) players.removeWhere((p) => p.id == id);
+          return;
+        }
+        if (who == null || w.phase == ZombiePhase.over) return;
+        notes.add('${who.name} left');
+        if (who.zombie) {
+          ended = '${who.name} (the zombies) left the game.';
+          return;
+        }
+        // Their player drops out of the game for good.
+        final s = _survivorOf(w, id);
+        if (s != null) {
+          s
+            ..hp = 0
+            ..gone = true;
           s.input
             ..move = Offset.zero
             ..fire = false;
-        } else {
-          ended = 'Your friend left the game.';
         }
       case 'hostLeft':
-        ended = 'Your friend left the game.';
+        ended = 'The room maker left the game.';
     }
-  }
-
-  /// What the other phone's player is pressing, on the room maker's phone.
-  ZombieInput _theirInput(ZombieWorld w) {
-    if (w.mode == ZombieMode.coop) return w.survivors[1].input;
-    return youAreZombie ? w.survivors[0].input : w.boss!.input;
   }
 
   Map<String, dynamic> _snapshot(ZombieWorld w) {
