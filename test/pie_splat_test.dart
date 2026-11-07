@@ -14,7 +14,7 @@ Future<PieSplatGameState> _playRound(WidgetTester tester, Size size) async {
   final state = tester.state<PieSplatGameState>(find.byType(PieSplatGameScreen));
   final start = Offset(size.width * 0.25, size.height * 0.6);
   final stick = await tester.startGesture(start);
-  for (var t = 0; t < 2600; t++) {
+  for (var t = 0; t < 3800; t++) {
     if (t % 40 == 0) {
       final a = t / 40.0;
       await stick.moveTo(start + Offset(cos(a) * 40, sin(a * 1.3) * 40));
@@ -74,8 +74,13 @@ void main() {
     PieSetup(teams: 5, mode: PieMode.survival, difficulty: 2),
     PieSetup(teams: 2),
     PieSetup(players: 2, mode: PieMode.survival, difficulty: 0),
+    PieSetup(players: 12, mode: PieMode.cakeGrab),
+    PieSetup(teams: 3, mode: PieMode.kingOfCake),
+    PieSetup(players: 12, mode: PieMode.hotPie, difficulty: 2),
+    PieSetup(teams: 4, mode: PieMode.frenzy),
+    PieSetup(teams: 5, mode: PieMode.hotPie),
   ]) {
-    testWidgets('${setup.teams} teams / ${setup.players} players ${setup.mode.name} plays out',
+    testWidgets('${setup.teams} teams / ${setup.players} players ${setup.mode.name} d${setup.difficulty} plays out',
         (tester) async {
       const size = Size(390, 844);
       tester.view.physicalSize = size * 2;

@@ -4,6 +4,7 @@ import '../../services/save_service.dart';
 import '../../widgets/game_scaffold.dart';
 import 'pie_splat_3d.dart';
 import 'pie_splat_game.dart';
+import 'pie_splat_online.dart';
 
 /// Menu for Pie Splat Party: who's who, how to play, and a big PLAY button.
 class PieSplatScreen extends StatefulWidget {
@@ -95,6 +96,28 @@ class _PieSplatScreenState extends State<PieSplatScreen>
                   'PLAY!',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            GestureDetector(
+              key: const Key('pie_online'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PieOnlineScreen()),
+              ),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF40C4FF),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: kInk3, width: 3),
+                  boxShadow: const [BoxShadow(color: kInk3, offset: Offset(0, 5))],
+                ),
+                child: const Text(
+                  'PLAY ONLINE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 1.5),
                 ),
               ),
             ),
@@ -270,16 +293,15 @@ class _PieSplatSetupScreenState extends State<PieSplatSetupScreen> {
   // Remembered while the app is open.
   static PieMode _mode = PieMode.comedy;
   static int _difficulty = 1;
-  static int _choice = 2; // index into _sizes
+  static int _choice = 0; // index into _sizes
 
   static const _sizes = [
-    (2, 0, '2 players', 'You vs 1'),
-    (3, 0, '3 players', 'You vs 2'),
-    (4, 0, '4 players', 'You vs 3'),
+    (12, 0, 'Everyone vs everyone', '12 people'),
     (0, 2, '2 teams', '6 v 6 (12 people)'),
     (0, 3, '3 teams', '4 v 4 v 4 (12 people)'),
     (0, 4, '4 teams', '3 each (12 people)'),
     (0, 5, '5 teams', '3 each (15 people)'),
+    (4, 0, 'Mini party', '4 people'),
   ];
 
   void _start() {
@@ -348,10 +370,8 @@ class _PieSplatSetupScreenState extends State<PieSplatSetupScreen> {
               runSpacing: 10,
               alignment: WrapAlignment.center,
               children: [
-                _chip('😂 Comedy', 'Most points in 90s wins', _mode == PieMode.comedy,
-                    () => _mode = PieMode.comedy, key: const Key('pie_mode_comedy')),
-                _chip('💀 Survival', '3 splats and you are out', _mode == PieMode.survival,
-                    () => _mode = PieMode.survival, key: const Key('pie_mode_survival')),
+                for (final m in PieMode.values)
+                  _chip(m.title, m.blurb, _mode == m, () => _mode = m, key: Key('pie_mode_${m.name}')),
               ],
             ),
             _heading('How hard?'),
@@ -360,7 +380,7 @@ class _PieSplatSetupScreenState extends State<PieSplatSetupScreen> {
               runSpacing: 10,
               alignment: WrapAlignment.center,
               children: [
-                for (final (i, name) in const [(0, 'Easy'), (1, 'Normal'), (2, 'Hard')])
+                for (final (i, name) in const [(0, 'Easy'), (1, 'Medium'), (2, 'Hard')])
                   _chip(name, '', _difficulty == i, () => _difficulty = i, width: 96),
               ],
             ),
@@ -397,7 +417,7 @@ class _PieSplatSetupScreenState extends State<PieSplatSetupScreen> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Online multiplayer is coming next!',
+              'Want to play with friends? Go back and press PLAY ONLINE.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white60, fontSize: 13),
             ),

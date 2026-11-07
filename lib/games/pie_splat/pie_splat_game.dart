@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../services/save_service.dart';
 import '../../services/sound_service.dart';
 import '../../widgets/full_screen_game.dart';
+import 'pie_splat_net.dart';
 import '../boost_ball/boost_ball_3d.dart' show V3;
 import '../outplay/outplay_3d.dart' show Scene3D, kUp;
 import 'pie_splat_3d.dart';
@@ -14,7 +15,36 @@ import 'pie_splat_3d.dart';
 const String kPieSplatId = 'pie_splat';
 const double _gravity = 14;
 
-enum PieMode { comedy, survival }
+enum PieMode { comedy, survival, cakeGrab, kingOfCake, hotPie, frenzy }
+
+extension PieModeInfo on PieMode {
+  String get title => switch (this) {
+    PieMode.comedy => '😂 Comedy',
+    PieMode.survival => '💀 Survival',
+    PieMode.cakeGrab => '🎂 Cake Grab',
+    PieMode.kingOfCake => '👑 King of the Cake',
+    PieMode.hotPie => '💣 Hot Pie',
+    PieMode.frenzy => '🌪 Pie Frenzy',
+  };
+
+  String get blurb => switch (this) {
+    PieMode.comedy => 'Most points in 90s wins',
+    PieMode.survival => '3 splats and you are out',
+    PieMode.cakeGrab => 'Run and grab the most cakes',
+    PieMode.kingOfCake => 'Stand on the golden circle to score',
+    PieMode.hotPie => 'Splat someone to pass the ticking pie!',
+    PieMode.frenzy => 'Triple pies, super fast, 60 seconds',
+  };
+
+  String get howTo => switch (this) {
+    PieMode.comedy => "Splat the show-offs. Dodge their pies. Don't splat the guests!",
+    PieMode.survival => 'SURVIVAL: 3 splats and you are out! Last one standing wins.',
+    PieMode.cakeGrab => 'Grab cakes! Get splatted and you drop half of them.',
+    PieMode.kingOfCake => 'Stand on the golden circle to score points. Splat anyone who tries to take it!',
+    PieMode.hotPie => 'Got the HOT PIE? Splat someone to pass it on before it goes KABOOM!',
+    PieMode.frenzy => 'PIE FRENZY! Triple pies all the time. Go go go!',
+  };
+}
 
 /// How a party is set up: the mode, how hard the bots are, and who plays.
 class PieSetup {
@@ -27,7 +57,7 @@ class PieSetup {
 
   final PieMode mode;
 
-  /// 0 easy, 1 normal, 2 hard.
+  /// 0 easy, 1 medium, 2 hard.
   final int difficulty;
 
   /// Pie fighters in a free-for-all (when [teams] is 0).
@@ -39,7 +69,22 @@ class PieSetup {
   /// 5 teams of 3 is 15 people; the other team games have 12.
   int get fighters => teams == 0 ? players : (teams == 5 ? 15 : 12);
 
-  double get seconds => mode == PieMode.survival ? 120 : 90;
+  double get seconds => switch (mode) {
+    PieMode.survival => 120,
+    PieMode.hotPie => 180,
+    PieMode.frenzy => 60,
+    _ => 90,
+  };
+
+  /// The setup for an online party with [humans] real players: each player
+  /// gets their own team (5 players = 15 people), or with 1 player it's
+  /// everyone for themselves with 12 people.
+  static PieSetup online(int humans, int mode, int difficulty) => PieSetup(
+    mode: PieMode.values[mode.clamp(0, PieMode.values.length - 1)],
+    difficulty: difficulty,
+    players: 12,
+    teams: humans >= 2 ? humans : 0,
+  );
 }
 
 const List<String> kTeamNames = ['Red', 'Blue', 'Green', 'Yellow', 'Purple'];
@@ -55,7 +100,17 @@ const List<Color> kTeamColors = [
 class Guy {
   Guy(this.kind, this.x, this.y, {this.player = false}) : tx = x, ty = y;
   final Kind kind;
-  final bool player;
+
+  /// This is you, on this phone.
+  bool player;
+
+  /// A real person (you, or someone online), not a bot.
+  bool human = false;
+  String? name;
+  double inX = 0, inY = 0; // their stick, online
+  int cakes = 0;
+  // Where the host says they are (online guests glide towards it).
+  double nx = 0, ny = 0;
   double x, y;
   double angle = pi / 2;
   double walk = 0;
@@ -70,6 +125,7 @@ class Guy {
   int triple = 0;
   int team = 0;
   int lives = 3;
+  double zoneT = 0;
   bool out = false;
   double outAt = 0;
 
@@ -120,6 +176,7 @@ class TeamResult {
   final int team;
   final List<Guy> members = [];
   int get score => members.fold(0, (n, g) => n + g.score);
+  int get cakes => members.fold(0, (n, g) => n + g.cakes);
   int get alive => members.where((g) => !g.out).length;
   int get lives => members.fold(0, (n, g) => n + (g.out ? 0 : g.lives));
   double get lastOut => members.fold(0.0, (n, g) => max(n, g.out ? g.outAt : 1e4));
@@ -133,11 +190,21 @@ class _Cushion {
 
 /// Pie Splat Party in 3D: a garden party pie fight.
 class PieSplatGameScreen extends StatefulWidget {
-  const PieSplatGameScreen({super.key, this.seed, this.setup = const PieSetup()});
+  const PieSplatGameScreen({
+    super.key,
+    this.seed,
+    this.setup = const PieSetup(),
+    this.net,
+    this.humans = const [],
+  });
 
   /// For tests: makes the party play out the same every time.
   final int? seed;
   final PieSetup setup;
+
+  /// Online: the room, and everyone's (id, name), room maker first.
+  final PieNet? net;
+  final List<(String, String)> humans;
 
   @override
   State<PieSplatGameScreen> createState() => PieSplatGameState();
@@ -161,12 +228,30 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   PieSetup get setup => widget.setup;
   bool get survival => setup.mode == PieMode.survival;
+  bool get kingMode => setup.mode == PieMode.kingOfCake;
+  bool get hotMode => setup.mode == PieMode.hotPie;
+  bool get frenzy => setup.mode == PieMode.frenzy;
+
+  /// Modes where you get knocked out and the last one standing wins.
+  bool get elimination => survival || hotMode;
+  Guy? hotHolder;
+  double hotT = 0;
+  static const double kingR = 2.4;
+  bool get cakeMode => setup.mode == PieMode.cakeGrab;
+  PieNet? get net => widget.net;
+  bool get online => net != null;
+  bool get guest => online && !net!.isHost;
+  final List<(double, double)> _cakes = [];
+  double _cakeIn = 1;
+  double _sendIn = 0;
+  final List<Object> _events = [];
+  String? _netNote;
   bool get teamGame => setup.teams > 0;
   late final bool big = setup.fighters > 6;
   late final double halfW = big ? 16 : 11, halfH = big ? 12 : 8;
   late final List<Rect> tables = big
       ? [
-          for (final (x, y) in [(-9.0, 5.0), (9.0, 5.0), (0.0, 0.0), (-9.0, -5.0), (9.0, -5.0)])
+          for (final (x, y) in [(-9.0, 5.0), (9.0, 5.0), if (!kingMode) (0.0, 0.0), (-9.0, -5.0), (9.0, -5.0)])
             Rect.fromCenter(center: Offset(x, y), width: 2.6, height: 1.4),
         ]
       : [
@@ -176,11 +261,11 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         ];
 
   // How tough the bots are.
-  double get _botThrowGap => const [2.6, 1.7, 1.15][setup.difficulty];
-  double get _botMiss => const [1.3, 0.75, 0.35][setup.difficulty];
-  double get _botDodge => const [0.1, 0.28, 0.5][setup.difficulty];
-  double get _botSpeed => const [2.9, 3.4, 4.1][setup.difficulty];
-  double get _botLead => const [0.2, 0.5, 0.9][setup.difficulty];
+  double get _botThrowGap => const [3.0, 2.1, 1.45][setup.difficulty];
+  double get _botMiss => const [1.6, 1.0, 0.5][setup.difficulty];
+  double get _botDodge => const [0.05, 0.18, 0.4][setup.difficulty];
+  double get _botSpeed => const [2.6, 3.1, 3.8][setup.difficulty];
+  double get _botLead => const [0.1, 0.35, 0.7][setup.difficulty];
 
   double _countdown = 2.4;
   late double _timeLeft = setup.seconds;
@@ -208,6 +293,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   @override
   void dispose() {
+    if (online && !guest && !_over) net!.send({'t': 'abort'});
     _ticker.dispose();
     _focus.dispose();
     super.dispose();
@@ -244,6 +330,17 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         ..throwCd = 2.5 + _rnd.nextDouble() * 2;
       if (g.player) g.throwCd = 0;
     }
+    // Online, the first fighters are the real players: one per team.
+    final humans = widget.humans.isEmpty ? [('me', 'You')] : widget.humans;
+    final mine = online ? max(0, humans.indexWhere((h) => h.$1 == net!.myId)) : 0;
+    for (var i = 0; i < fighters.length; i++) {
+      final g = fighters[i];
+      g.player = i == mine;
+      g.human = i < humans.length;
+      g.name = g.human && online ? humans[i].$2 : null;
+      if (g.human) g.throwCd = 0;
+    }
+    me = fighters[mine];
     guys.addAll(fighters);
     guys.add(Guy(Kind.granny, -3, 0.5));
     guys.add(Guy(Kind.waiter, 3.5, -0.8));
@@ -271,6 +368,14 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     _blobs.clear();
     _golden = null;
     _goldenIn = 10;
+    _cakes.clear();
+    _cakeIn = 1;
+    hotHolder = null;
+    hotT = 0;
+    for (final g in guys) {
+      g.nx = g.x;
+      g.ny = g.y;
+    }
     _camX = me.x * 0.75;
     _camY = me.y;
   }
@@ -278,7 +383,179 @@ class PieSplatGameState extends State<PieSplatGameScreen>
   void _tick(Duration now) {
     final dt = ((now - _last).inMicroseconds / 1e6).clamp(0.0, 0.05);
     _last = now;
-    setState(() => _update(dt));
+    setState(() {
+      if (online) _network(dt);
+      _update(dt);
+    });
+  }
+
+  void _addFloat(_Float f) {
+    _floats.add(f);
+    if (online && !guest) {
+      _events.add(['f', f.text, _r(f.pos.x), _r(f.pos.y), _r(f.pos.z), f.color.toARGB32(), f.size, f.life]);
+    }
+  }
+
+  void _addBlob(_Blob b) {
+    _blobs.add(b);
+    if (online && !guest) _events.add(['b', _r(b.x), _r(b.y), b.r, b.seed.round()]);
+  }
+
+  static double _r(double v) => (v * 100).roundToDouble() / 100;
+  static double _d(Object? v) => (v as num?)?.toDouble() ?? 0;
+
+  // ---------------------------------------------------------------- online
+
+  void _network(double dt) {
+    final n = net!;
+    for (final m in n.take()) {
+      final t = m['t'];
+      if (!guest) {
+        final g = _humanById(m['id']);
+        if (g == null || g.player) continue;
+        if (t == 'in') {
+          g.inX = _d(m['x']).clamp(-1.0, 1.0);
+          g.inY = _d(m['y']).clamp(-1.0, 1.0);
+        } else if (t == 'th') {
+          _humanThrow(g);
+        } else if (t == 'dg') {
+          _humanDodge(g);
+        } else if (t == 'bye') {
+          // They left: a bot takes over.
+          g
+            ..human = false
+            ..name = '${g.name} (bot)';
+        }
+      } else {
+        if (t == 'st') _applySnapshot(m);
+        if ((t == 'hostLeft' || t == 'abort') && !_over) {
+          _netNote = 'The party host left the game.';
+          _over = true;
+          _overT = 1;
+        }
+      }
+    }
+    if (guest) {
+      _sendIn -= dt;
+      if (_sendIn <= 0) {
+        _sendIn = 0.06;
+        final (mx, my) = _stick;
+        n.send({'t': 'in', 'id': n.myId, 'x': _r(mx), 'y': _r(my)});
+      }
+    } else {
+      _sendIn -= dt;
+      if (_sendIn <= 0) {
+        _sendIn = 0.08;
+        n.send(_snapshot());
+        _events.clear();
+      }
+    }
+  }
+
+  Guy? _humanById(Object? id) {
+    final i = widget.humans.indexWhere((h) => h.$1 == id);
+    if (i < 0) return null;
+    return fighters.elementAt(i);
+  }
+
+  Map<String, dynamic> _snapshot() => {
+    't': 'st',
+    'tl': _r(_timeLeft),
+    'cd': _r(_countdown),
+    'ov': _over ? 1 : 0,
+    'g': [
+      for (final g in guys)
+        [
+          _r(g.x), _r(g.y), _r(g.angle), _r(g.walk), _r(g.splatAge), _r(g.dizzy),
+          _r(g.dashT), _r(g.throwT), g.score, g.lives, g.out ? 1 : 0, g.triple,
+          g.lineT > 0 ? (g.line ?? '') : '', _r(g.lineT), g.cakes, g.splats, g.oops, _r(g.outAt),
+        ],
+    ],
+    'p': [for (final p in _pies) [_r(p.x), _r(p.y), _r(p.z), _r(p.spin)]],
+    'cu': [for (final c in _cushions) [_r(c.x), _r(c.y), _r(c.away)]],
+    'go': _golden == null ? null : [_r(_golden!.$1), _r(_golden!.$2)],
+    'ck': [for (final c in _cakes) [_r(c.$1), _r(c.$2)]],
+    'hp': hotHolder == null ? -1 : guys.indexOf(hotHolder!),
+    'ht': _r(hotT),
+    'ev': [..._events],
+  };
+
+  void _applySnapshot(Map<String, dynamic> m) {
+    _timeLeft = _d(m['tl']);
+    _countdown = _d(m['cd']);
+    final gs = m['g'] as List? ?? const [];
+    for (var i = 0; i < min(gs.length, guys.length); i++) {
+      final v = gs[i] as List;
+      final g = guys[i];
+      final wasSplat = g.splatAge;
+      g
+        ..nx = _d(v[0])
+        ..ny = _d(v[1])
+        ..angle = _d(v[2])
+        ..walk = _d(v[3])
+        ..splatAge = _d(v[4])
+        ..dizzy = _d(v[5])
+        ..dashT = _d(v[6])
+        ..throwT = _d(v[7])
+        ..score = (v[8] as num).toInt()
+        ..lives = (v[9] as num).toInt()
+        ..out = v[10] == 1
+        ..triple = (v[11] as num).toInt()
+        ..cakes = (v[14] as num).toInt()
+        ..splats = (v[15] as num).toInt()
+        ..oops = (v[16] as num).toInt()
+        ..outAt = _d(v[17]);
+      final line = v[12] as String;
+      if (line.isNotEmpty) {
+        g
+          ..line = line
+          ..lineT = _d(v[13]);
+      }
+      if (g.player && g.splatAge >= 0 && g.splatAge < 0.4 && (wasSplat < 0 || wasSplat > g.splatAge + 0.4)) {
+        _faceSplat = big ? 1.1 : 1.5;
+        _shake = 0.3;
+      }
+      if ((g.nx - g.x).abs() > 3 || (g.ny - g.y).abs() > 3) {
+        g
+          ..x = g.nx
+          ..y = g.ny;
+      }
+    }
+    _pies
+      ..clear()
+      ..addAll([
+        for (final p in (m['p'] as List? ?? const []))
+          _Pie(_d(p[0]), _d(p[1]), _d(p[2]), 0, 0, 0, me)..spin = _d(p[3]),
+      ]);
+    final cu = m['cu'] as List? ?? const [];
+    for (var i = 0; i < min(cu.length, _cushions.length); i++) {
+      _cushions[i]
+        ..x = _d(cu[i][0])
+        ..y = _d(cu[i][1])
+        ..away = _d(cu[i][2]);
+    }
+    final hp = (m['hp'] as num?)?.toInt() ?? -1;
+    hotHolder = hp >= 0 && hp < guys.length ? guys[hp] : null;
+    hotT = _d(m['ht']);
+    final go = m['go'];
+    _golden = go is List ? (_d(go[0]), _d(go[1])) : null;
+    _cakes
+      ..clear()
+      ..addAll([for (final c in (m['ck'] as List? ?? const [])) (_d(c[0]), _d(c[1]))]);
+    for (final e in (m['ev'] as List? ?? const [])) {
+      if (e is! List || e.isEmpty) continue;
+      if (e[0] == 'f') {
+        _floats.add(_Float('${e[1]}', V3(_d(e[2]), _d(e[3]), _d(e[4])), Color((e[5] as num).toInt()),
+            size: _d(e[6]), life: _d(e[7])));
+      } else if (e[0] == 'b') {
+        _blobs.add(_Blob(_d(e[1]), _d(e[2]), _d(e[3]), _d(e[4])));
+      }
+    }
+    if (m['ov'] == 1 && !_over) {
+      _over = true;
+      _overT = 0;
+      _saveBest();
+    }
   }
 
   Iterable<Guy> get fighters => guys.where((g) => !g.bystander);
@@ -318,6 +595,20 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     }
     _moveCamera(dt);
 
+    if (guest) {
+      // The host runs the party; just glide everyone to where it says.
+      final k = min(1.0, dt * 14);
+      for (final g in guys) {
+        g.x += (g.nx - g.x) * k;
+        g.y += (g.ny - g.y) * k;
+      }
+      for (final p in _pies) {
+        p.spin += dt * 9;
+      }
+      if (_over) _overT += dt;
+      return;
+    }
+
     if (_over) {
       _overT += dt;
       return;
@@ -328,9 +619,14 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     }
     _timeLeft -= dt;
 
-    _playerInput(dt);
+    final (mx, my) = _stick;
+    _humanInput(me, mx, my, dt);
     for (final g in alive) {
       if (g.player) continue;
+      if (g.human) {
+        _humanInput(g, g.inX, g.inY, dt);
+        continue;
+      }
       g.bystander ? _strangerBrain(g, dt) : _botBrain(g, dt);
     }
     for (final g in alive) {
@@ -340,12 +636,64 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     _updateStuffOnGrass(dt);
 
     if (_timeLeft <= 0) _finish();
-    if (survival) {
+    if (kingMode) _updateKing(dt);
+    if (hotMode) _updateHot(dt);
+    if (elimination) {
       final teamsLeft = fighters.where((g) => !g.out).map((g) => g.team).toSet();
       final myTeamOut = !fighters.any((g) => !g.out && g.team == me.team);
       if (teamsLeft.length <= 1 || myTeamOut) _finish();
     }
   }
+
+  bool inZone(Guy g) => g.x * g.x + g.y * g.y < kingR * kingR;
+
+  void _updateKing(double dt) {
+    for (final g in fighters) {
+      if (g.out || g.dizzy > 0 || !inZone(g)) continue;
+      g.zoneT += dt;
+      if (g.zoneT >= 0.5) {
+        g.zoneT -= 0.5;
+        g.score += 1;
+        if (g.player && g.score % 5 == 0) {
+          _addFloat(_Float('+5', V3(g.x, g.y, 2.3), const Color(0xFFFFD54F), size: 18));
+        }
+      }
+    }
+  }
+
+  void _updateHot(double dt) {
+    final left = fighters.where((g) => !g.out).toList();
+    if (left.map((g) => g.team).toSet().length <= 1) return;
+    if (hotHolder == null || hotHolder!.out) {
+      hotHolder = left[_rnd.nextInt(left.length)];
+      hotT = max(7.0, 16 - (fighters.length - left.length) * 0.8) + _rnd.nextDouble() * 4;
+      _addFloat(_Float(hotHolder!.player ? 'YOU HAVE THE HOT PIE!' : '${_nameOf(hotHolder!)} has the HOT PIE!',
+          V3(hotHolder!.x, hotHolder!.y, 2.6), const Color(0xFFFF7043), size: hotHolder!.player ? 26 : 16, life: 1.6));
+      return;
+    }
+    hotT -= dt;
+    if (hotT <= 0) {
+      final g = hotHolder!;
+      g
+        ..out = true
+        ..outAt = clock
+        ..splatAge = 0;
+      _shake = 0.5;
+      _addBlob(_Blob(g.x, g.y, 1.6, _rnd.nextDouble() * 1000));
+      _addFloat(_Float('KABOOM!', V3(g.x, g.y, 2.2), const Color(0xFFFF7043), size: 38, life: 1.6));
+      _addFloat(_Float(g.player ? 'YOU ARE OUT!' : '${_nameOf(g)} is OUT!', V3(g.x, g.y, 3.0),
+          const Color(0xFFFF8A80), size: g.player ? 28 : 16, life: 1.6));
+      for (final o in alive) {
+        if (!identical(o, g) && _dist(o, g) < 3) {
+          o.say(['WHOA!', 'I got custard in my EAR!', 'So sticky!', 'Ha! Not me!'][_rnd.nextInt(4)], 1.4);
+        }
+      }
+      SoundService.instance.play(GameSound.gameOver);
+      hotHolder = null;
+    }
+  }
+
+  String _nameOf(Guy g) => g.player ? 'You' : (g.name ?? g.kind.short);
 
   void _moveCamera(double dt) {
     final k = min(1.0, dt * 4);
@@ -376,10 +724,11 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     return (mx, my);
   }
 
-  void _playerInput(double dt) {
-    final (mx, my) = _stick;
+  void _humanInput(Guy me, double mx, double my, double dt) {
     me.throwCd -= dt;
     me.dashCd -= dt;
+    me.inX = mx;
+    me.inY = my;
     if (me.dizzy > 0 || me.dashT > 0 || me.out) return;
     final l = sqrt(mx * mx + my * my);
     if (l > 0.1) {
@@ -414,17 +763,44 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       } else {
         g.target = foes[_rnd.nextInt(foes.length)];
       }
-      // Find a spot a few steps away from the target to throw from.
-      final a = _rnd.nextDouble() * pi * 2;
-      final d = 4.5 + _rnd.nextDouble() * 3;
-      g.tx = (g.target!.x + cos(a) * d).clamp(-halfW + 1, halfW - 1);
-      g.ty = (g.target!.y + sin(a) * d).clamp(-halfH + 1, halfH - 1);
+      if (hotMode && hotHolder != null && !identical(hotHolder, g) && enemies(g, hotHolder!) && _dist(g, hotHolder!) < 8) {
+        // Run away from the hot pie!
+        final a = atan2(g.y - hotHolder!.y, g.x - hotHolder!.x) + (_rnd.nextDouble() - 0.5);
+        g.tx = (g.x + cos(a) * 6).clamp(-halfW + 1, halfW - 1);
+        g.ty = (g.y + sin(a) * 6).clamp(-halfH + 1, halfH - 1);
+      } else if (hotMode && identical(hotHolder, g)) {
+        // Chase the nearest enemy to pass it on.
+        g.target = foes.first;
+        g.tx = foes.first.x;
+        g.ty = foes.first.y;
+        g.think = 0.4;
+      } else if (kingMode && _rnd.nextDouble() < 0.65) {
+        final a = _rnd.nextDouble() * pi * 2, d = _rnd.nextDouble() * (kingR - 0.6);
+        g.tx = cos(a) * d;
+        g.ty = sin(a) * d;
+      } else if (cakeMode && _cakes.isNotEmpty && _rnd.nextDouble() < 0.6) {
+        // Run for the nearest cake.
+        var best = _cakes.first;
+        for (final c in _cakes) {
+          if (pow(c.$1 - g.x, 2) + pow(c.$2 - g.y, 2) < pow(best.$1 - g.x, 2) + pow(best.$2 - g.y, 2)) {
+            best = c;
+          }
+        }
+        g.tx = best.$1;
+        g.ty = best.$2;
+      } else {
+        // Find a spot a few steps away from the target to throw from.
+        final a = _rnd.nextDouble() * pi * 2;
+        final d = 4.5 + _rnd.nextDouble() * 3;
+        g.tx = (g.target!.x + cos(a) * d).clamp(-halfW + 1, halfW - 1);
+        g.ty = (g.target!.y + sin(a) * d).clamp(-halfH + 1, halfH - 1);
+      }
     }
     final dx = g.tx - g.x, dy = g.ty - g.y;
     final d = sqrt(dx * dx + dy * dy);
     if (g.target!.out) g.target = null;
     if (g.target == null) return;
-    final speed = _botSpeed * (g.kind == Kind.baby ? 1.15 : 1);
+    final speed = _botSpeed * (g.kind == Kind.baby ? 1.15 : 1) * (identical(hotHolder, g) ? 1.2 : 1);
     if (d > 0.4) {
       g.vx = dx / d * speed;
       g.vy = dy / d * speed;
@@ -436,7 +812,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     g.angle = atan2(t.y - g.y, t.x - g.x);
     final td = sqrt(pow(t.x - g.x, 2) + pow(t.y - g.y, 2));
     if (g.throwCd <= 0 && td < 13) {
-      g.throwCd = _botThrowGap * (0.8 + _rnd.nextDouble() * 0.6);
+      g.throwCd = _botThrowGap * (0.8 + _rnd.nextDouble() * 0.6) *
+          (frenzy ? 0.55 : 1) * (identical(hotHolder, g) ? 0.5 : 1);
       final flight = max(0.25, td / 13);
       final miss = _botMiss * (0.4 + _rnd.nextDouble() * 1.2);
       final ma = _rnd.nextDouble() * pi * 2;
@@ -559,8 +936,16 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   /// The THROW button: aims at the nearest pie fighter you're facing.
   void throwPie() {
+    if (guest) {
+      if (!_over && _countdown <= 0) net!.send({'t': 'th', 'id': net!.myId});
+      return;
+    }
+    _humanThrow(me);
+  }
+
+  void _humanThrow(Guy me) {
     if (_over || _countdown > 0 || me.dizzy > 0 || me.throwCd > 0 || me.out) return;
-    me.throwCd = 0.42;
+    me.throwCd = frenzy ? 0.25 : 0.42;
     Guy? best;
     var bestScore = 1e9;
     for (final g in alive) {
@@ -591,8 +976,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       tz = 0;
     }
     _throw(me, tx, ty, tz);
-    if (me.triple > 0) {
-      me.triple--;
+    if (me.triple > 0 || frenzy) {
+      if (!frenzy) me.triple--;
       for (final s in [-0.3, 0.3]) {
         final a = atan2(ty - me.y, tx - me.x) + s;
         final d = sqrt(pow(tx - me.x, 2) + pow(ty - me.y, 2));
@@ -603,8 +988,16 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   /// The DODGE button: a quick dash you can't be splatted during.
   void dodge() {
+    if (guest) {
+      if (!_over && _countdown <= 0) net!.send({'t': 'dg', 'id': net!.myId});
+      return;
+    }
+    _humanDodge(me);
+  }
+
+  void _humanDodge(Guy me) {
     if (_over || _countdown > 0 || me.dizzy > 0 || me.dashCd > 0 || me.out) return;
-    final (mx, my) = _stick;
+    final (mx, my) = (me.inX, me.inY);
     final l = sqrt(mx * mx + my * my);
     // Dash the way you're pushing, or sideways if you're standing still.
     final a = l > 0.1 ? atan2(my, mx) : me.angle + pi / 2;
@@ -624,7 +1017,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       p.spin += dt * 9;
       // Bots sometimes see a pie coming and jump out of the way.
       for (final g in alive) {
-        if (g.player || g.bystander || !enemies(g, p.by) || p.dodgeChecked) continue;
+        if (g.human || g.bystander || !enemies(g, p.by) || p.dodgeChecked) continue;
         final d = sqrt(pow(g.x - p.x, 2) + pow(g.y - p.y, 2));
         if (d < 2.2) {
           p.dodgeChecked = true;
@@ -660,7 +1053,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       }
       if (onTable || p.z <= 0 || p.x.abs() > halfW + 3 || p.y.abs() > halfH + 3) {
         if (!onTable && p.z <= 0) {
-          _blobs.add(_Blob(p.x, p.y, 0.45, _rnd.nextDouble() * 1000));
+          _addBlob(_Blob(p.x, p.y, 0.45, _rnd.nextDouble() * 1000));
         }
         gone.add(p);
       }
@@ -670,7 +1063,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   void _splat(Guy g, Guy by) {
     g.splatAge = 0;
-    g.safe = survival ? 1.6 : 0.8;
+    g.safe = elimination ? 1.6 : 0.8;
     g.dizzy = g.bystander ? 1.5 : 0.9;
     final lines = g.kind.splatLines;
     g.say(lines[_rnd.nextInt(lines.length)], 1.8);
@@ -682,8 +1075,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     }
     if (g.kind == Kind.waiter) {
       by.score += 5;
-      _blobs.add(_Blob(g.x + 0.5, g.y, 0.6, _rnd.nextDouble() * 1000));
-      _floats.add(_Float(by.player ? '+5 Splat the waiter!' : '+5', head,
+      _addBlob(_Blob(g.x + 0.5, g.y, 0.6, _rnd.nextDouble() * 1000));
+      _addFloat(_Float(by.player ? '+5 Splat the waiter!' : '+5', head,
           const Color(0xFFFFEB3B), size: by.player ? 20 : 15));
       if (by.player) SoundService.instance.play(GameSound.hit);
       return;
@@ -693,8 +1086,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       by.oops++;
       if (by.player) {
         _shake = 0.4;
-        _floats.add(_Float('-15', head, const Color(0xFFFF5252), size: 26, life: 1.4));
-        _floats.add(_Float(
+        _addFloat(_Float('-15', head, const Color(0xFFFF5252), size: 26, life: 1.4));
+        _addFloat(_Float(
           switch (g.kind) {
             Kind.granny => 'NOT GRANNY!',
             Kind.stranger => 'NOT THE STRANGER!',
@@ -707,30 +1100,51 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         ));
         SoundService.instance.play(GameSound.noMatch);
       } else {
-        _floats.add(_Float('Oops! -15 ${by.kind.short}', head, const Color(0xFFFFAB91), size: 15));
+        _addFloat(_Float('Oops! -15 ${by.kind.short}', head, const Color(0xFFFFAB91), size: 15));
         by.say(['Oops!', 'Sorry Granny!', 'Whoopsie!', 'It was HIM!'][_rnd.nextInt(4)], 1.4);
       }
       return;
     }
-    by.score += 10;
+    if (!kingMode) by.score += 10;
     by.splats++;
+    if (hotMode && identical(hotHolder, by) && !g.out) {
+      // Pass the hot pie on!
+      hotHolder = g;
+      hotT = max(hotT, 3);
+      _addFloat(_Float(g.player ? 'YOU HAVE THE HOT PIE!' : 'Passed to ${_nameOf(g)}!',
+          V3(g.x, g.y, 2.6), const Color(0xFFFF7043), size: g.player ? 26 : 16, life: 1.4));
+    }
+    if (cakeMode && g.cakes > 0) {
+      // Splatted: drop half your cakes on the grass!
+      final drop = (g.cakes + 1) ~/ 2;
+      g.cakes -= drop;
+      for (var i = 0; i < drop; i++) {
+        final a = _rnd.nextDouble() * pi * 2, d = 1 + _rnd.nextDouble() * 1.5;
+        _cakes.add((
+          (g.x + cos(a) * d).clamp(-halfW + 1, halfW - 1),
+          (g.y + sin(a) * d).clamp(-halfH + 1, halfH - 1),
+        ));
+      }
+      _addFloat(_Float('Dropped $drop cake${drop == 1 ? '' : 's'}!', head + const V3(0, 0, 0.5),
+          const Color(0xFFFFAB91), size: g.player ? 24 : 15));
+    }
     if (survival) {
       g.lives--;
       if (g.lives <= 0) {
         g.out = true;
         g.outAt = clock;
-        _floats.add(_Float(
+        _addFloat(_Float(
           g.player ? 'YOU ARE OUT!' : '${g.kind.short} is OUT!',
           head + const V3(0, 0, 0.5),
           const Color(0xFFFF8A80),
           size: g.player ? 30 : 18,
           life: 1.6,
         ));
-        _blobs.add(_Blob(g.x, g.y, 0.9, _rnd.nextDouble() * 1000));
+        _addBlob(_Blob(g.x, g.y, 0.9, _rnd.nextDouble() * 1000));
       }
     }
-    _floats.add(_Float(
-      by.player ? '+10 SPLAT!' : 'SPLAT!',
+    _addFloat(_Float(
+      by.player && !kingMode && !cakeMode && !elimination ? '+10 SPLAT!' : 'SPLAT!',
       head,
       by.player ? const Color(0xFFFFEB3B) : Colors.white,
       size: by.player ? 24 : 17,
@@ -743,6 +1157,28 @@ class PieSplatGameState extends State<PieSplatGameScreen>
   }
 
   void _updateStuffOnGrass(double dt) {
+    if (cakeMode) {
+      _cakeIn -= dt;
+      if (_cakeIn <= 0 && _cakes.length < (big ? 7 : 4)) {
+        _cakeIn = 1.2;
+        var cx = 0.0, cy = 0.0;
+        do {
+          cx = (_rnd.nextDouble() * 2 - 1) * (halfW - 1.5);
+          cy = (_rnd.nextDouble() * 2 - 1) * (halfH - 1.5);
+        } while (tables.any((t) => t.inflate(0.8).contains(Offset(cx, cy))));
+        _cakes.add((cx, cy));
+      }
+      for (final g in fighters) {
+        if (g.out) continue;
+        final i = _cakes.indexWhere((c) => pow(c.$1 - g.x, 2) + pow(c.$2 - g.y, 2) < 0.55);
+        if (i < 0) continue;
+        _cakes.removeAt(i);
+        g.cakes++;
+        _addFloat(_Float(g.player ? '+1 CAKE!' : '+1', V3(g.x, g.y, 2.3),
+            const Color(0xFFF48FB1), size: g.player ? 22 : 14));
+        if (g.player) SoundService.instance.play(GameSound.eat);
+      }
+    }
     for (final c in _cushions) {
       if (c.away > 0) {
         c.away -= dt;
@@ -762,6 +1198,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       }
     }
     if (_golden == null) {
+      if (frenzy) return;
       _goldenIn -= dt;
       if (_goldenIn <= 0) {
         var gx = 0.0, gy = 0.0;
@@ -779,7 +1216,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
           g.triple = 3;
           _golden = null;
           _goldenIn = 12;
-          _floats.add(_Float(
+          _addFloat(_Float(
             g.player ? 'TRIPLE PIES!' : '${g.kind.short} got TRIPLE PIES!',
             V3(g.x, g.y, 2.4),
             const Color(0xFFFFD54F),
@@ -793,10 +1230,10 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     }
     // Bots with triple pies throw three at once.
     for (final g in fighters) {
-      if (g.player || g.triple <= 0 || g.throwT < 0.99) continue;
+      if (g.human || (g.triple <= 0 && !frenzy) || g.throwT < 0.99) continue;
       final mine = _pies.where((p) => identical(p.by, g));
       if (mine.isEmpty) continue;
-      g.triple--;
+      if (!frenzy) g.triple--;
       final p = mine.last;
       for (final s in [-0.3, 0.3]) {
         final sp = sqrt(p.vx * p.vx + p.vy * p.vy);
@@ -809,7 +1246,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
   void _whoopee(_Cushion c, Guy g) {
     c.away = 7;
     g.dizzy = 0.8;
-    _floats.add(_Float('PFFFFRRRRT!', V3(c.x, c.y, 1.2), const Color(0xFFFF80AB), size: 28, life: 1.5));
+    _addFloat(_Float('PFFFFRRRRT!', V3(c.x, c.y, 1.2), const Color(0xFFFF80AB), size: 28, life: 1.5));
     g.say(
       g.kind == Kind.puppy
           ? '*sniffs it suspiciously*'
@@ -830,11 +1267,16 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     _over = true;
     _overT = 0;
     _pies.clear();
+    if (online) net!.send(_snapshot());
+    _saveBest();
+    SoundService.instance.play(place == 1 ? GameSound.win : GameSound.levelComplete);
+  }
+
+  void _saveBest() {
     final save = SaveService.instance;
-    final s = max(0, me.score);
+    final s = max(0, cakeMode ? me.cakes * 10 : me.score);
     _newBest = s > save.getHighScore(kPieSplatId);
     save.saveHighScore(kPieSplatId, s);
-    SoundService.instance.play(place == 1 ? GameSound.win : GameSound.levelComplete);
   }
 
   /// Each team's standing, best first. In a free-for-all a team is one person.
@@ -844,9 +1286,11 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       (byTeam[g.team] ??= TeamResult(g.team)).members.add(g);
     }
     final list = byTeam.values.toList();
-    int key(TeamResult t) => survival
-        ? t.alive * 100000 + t.lives * 1000 + (t.lastOut * 10).round()
-        : t.score;
+    int key(TeamResult t) => elimination
+        ? t.alive * 100000 + (survival ? t.lives * 1000 : 0) + (t.lastOut * 10).round()
+        : cakeMode
+            ? t.cakes
+            : t.score;
     list.sort((a, b) => key(b).compareTo(key(a)));
     return list;
   }
@@ -1078,8 +1522,13 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   String get _hudText {
     if (me.out) return 'OUT! Watching your team';
-    if (survival) {
+    if (cakeMode) {
+      final mine = teamGame ? standings.firstWhere((t) => t.team == me.team).cakes : me.cakes;
+      return '$mine cakes · ${ordinal(place)}';
+    }
+    if (elimination) {
       final left = fighters.where((g) => !g.out).length;
+      if (hotMode && identical(hotHolder, me)) return 'HOT PIE! ${max(0, hotT).toStringAsFixed(1)}s';
       return '$left left';
     }
     return '${teamGame ? standings.firstWhere((t) => t.team == me.team).score : me.score} pts · ${ordinal(place)}';
@@ -1105,10 +1554,14 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     };
     String label(TeamResult t) => teamGame
         ? '${kTeamNames[t.team]} team${t.team == me.team ? ' (you)' : ''}'
-        : t.members.first.kind.short;
-    String value(TeamResult t) => survival
-        ? (teamGame ? '${t.alive} left' : (t.alive > 0 ? '${t.lives} ♥' : 'out'))
-        : '${t.score}';
+        : t.members.first.player
+            ? 'You'
+            : (t.members.first.name ?? t.members.first.kind.short);
+    String value(TeamResult t) => elimination
+        ? (teamGame ? '${t.alive} left' : (t.alive > 0 ? (survival ? '${t.lives} ♥' : 'still in') : 'out'))
+        : cakeMode
+            ? '${t.cakes} cakes'
+            : '${t.score}';
     return Container(
       color: Colors.black54,
       alignment: Alignment.center,
@@ -1127,6 +1580,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_netNote != null)
+                Text(_netNote!, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFD32F2F), fontWeight: FontWeight.w800)),
               Text(
                 headline,
                 textAlign: TextAlign.center,
@@ -1197,8 +1652,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
                 runSpacing: 8,
                 alignment: WrapAlignment.center,
                 children: [
-                  _button('Play again', const Color(0xFFFF4081), _restart),
-                  _button('Menu', Colors.white, () => Navigator.of(context).pop()),
+                  if (!online) _button('Play again', const Color(0xFFFF4081), _restart),
+                  _button(online ? 'Back to room' : 'Menu', Colors.white, () => Navigator.of(context).pop()),
                 ],
               ),
             ],
@@ -1295,11 +1750,9 @@ class _PartyPainter extends CustomPainter {
           maxWidth: size.width - 20);
       _text(
         c,
-        g.survival
-            ? 'SURVIVAL: 3 splats and you are out! Last one standing wins.'
-            : g.teamGame
-                ? "Splat the other teams. Pies fly past your teammates. Don't splat the guests!"
-                : "Splat the show-offs. Dodge their pies. Don't splat the guests!",
+        g.setup.mode == PieMode.comedy && g.teamGame
+            ? "Splat the other teams. Pies fly past your teammates. Don't splat the guests!"
+            : g.setup.mode.howTo,
         size.center(Offset(0, big * 0.85)),
         16,
         Colors.white,
@@ -1426,8 +1879,48 @@ class _PartyPainter extends CustomPainter {
       final (gx, gy) = g._golden!;
       addPie(s, V3(gx, gy, 0.6 + sin(g.clock * 3) * 0.15), g.clock * 2, mega: true);
     }
+    if (g.kingMode) {
+      // The golden circle, and a giant cake floating above it.
+      const R = PieSplatGameState.kingR;
+      s.poly([for (var i = 0; i < 24; i++) V3(cos(i * pi / 12) * R, sin(i * pi / 12) * R, 0.02)],
+          const Color(0xFFFFD54F), floor: true, lit: false);
+      s.poly([for (var i = 0; i < 24; i++) V3(cos(i * pi / 12) * (R - 0.25), sin(i * pi / 12) * (R - 0.25), 0.025)],
+          const Color(0xFFFFECB3), floor: true, lit: false);
+      final bob = 3.2 + sin(g.clock * 2) * 0.15;
+      s.group(() {
+        s.box(V3(0, 0, bob), ax, ay, kUp, 0.6, 0.6, 0.22, const Color(0xFFF48FB1), top: kCream3);
+        s.box(V3(0, 0, bob + 0.38), ax, ay, kUp, 0.42, 0.42, 0.16, const Color(0xFF8D6E63), top: kCream3);
+        for (var i = 0; i < 5; i++) {
+          final a = i * pi * 2 / 5;
+          s.box(V3(cos(a) * 0.25, sin(a) * 0.25, bob + 0.68), ax, ay, kUp, 0.05, 0.05, 0.12, const Color(0xFFFFC107));
+        }
+      });
+    }
+    final hot = g.hotHolder;
+    if (hot != null && !hot.out) {
+      final flash = (g.hotT < 3 && (g.clock * 8).floor().isEven);
+      addPie(s, V3(hot.x, hot.y, hot.kind.height + 0.75 + sin(g.clock * 10) * 0.05), g.clock * 4, mega: !flash);
+    }
+    for (final (cx, cy) in g._cakes) {
+      s.group(() {
+        s.box(V3(cx, cy, 0.12), ax, ay, kUp, 0.22, 0.22, 0.12, const Color(0xFFF48FB1), top: kCream3);
+        s.box(V3(cx, cy, 0.32), ax, ay, kUp, 0.025, 0.025, 0.08, const Color(0xFF64B5F6));
+        s.box(V3(cx, cy, 0.42), ax, ay, kUp, 0.03, 0.03, 0.03, const Color(0xFFFFC107));
+      });
+    }
     // Everybody at the party.
     for (final p in g.alive) {
+      if (p.cakes > 0) {
+        // A wobbly stack of cakes on their head.
+        final top = p.kind.height + 0.15;
+        s.group(() {
+          for (var i = 0; i < min(p.cakes, 5); i++) {
+            final wob = sin(g.clock * 6 + i) * 0.03 * i;
+            s.box(V3(p.x + wob, p.y, top + i * 0.2), ax, ay, kUp, 0.18 - i * 0.015, 0.18 - i * 0.015, 0.09,
+                const Color(0xFFF48FB1), top: kCream3);
+          }
+        });
+      }
       addGuy(
         s,
         p.kind,
@@ -1474,6 +1967,14 @@ class _PartyPainter extends CustomPainter {
           final a = g.clock * 6 + i * pi * 2 / 3;
           _star(c, head + Offset(cos(a) * 16, sin(a) * 5 - 6), 5);
         }
+      }
+      if (identical(g.hotHolder, p) && !p.out) {
+        _text(c, max(0, g.hotT).toStringAsFixed(1), head - const Offset(0, 46), 18,
+            g.hotT < 3 ? const Color(0xFFFF5252) : const Color(0xFFFFAB40));
+      }
+      if (p.name != null && !p.player) {
+        _text(c, p.name!, head + const Offset(0, 4), 12,
+            g.teamGame ? kTeamColors[p.team] : Colors.white, maxWidth: 120);
       }
       if (p.lineT > 0 && p.line != null) _bubble(c, head - const Offset(0, 14), p.line!, size);
     }
