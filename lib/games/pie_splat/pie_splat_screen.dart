@@ -128,6 +128,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
                 _rule('🥧', 'Press THROW (or Space) to lob a pie. It aims at the show-off you are facing.'),
                 _rule('💨', 'Press DODGE (or Shift) to dash out of the way of a pie.'),
                 _rule('🕵', "Don't splat Granny, Biscuit the puppy or the Stranger: you lose 15 points! The Waiter is fair game (5 points)."),
+                _rule('👨‍🦲', "Dad is bald. Pie him right on his shiny head for 10 points!"),
                 _rule('🎮', 'Pick Comedy or Survival, Easy, Normal or Hard, and play 2 to 4 players or 2 to 5 teams.'),
                 _rule('⭐', 'Grab the golden pie for TRIPLE PIES. Watch out for whoopee cushions!'),
                 _rule('👑', 'Comedy: most points after 90 seconds wins. Survival: 3 splats and you are out, last one standing wins.'),
@@ -214,7 +215,9 @@ class _PieSplatScreenState extends State<PieSplatScreen>
                     ? "That's you!"
                     : g == Kind.waiter
                         ? 'Splat for 5 pts'
-                        : 'Splat!',
+                        : g == Kind.dad
+                            ? 'Pie his head!'
+                            : 'Splat!',
             style: TextStyle(
               color: danger ? const Color(0xFFFF8A80) : const Color(0xFFB9F6CA),
               fontSize: 11,

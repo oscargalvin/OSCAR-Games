@@ -21,6 +21,7 @@ enum Kind {
   waiter,
   puppy,
   stranger,
+  dad,
 }
 
 /// The goofs that fight, in the order bots are handed out.
@@ -38,10 +39,11 @@ extension KindInfo on Kind {
       this == Kind.granny ||
       this == Kind.waiter ||
       this == Kind.puppy ||
-      this == Kind.stranger;
+      this == Kind.stranger ||
+      this == Kind.dad;
 
   /// Guests you must NOT splat. (The waiter is fair game!)
-  bool get protected => bystander && this != Kind.waiter;
+  bool get protected => bystander && this != Kind.waiter && this != Kind.dad;
 
   String get title => switch (this) {
     Kind.chef => 'You (the Chef)',
@@ -54,6 +56,7 @@ extension KindInfo on Kind {
     Kind.waiter => 'The Waiter',
     Kind.puppy => 'Biscuit the Puppy',
     Kind.stranger => 'The Stranger',
+    Kind.dad => 'Dad',
   };
 
   String get short => switch (this) {
@@ -67,6 +70,7 @@ extension KindInfo on Kind {
     Kind.waiter => 'Waiter',
     Kind.puppy => 'Biscuit',
     Kind.stranger => 'Stranger',
+    Kind.dad => 'Dad',
   };
 
   /// How tall they are compared with a grown-up.
@@ -74,6 +78,7 @@ extension KindInfo on Kind {
     Kind.baby => 0.7,
     Kind.puppy => 1.0,
     Kind.granny => 0.92,
+    Kind.dad => 1.05,
     _ => 1.0,
   };
 
@@ -101,6 +106,7 @@ extension KindInfo on Kind {
     Kind.waiter => ['My CAKE!', 'I am just the waiter!', 'That is NOT on the menu!', 'I quit!'],
     Kind.puppy => ['*licks it all up*', 'Woof?!', '*happy wiggle*'],
     Kind.stranger => ['You have made a powerful enemy.', 'My disguise is RUINED!', 'Hmph. Rude.', 'I was never here...'],
+    Kind.dad => ['MY HEAD! My lovely shiny head!', 'Not AGAIN!', 'That is it. No more pocket money!', "I'm not angry. I'm just... sticky.", 'Who did that?! ...was it you?'],
   };
 
   /// Things strangers say while they wander about.
@@ -109,6 +115,7 @@ extension KindInfo on Kind {
     Kind.waiter => ['Cake, anyone?', 'Mind the cake please!', 'Excuse me, coming through!'],
     Kind.puppy => ['Woof!', '*wags tail*', 'Is it walkies?', '*sniff sniff*'],
     Kind.stranger => ['...', 'Nothing to see here.', 'I am a totally normal guest.', 'Have we met?', '*mysterious whistling*'],
+    Kind.dad => ["Hi Hungry, I'm Dad!", 'Has anyone seen the remote?', 'Back in MY day...', 'Do NOT get pie on my head.', '*shiny head sparkles*', 'Who turned the heating on?!'],
     _ => const [],
   };
 }
@@ -157,6 +164,7 @@ void addGuy(
     Kind.waiter => (const Color(0xFF212121), const Color(0xFF212121), _skin),
     Kind.puppy => (Colors.brown, Colors.brown, Colors.brown),
     Kind.stranger => (const Color(0xFFC8A165), const Color(0xFF37474F), _skin),
+    Kind.dad => (const Color(0xFF43A047), const Color(0xFFD7B98E), _skin),
   };
 
   s.group(() {
@@ -202,8 +210,19 @@ void addGuy(
         for (var i = -2; i <= 2; i++) {
           decal(at(0.171, i * 0.06, 1.38 - i.abs() * 0.025), 0.022, 0.022, Colors.white);
         }
+      case Kind.dad:
+        // A big round dad belly and a little collar.
+        b(at(0.1, 0, 1.0), 0.12, 0.26, 0.2, shirt);
+        b(at(0.02, 0, 1.43), 0.16, 0.2, 0.03, const Color(0xFF2E7D32));
       default:
         break;
+    }
+    if (k == Kind.dad) {
+      // Socks with sandals, of course.
+      for (final side in [-1.0, 1.0]) {
+        final step = sin(walk) * 0.22 * side;
+        b(at(step, side * 0.13, 0.14), 0.095, 0.095, 0.12, Colors.white);
+      }
     }
     // Arms: the throwing arm swings up and over.
     for (final side in [-1.0, 1.0]) {
@@ -311,6 +330,18 @@ void addGuy(
         b(at(0, 0, hz + head + 0.02), 0.4, 0.4, 0.025, const Color(0xFF5D4037));
         b(at(0, 0, hz + head + 0.15), 0.24, 0.24, 0.12, const Color(0xFF5D4037));
         b(at(0, 0, hz + head + 0.06), 0.245, 0.245, 0.03, kInk3);
+      case Kind.dad:
+        // Totally bald on top, with a shiny spot and two grey tufts.
+        s.quad(at(0.02, -0.06, hz + head + 0.004), f * (0.06 * sc), r * (0.09 * sc), Colors.white,
+            normal: kUp, decal: true, lit: false);
+        for (final side in [-1.0, 1.0]) {
+          b(at(-0.04, side * (head + 0.02), hz + 0.04), 0.16, 0.03, 0.09, const Color(0xFF9E9E9E));
+        }
+        b(at(-head - 0.02, 0, hz + 0.02), 0.03, head, 0.08, const Color(0xFF9E9E9E));
+        // Big bushy eyebrows.
+        for (final side in [-1.0, 1.0]) {
+          decal(at(front + 0.03, side * 0.1, hz + 0.13), 0.06, 0.018, const Color(0xFF616161));
+        }
       case Kind.puppy:
         break;
     }

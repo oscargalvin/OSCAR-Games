@@ -346,6 +346,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     guys.add(Guy(Kind.waiter, 3.5, -0.8));
     guys.add(Guy(Kind.puppy, 1.5, -2.5));
     guys.add(Guy(Kind.stranger, -1, 3));
+    guys.add(Guy(Kind.dad, 2, 4.5));
     if (big) {
       guys.add(Guy(Kind.granny, 6, 8));
       guys.add(Guy(Kind.stranger, -6, -8));
@@ -752,9 +753,9 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       if (foes.isEmpty) return;
       foes.sort((a, b) => _dist(g, a).compareTo(_dist(g, b)));
       final roll = _rnd.nextDouble();
-      final waiter = guys.where((o) => o.kind == Kind.waiter && !o.out).toList();
+      final waiter = guys.where((o) => (o.kind == Kind.waiter || o.kind == Kind.dad) && !o.out).toList();
       if (roll < 0.06 && waiter.isNotEmpty && !survival) {
-        g.target = waiter.first; // 5 cheeky points
+        g.target = waiter[_rnd.nextInt(waiter.length)]; // cheeky points
       } else if (roll < 0.06 + 0.6 / foes.length && foes.contains(me)) {
         // Don't let everybody gang up on you in the big games.
         g.target = me;
@@ -949,7 +950,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     Guy? best;
     var bestScore = 1e9;
     for (final g in alive) {
-      if (!enemies(me, g) && g.kind != Kind.waiter) continue;
+      if (!enemies(me, g) && g.kind != Kind.waiter && g.kind != Kind.dad) continue;
       final dx = g.x - me.x, dy = g.y - me.y;
       final d = sqrt(dx * dx + dy * dy);
       if (d > 15) continue;
@@ -1078,6 +1079,15 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       _addBlob(_Blob(g.x + 0.5, g.y, 0.6, _rnd.nextDouble() * 1000));
       _addFloat(_Float(by.player ? '+5 Splat the waiter!' : '+5', head,
           const Color(0xFFFFEB3B), size: by.player ? 20 : 15));
+      if (by.player) SoundService.instance.play(GameSound.hit);
+      return;
+    }
+    if (g.kind == Kind.dad) {
+      // Right on his shiny bald head!
+      by.score += 10;
+      _addBlob(_Blob(g.x - 0.4, g.y, 0.7, _rnd.nextDouble() * 1000));
+      _addFloat(_Float(by.player ? "+10 BONK! Right on Dad's head!" : '+10 Dad!', head,
+          const Color(0xFFFFEB3B), size: by.player ? 22 : 15, life: 1.4));
       if (by.player) SoundService.instance.play(GameSound.hit);
       return;
     }
