@@ -38,7 +38,7 @@ void main() {
   });
 
   for (final size in const [Size(390, 844), Size(844, 390)]) {
-    testWidgets('a whole round of Pie Splat plays out on $size', (tester) async {
+    testWidgets('a whole round of Pie Party plays out on $size', (tester) async {
       tester.view.physicalSize = size * 2;
       tester.view.devicePixelRatio = 2;
       addTearDown(tester.view.reset);

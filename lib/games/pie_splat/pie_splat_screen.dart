@@ -6,7 +6,7 @@ import 'pie_splat_3d.dart';
 import 'pie_splat_game.dart';
 import 'pie_splat_online.dart';
 
-/// Menu for Pie Splat Party: who's who, how to play, and a big PLAY button.
+/// Menu for Pie Party: who's who, how to play, and a big PLAY button.
 class PieSplatScreen extends StatefulWidget {
   const PieSplatScreen({super.key});
 
@@ -39,7 +39,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
   Widget build(BuildContext context) {
     final best = SaveService.instance.getHighScore(kPieSplatId);
     return GameScaffold(
-      title: 'Pie Splat Party',
+      title: 'Pie Party',
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 64, 16, 24),
         child: Column(

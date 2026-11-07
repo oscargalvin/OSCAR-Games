@@ -4,7 +4,7 @@ import 'dart:math';
 
 import '../outplay/outplay_net.dart' show LinkEvents, OutplayLink, createLink;
 
-/// Online Pie Splat Party. Whoever makes the room runs the party on their
+/// Online Pie Party. Whoever makes the room runs the party on their
 /// phone (the host) and sends everyone else what is happening; the others
 /// just send their stick, THROW and DODGE presses. Up to 5 real players.
 class PieNet {

@@ -8,7 +8,7 @@ import 'pie_splat_3d.dart';
 import 'pie_splat_game.dart';
 import 'pie_splat_net.dart';
 
-/// Online Pie Splat Party: make a room and share its code, or type a
+/// Online Pie Party: make a room and share its code, or type a
 /// friend's code. 1 to 5 real players; bots fill up to 12 people (15 when
 /// there are 5 players), and each player leads their own team.
 class PieOnlineScreen extends StatefulWidget {

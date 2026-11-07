@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../boost_ball/boost_ball_3d.dart' show V3;
 import '../outplay/outplay_3d.dart' show Scene3D, kUp;
 
-// Pie Splat Party in 3D. The world: x goes right, y goes away from the
+// Pie Party in 3D. The world: x goes right, y goes away from the
 // camera and z is height. A person is about 1.8 tall.
 
 /// Everyone at the party. The first ones are pie fighters; the rest are

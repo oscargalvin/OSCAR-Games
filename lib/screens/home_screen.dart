@@ -31,7 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final List<GameInfo> games = [
     GameInfo(
       id: 'pie_splat',
-      title: 'Pie Splat Party',
+      title: 'Pie Party',
       subtitle: '3D custard pie fight',
       description:
           'A garden party pie fight! Throw custard pies at the show-offs, '

@@ -32,7 +32,7 @@ extension PieModeInfo on PieMode {
     PieMode.survival => '3 splats and you are out',
     PieMode.cakeGrab => 'Run and grab the most pies',
     PieMode.kingOfCake => 'Stand on the golden circle to score',
-    PieMode.hotPie => 'Splat someone to pass the ticking pie!',
+    PieMode.hotPie => 'Splat or bump someone to pass the ticking pie!',
     PieMode.frenzy => 'Triple pies, super fast, 60 seconds',
   };
 
@@ -41,7 +41,7 @@ extension PieModeInfo on PieMode {
     PieMode.survival => 'SURVIVAL: 3 splats and you are out! Last one standing wins.',
     PieMode.cakeGrab => 'Grab pies! Get splatted and you drop half of them.',
     PieMode.kingOfCake => 'Stand on the golden circle to score points. Splat anyone who tries to take it!',
-    PieMode.hotPie => 'Got the HOT PIE? Splat someone to pass it on before it goes KABOOM!',
+    PieMode.hotPie => 'Got the HOT PIE? Splat someone or just bump into them to pass it on before it goes KABOOM!',
     PieMode.frenzy => 'PIE FRENZY! Triple pies all the time. Go go go!',
   };
 }
@@ -192,7 +192,7 @@ class _Cushion {
   double away = 0; // > 0 while it is waiting to come back
 }
 
-/// Pie Splat Party in 3D: a garden party pie fight.
+/// Pie Party in 3D: a garden party pie fight.
 class PieSplatGameScreen extends StatefulWidget {
   const PieSplatGameScreen({
     super.key,
@@ -241,6 +241,9 @@ class PieSplatGameState extends State<PieSplatGameScreen>
   /// Modes where you get knocked out and the last one standing wins.
   bool get elimination => survival || hotMode;
   Guy? hotHolder;
+
+  /// No tag-backs: the hot pie can't be passed again for a moment.
+  double _hotPassCd = 0;
   double hotT = 0;
   static const double kingR = 2.4;
   bool get cakeMode => setup.mode == PieMode.cakeGrab;
@@ -380,6 +383,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     _cakes.clear();
     _cakeIn = 1;
     hotHolder = null;
+    _hotPassCd = 0;
     hotT = 0;
     for (final g in guys) {
       g.nx = g.x;
@@ -686,6 +690,20 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       return;
     }
     hotT -= dt;
+    _hotPassCd -= dt;
+    // Just bump into someone to pass it on!
+    final holder = hotHolder!;
+    if (_hotPassCd <= 0 && hotT > 0) {
+      for (final o in left) {
+        if (identical(o, holder) || !enemies(holder, o)) continue;
+        if (_dist(holder, o) < holder.radius + o.radius + 0.45) {
+          o.splatAge = 0;
+          o.say(['Hey! No fair!', 'HOT HOT HOT!', 'Get it OFF me!', 'Noooo!'][_rnd.nextInt(4)], 1.4);
+          _passHot(holder, o);
+          return;
+        }
+      }
+    }
     if (hotT <= 0) {
       final g = hotHolder!;
       g
@@ -705,6 +723,15 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       SoundService.instance.play(GameSound.gameOver);
       hotHolder = null;
     }
+  }
+
+  void _passHot(Guy from, Guy to) {
+    hotHolder = to;
+    hotT = max(hotT, 3);
+    _hotPassCd = 1.0;
+    _addFloat(_Float(to.player ? 'YOU HAVE THE HOT PIE!' : 'Passed to ${_nameOf(to)}!',
+        V3(to.x, to.y, 2.6), const Color(0xFFFF7043), size: to.player || from.player ? 26 : 16, life: 1.4));
+    if (from.player || to.player) SoundService.instance.play(GameSound.hit);
   }
 
   String _nameOf(Guy g) => g.player ? 'You' : (g.name ?? g.kind.short);
@@ -960,7 +987,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   void _humanThrow(Guy me) {
     if (_over || _countdown > 0 || me.dizzy > 0 || me.throwCd > 0 || me.out) return;
-    me.throwCd = frenzy ? 0.25 : 0.42;
+    me.throwCd = frenzy || (hotMode && identical(hotHolder, me)) ? 0.25 : 0.42;
     Guy? best;
     var bestScore = 1e9;
     for (final g in alive) {
@@ -1093,6 +1120,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       // Bots sometimes see a pie coming and jump out of the way.
       for (final g in alive) {
         if (g.human || g.bystander || !enemies(g, p.by) || p.dodgeChecked) continue;
+        if (hotMode && identical(p.by, hotHolder)) continue; // too hot to dodge!
         final d = sqrt(pow(g.x - p.x, 2) + pow(g.y - p.y, 2));
         if (d < 2.2) {
           p.dodgeChecked = true;
@@ -1107,12 +1135,15 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         }
       }
       Guy? hit;
+      // The hot pie holder's pies are easy to land, so you can always pass it on.
+      final hotPass = hotMode && identical(p.by, hotHolder);
       for (final g in alive) {
         // Pies fly straight past your own teammates.
-        if (identical(g, p.by) || g.dashT > 0 || g.safe > 0) continue;
+        if (identical(g, p.by)) continue;
+        if (!hotPass && (g.dashT > 0 || g.safe > 0)) continue;
         if (!g.bystander && !enemies(g, p.by)) continue;
         final d = sqrt(pow(g.x - p.x, 2) + pow(g.y - p.y, 2));
-        if (d < g.radius + 0.18 && p.z > 0 && p.z < g.kind.height + 0.1) {
+        if (d < g.radius + (hotPass && !g.bystander ? 0.65 : 0.18) && p.z > 0 && p.z < g.kind.height + 0.1) {
           hit = g;
           break;
         }
@@ -1195,12 +1226,9 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     }
     if (!kingMode) by.score += 10;
     by.splats++;
-    if (hotMode && identical(hotHolder, by) && !g.out) {
+    if (hotMode && identical(hotHolder, by) && !g.out && _hotPassCd <= 0) {
       // Pass the hot pie on!
-      hotHolder = g;
-      hotT = max(hotT, 3);
-      _addFloat(_Float(g.player ? 'YOU HAVE THE HOT PIE!' : 'Passed to ${_nameOf(g)}!',
-          V3(g.x, g.y, 2.6), const Color(0xFFFF7043), size: g.player ? 26 : 16, life: 1.4));
+      _passHot(by, g);
     }
     if (cakeMode && g.cakes > 0) {
       // Splatted: drop half your cakes on the grass!
