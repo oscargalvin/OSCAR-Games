@@ -41,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.warning,
       screenBuilder: () => const PieSplatScreen(),
       difficulty: 'Easy',
+      genre: 'Comedy',
     ),
     GameInfo(
       id: 'outplay',
@@ -54,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.warning,
       screenBuilder: () => const OutplayScreen(),
       difficulty: 'Hard',
+      genre: 'Battle',
     ),
     GameInfo(
       id: 'boost_ball',
@@ -68,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.warning,
       screenBuilder: () => const BoostBallScreen(),
       difficulty: 'Medium',
+      genre: 'Sports',
     ),
     GameInfo(
       id: 'zombie_attack',
@@ -81,6 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.danger,
       screenBuilder: () => const ZombieScreen(),
       difficulty: 'Medium',
+      genre: 'Survival',
     ),
     GameInfo(
       id: 'fly_or_crash',
@@ -94,6 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.accent,
       screenBuilder: () => const FlyOrCrashScreen(),
       difficulty: 'Medium',
+      genre: 'Adventure',
     ),
     GameInfo(
       id: 'board_game',
@@ -109,6 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
       minPlayers: 1,
       maxPlayers: 5,
       difficulty: 'Easy',
+      genre: 'Board',
     ),
     // ARCHIVED (World Cup) — un-comment to show it again.
     // GameInfo(
@@ -135,6 +141,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.accent,
       screenBuilder: () => const BoatFishingScreen(),
       difficulty: 'Relax',
+      genre: 'Fishing',
     ),
     GameInfo(
       id: 'tic_tac_toe',
@@ -148,6 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
       minPlayers: 1,
       maxPlayers: 2,
       difficulty: 'Easy',
+      genre: 'Puzzle',
     ),
     GameInfo(
       id: 'memory_match',
@@ -159,6 +167,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.pink,
       screenBuilder: () => const MemoryMatchScreen(),
       difficulty: 'Medium',
+      genre: 'Puzzle',
     ),
     GameInfo(
       id: 'snake',
@@ -170,6 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.accent,
       screenBuilder: () => const SnakeScreen(),
       difficulty: 'Medium',
+      genre: 'Arcade',
     ),
     GameInfo(
       id: 'reaction',
@@ -181,6 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.danger,
       screenBuilder: () => const ReactionScreen(),
       difficulty: 'Easy',
+      genre: 'Arcade',
     ),
     GameInfo(
       id: 'target_shooter',
@@ -193,6 +204,7 @@ class _HomeScreenState extends State<HomeScreen> {
       secondaryColor: AppTheme.warning,
       screenBuilder: () => const WorldSelectScreen(),
       difficulty: 'Hard',
+      genre: 'Shooter',
     ),
   ];
 

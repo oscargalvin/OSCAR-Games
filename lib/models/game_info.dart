@@ -13,6 +13,9 @@ class GameInfo {
   final int maxPlayers;
   final String difficulty;
 
+  /// What kind of game it is, shown on the home card (Comedy, Survival...).
+  final String genre;
+
   const GameInfo({
     required this.id,
     required this.title,
@@ -25,5 +28,6 @@ class GameInfo {
     this.minPlayers = 1,
     this.maxPlayers = 1,
     this.difficulty = 'Easy',
+    this.genre = '',
   });
 }

@@ -76,9 +76,26 @@ class _GameCardState extends State<GameCard> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Icon(widget.game.icon, color: kInk, size: 40),
-                      const Spacer(),
-                      if (widget.highScore != null)
-                        _BestSticker(score: widget.highScore!),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (widget.game.genre.isNotEmpty)
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: _GenreTag(genre: widget.game.genre),
+                              ),
+                            if (widget.highScore != null) ...[
+                              const SizedBox(height: 3),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: _BestSticker(score: widget.highScore!),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                   const Spacer(),
@@ -163,6 +180,32 @@ class _BestSticker extends StatelessWidget {
             fontSize: 11,
             fontWeight: FontWeight.w800,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small label saying what kind of game it is (Comedy, Survival...).
+class _GenreTag extends StatelessWidget {
+  final String genre;
+  const _GenreTag({required this.genre});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: kInk,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        genre.toUpperCase(),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.6,
         ),
       ),
     );
