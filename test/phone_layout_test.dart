@@ -16,6 +16,8 @@ import 'package:oscar_games/games/boat_fishing/boat_fishing_screen.dart';
 import 'package:oscar_games/games/fly_or_crash/fly_or_crash_screen.dart';
 import 'package:oscar_games/games/memory_match/memory_match_screen.dart';
 import 'package:oscar_games/games/outplay/outplay_avatar.dart';
+import 'package:oscar_games/games/pie_splat/pie_splat_game.dart';
+import 'package:oscar_games/games/pie_splat/pie_splat_screen.dart';
 import 'package:oscar_games/games/outplay/outplay_game.dart';
 import 'package:oscar_games/games/outplay/outplay_screen.dart';
 import 'package:oscar_games/games/reaction/reaction_screen.dart';
@@ -84,6 +86,8 @@ final _screens = <String, Widget Function()>{
     mapId: 'runway',
     bots: 9,
   ),
+  'pie_splat': () => const PieSplatScreen(),
+  'pie_splat_game': () => const PieSplatGameScreen(seed: 1),
   'boost_ball': () => const BoostBallScreen(),
   'boost_ball_1v1': () => const BoostBallGameScreen(),
   'boost_ball_3v3': () => const BoostBallGameScreen(teamSize: 3, difficulty: 2),

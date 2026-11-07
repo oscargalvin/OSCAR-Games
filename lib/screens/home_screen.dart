@@ -18,6 +18,7 @@ import '../games/fly_or_crash/fly_or_crash_screen.dart';
 import '../games/outplay/outplay_screen.dart';
 import '../games/boost_ball/boost_ball_screen.dart';
 import '../games/zombie_attack/zombie_screen.dart';
+import '../games/pie_splat/pie_splat_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,6 +29,19 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final List<GameInfo> games = [
+    GameInfo(
+      id: 'pie_splat',
+      title: 'Pie Splat Party',
+      subtitle: 'Silly custard pie comedy',
+      description:
+          'Show-offs keep popping out of the windows. Splat them with '
+          'custard pies, but whatever you do, do NOT splat Granny!',
+      icon: Icons.cake_rounded,
+      color: AppTheme.pink,
+      secondaryColor: AppTheme.warning,
+      screenBuilder: () => const PieSplatScreen(),
+      difficulty: 'Easy',
+    ),
     GameInfo(
       id: 'outplay',
       title: 'Outplay',
@@ -184,6 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Hand-picked tile colours so neighbouring games never clash.
   static const Map<String, Color> _tileColors = {
+    'pie_splat': Color(0xFFFFB38A), // custard peach
     'outplay': Color(0xFF4FC3F7), // arena blue
     'zombie_attack': Color(0xFF4DD4AC), // zombie mint
     'fly_or_crash': Color(0xFFFFFFFF), // boarding-pass white
@@ -221,6 +236,9 @@ class _HomeScreenState extends State<HomeScreen> {
       case 'outplay':
         final w = save.getHighScore('outplay');
         return w > 0 ? w : null;
+      case 'pie_splat':
+        final p = save.getHighScore('pie_splat');
+        return p > 0 ? p : null;
       case 'fly_or_crash':
         final l = save.getHighScore('fly_or_crash');
         return l > 0 ? l : null;
