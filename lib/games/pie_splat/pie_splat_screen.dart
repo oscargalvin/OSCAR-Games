@@ -2,7 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../services/save_service.dart';
 import '../../widgets/game_scaffold.dart';
-import 'pie_splat_art.dart';
+import 'pie_splat_3d.dart';
 import 'pie_splat_game.dart';
 
 /// Menu for Pie Splat Party: who's who, how to play, and a big PLAY button.
@@ -65,8 +65,8 @@ class _PieSplatScreenState extends State<PieSplatScreen>
             ),
             const SizedBox(height: 6),
             const Text(
-              'A bunch of show-offs keep popping out of the windows. '
-              'Tap them to splat them with a custard pie!',
+              "It's a pie fight in the garden! Throw custard pies at the "
+              'show-offs and dodge theirs. Just don\'t splat the guests!',
               textAlign: TextAlign.center,
               style: TextStyle(color: Color(0xDDFFFFFF), fontSize: 15),
             ),
@@ -88,8 +88,8 @@ class _PieSplatScreenState extends State<PieSplatScreen>
                 decoration: BoxDecoration(
                   color: const Color(0xFFFF4081),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: kPieInk, width: 3),
-                  boxShadow: const [BoxShadow(color: kPieInk, offset: Offset(0, 5))],
+                  border: Border.all(color: kInk3, width: 3),
+                  boxShadow: const [BoxShadow(color: kInk3, offset: Offset(0, 5))],
                 ),
                 child: const Text(
                   'PLAY!',
@@ -101,11 +101,12 @@ class _PieSplatScreenState extends State<PieSplatScreen>
             const SizedBox(height: 16),
             _card(
               children: [
-                _rule('🥧', 'Tap a show-off to splat them. Splat lots in a row for a big combo.'),
-                _rule('👵', "Don't splat Granny or Biscuit the puppy, or you lose a heart."),
-                _rule('🐔', 'Splat the Golden Chicken for a MEGA PIE that splats everyone!'),
-                _rule('💨', 'Tap the whoopee cushion for points and extra time.'),
-                _rule('⏱', 'You have 60 seconds. Lose 3 hearts and it is game over.'),
+                _rule('🕹', 'Drag on the left side to run about. On a computer use WASD or the arrow keys.'),
+                _rule('🥧', 'Press THROW (or Space) to lob a pie. It aims at the show-off you are facing.'),
+                _rule('💨', 'Press DODGE (or Shift) to dash out of the way of a pie.'),
+                _rule('👵', 'Splat Granny, the Waiter or Biscuit the puppy and you lose 15 points!'),
+                _rule('⭐', 'Grab the golden pie for TRIPLE PIES. Watch out for whoopee cushions!'),
+                _rule('👑', 'Most points after 90 seconds wins the party.'),
               ],
             ),
             const SizedBox(height: 14),
@@ -120,7 +121,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
                   spacing: 8,
                   runSpacing: 10,
                   alignment: WrapAlignment.center,
-                  children: [for (final g in Goof.values) _portrait(g)],
+                  children: [for (final g in Kind.values) _portrait(g)],
                 ),
               ],
             ),
@@ -154,8 +155,8 @@ class _PieSplatScreenState extends State<PieSplatScreen>
     ),
   );
 
-  Widget _portrait(Goof g) {
-    final danger = g.noSplat;
+  Widget _portrait(Kind g) {
+    final danger = g.stranger;
     return SizedBox(
       width: 92,
       child: Column(
@@ -166,7 +167,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
             decoration: BoxDecoration(
               color: danger ? const Color(0xFFFFCDD2) : const Color(0xFFFFF6DC),
               shape: BoxShape.circle,
-              border: Border.all(color: danger ? const Color(0xFFE53935) : kPieInk, width: 3),
+              border: Border.all(color: danger ? const Color(0xFFE53935) : kInk3, width: 3),
             ),
             clipBehavior: Clip.antiAlias,
             child: AnimatedBuilder(
@@ -183,7 +184,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
             style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
           ),
           Text(
-            danger ? "DON'T splat!" : g == Goof.chicken ? 'MEGA PIE' : 'Splat!',
+            danger ? "DON'T splat!" : g == Kind.chef ? "That's you!" : 'Splat!',
             style: TextStyle(
               color: danger ? const Color(0xFFFF8A80) : const Color(0xFFB9F6CA),
               fontSize: 11,
@@ -198,14 +199,11 @@ class _PieSplatScreenState extends State<PieSplatScreen>
 
 class _PortraitPainter extends CustomPainter {
   _PortraitPainter(this.g, this.t);
-  final Goof g;
+  final Kind g;
   final double t;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final r = size.width * 0.28;
-    paintGoof(canvas, g, Offset(size.width / 2, size.height * 0.56), r, time: t);
-  }
+  void paint(Canvas canvas, Size size) => paintPortrait(canvas, size, g, t);
 
   @override
   bool shouldRepaint(covariant _PortraitPainter old) => old.t != t;
@@ -218,27 +216,35 @@ class _HeroPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final r = 46.0;
-    final head = Offset(cx + 30, 88);
-    final cycle = t % 2.0; // pie flies for 0.5s, then 1.5s of custard
+    final cycle = t % 2.0; // the pie flies for 0.5s, then 1.5s of custard
     canvas.save();
     canvas.clipRect(Offset.zero & size);
-    paintGoof(
-      canvas,
-      Goof.snooty,
-      head,
-      r,
-      time: t,
-      splat: cycle > 0.5 ? cycle - 0.5 : null,
-    );
-    canvas.restore();
+    final box = Size(size.height, size.height);
+    canvas.translate((size.width - box.width) / 2, 0);
+    paintPortrait(canvas, box, Kind.snooty, t, splat: cycle > 0.5 ? cycle - 0.5 : -1);
     if (cycle <= 0.5) {
       final k = cycle / 0.5;
-      final from = Offset(max(30, cx - 150), 130);
-      final pos = Offset.lerp(from, head, k)! - Offset(0, sin(k * pi) * 40);
-      paintPie(canvas, pos, 22 - 6 * k, spin: k * 6);
+      final from = Offset(-box.width * 0.4, box.height);
+      final to = Offset(box.width / 2, box.height * 0.42);
+      final pos = Offset.lerp(from, to, k)! - Offset(0, sin(k * pi) * 40);
+      _pie2d(canvas, pos, 22 - 6 * k, k * 6);
     }
+    canvas.restore();
+  }
+
+  void _pie2d(Canvas c, Offset o, double r, double spin) {
+    c.save();
+    c.translate(o.dx, o.dy);
+    c.rotate(spin);
+    final tin = Rect.fromCenter(center: Offset.zero, width: r * 2, height: r * 1.5);
+    c.drawOval(tin, Paint()..color = kCrust3);
+    c.drawOval(tin, Paint()
+      ..color = kInk3
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2);
+    c.drawOval(tin.deflate(r * 0.2), Paint()..color = kCream3);
+    c.drawCircle(Offset(0, -r * 0.15), r * 0.18, Paint()..color = const Color(0xFFD50000));
+    c.restore();
   }
 
   @override

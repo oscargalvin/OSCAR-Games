@@ -32,10 +32,10 @@ class _HomeScreenState extends State<HomeScreen> {
     GameInfo(
       id: 'pie_splat',
       title: 'Pie Splat Party',
-      subtitle: 'Silly custard pie comedy',
+      subtitle: '3D custard pie fight',
       description:
-          'Show-offs keep popping out of the windows. Splat them with '
-          'custard pies, but whatever you do, do NOT splat Granny!',
+          'A garden party pie fight! Throw custard pies at the show-offs, '
+          'dodge theirs, and whatever you do, do NOT splat Granny!',
       icon: Icons.cake_rounded,
       color: AppTheme.pink,
       secondaryColor: AppTheme.warning,

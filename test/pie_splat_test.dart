@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,20 +30,26 @@ void main() {
       }
       expect(find.byType(PieSplatGameScreen), findsOneWidget);
 
-      // Tap all over the place for longer than a round lasts.
-      var i = 0;
-      for (var t = 0; t < 1500; t++) {
-        await tester.pump(const Duration(milliseconds: 50));
-        if (t % 3 == 0 && find.text('Play again').evaluate().isEmpty) {
-          final x = size.width * (0.1 + 0.8 * ((i * 37) % 100) / 100);
-          final y = size.height * (0.2 + 0.7 * ((i * 53) % 100) / 100);
-          await tester.tapAt(Offset(x, y));
-          i++;
+      // Run about and throw pies for longer than a round lasts.
+      final state = tester.state<PieSplatGameState>(find.byType(PieSplatGameScreen));
+      final start = Offset(size.width * 0.25, size.height * 0.6);
+      final stick = await tester.startGesture(start);
+      for (var t = 0; t < 2000; t++) {
+        if (t % 40 == 0) {
+          final a = t / 40.0;
+          await stick.moveTo(start + Offset(cos(a) * 40, sin(a * 1.3) * 40));
         }
+        await tester.pump(const Duration(milliseconds: 50));
+        if (find.text('Play again').evaluate().isNotEmpty) break;
+        if (t % 4 == 0) state.throwPie();
+        if (t % 50 == 0) state.dodge();
       }
+      await stick.up();
+      for (var k = 0; k < 20; k++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(state.fighters.fold<int>(0, (n, g) => n + g.splats), greaterThan(3));
       expect(find.text('Play again'), findsOneWidget);
-      final score = SaveService.instance.getHighScore(kPieSplatId);
-      expect(score, greaterThan(0));
 
       await tester.tap(find.text('Play again'));
       await tester.pump(const Duration(milliseconds: 100));
