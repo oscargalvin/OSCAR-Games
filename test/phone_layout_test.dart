@@ -88,6 +88,11 @@ final _screens = <String, Widget Function()>{
   ),
   'pie_splat': () => const PieSplatScreen(),
   'pie_splat_game': () => const PieSplatGameScreen(seed: 1),
+  'pie_splat_setup': () => const PieSplatSetupScreen(),
+  'pie_splat_5teams': () => const PieSplatGameScreen(
+    seed: 1,
+    setup: PieSetup(teams: 5, mode: PieMode.survival),
+  ),
   'boost_ball': () => const BoostBallScreen(),
   'boost_ball_1v1': () => const BoostBallGameScreen(),
   'boost_ball_3v3': () => const BoostBallGameScreen(teamSize: 3, difficulty: 2),

@@ -12,9 +12,44 @@ import '../outplay/outplay_3d.dart' show Scene3D, kUp;
 import 'pie_splat_3d.dart';
 
 const String kPieSplatId = 'pie_splat';
-const double kRoundSeconds = 90;
-const double _halfW = 11, _halfH = 8;
 const double _gravity = 14;
+
+enum PieMode { comedy, survival }
+
+/// How a party is set up: the mode, how hard the bots are, and who plays.
+class PieSetup {
+  const PieSetup({
+    this.mode = PieMode.comedy,
+    this.difficulty = 1,
+    this.players = 4,
+    this.teams = 0,
+  });
+
+  final PieMode mode;
+
+  /// 0 easy, 1 normal, 2 hard.
+  final int difficulty;
+
+  /// Pie fighters in a free-for-all (when [teams] is 0).
+  final int players;
+
+  /// 0 = everyone for themselves, otherwise 2 to 5 teams.
+  final int teams;
+
+  /// 5 teams of 3 is 15 people; the other team games have 12.
+  int get fighters => teams == 0 ? players : (teams == 5 ? 15 : 12);
+
+  double get seconds => mode == PieMode.survival ? 120 : 90;
+}
+
+const List<String> kTeamNames = ['Red', 'Blue', 'Green', 'Yellow', 'Purple'];
+const List<Color> kTeamColors = [
+  Color(0xFFFF5252),
+  Color(0xFF448AFF),
+  Color(0xFF69F0AE),
+  Color(0xFFFFD740),
+  Color(0xFFE040FB),
+];
 
 /// Someone at the party: you, a pie-throwing goof, or an innocent stranger.
 class Guy {
@@ -33,13 +68,21 @@ class Guy {
   double throwCd = 1.5;
   int score = 0, splats = 0, oops = 0;
   int triple = 0;
+  int team = 0;
+  int lives = 3;
+  bool out = false;
+  double outAt = 0;
+
+  /// Just been splatted: can't be splatted again for a moment.
+  double safe = 0;
   String? line;
   double lineT = 0;
   double tx, ty;
   double think = 0;
   Guy? target;
 
-  bool get stranger => kind.stranger;
+  bool get bystander => kind.bystander;
+  bool get protected => kind.protected;
   double get radius => kind == Kind.puppy ? 0.45 : 0.4 * kind.size + 0.08;
 
   void say(String text, [double time = 1.8]) {
@@ -72,6 +115,16 @@ class _Blob {
   double age = 0;
 }
 
+class TeamResult {
+  TeamResult(this.team);
+  final int team;
+  final List<Guy> members = [];
+  int get score => members.fold(0, (n, g) => n + g.score);
+  int get alive => members.where((g) => !g.out).length;
+  int get lives => members.fold(0, (n, g) => n + (g.out ? 0 : g.lives));
+  double get lastOut => members.fold(0.0, (n, g) => max(n, g.out ? g.outAt : 1e4));
+}
+
 class _Cushion {
   _Cushion(this.x, this.y);
   double x, y;
@@ -80,10 +133,11 @@ class _Cushion {
 
 /// Pie Splat Party in 3D: a garden party pie fight.
 class PieSplatGameScreen extends StatefulWidget {
-  const PieSplatGameScreen({super.key, this.seed});
+  const PieSplatGameScreen({super.key, this.seed, this.setup = const PieSetup()});
 
   /// For tests: makes the party play out the same every time.
   final int? seed;
+  final PieSetup setup;
 
   @override
   State<PieSplatGameScreen> createState() => PieSplatGameState();
@@ -105,14 +159,31 @@ class PieSplatGameState extends State<PieSplatGameScreen>
   (double, double)? _golden; // the triple-pie pick-up
   double _goldenIn = 10;
 
-  static final List<Rect> tables = [
-    Rect.fromCenter(center: const Offset(-5.5, 2.5), width: 2.6, height: 1.4),
-    Rect.fromCenter(center: const Offset(5.5, 2.5), width: 2.6, height: 1.4),
-    Rect.fromCenter(center: const Offset(0, -3), width: 2.2, height: 1.2),
-  ];
+  PieSetup get setup => widget.setup;
+  bool get survival => setup.mode == PieMode.survival;
+  bool get teamGame => setup.teams > 0;
+  late final bool big = setup.fighters > 6;
+  late final double halfW = big ? 16 : 11, halfH = big ? 12 : 8;
+  late final List<Rect> tables = big
+      ? [
+          for (final (x, y) in [(-9.0, 5.0), (9.0, 5.0), (0.0, 0.0), (-9.0, -5.0), (9.0, -5.0)])
+            Rect.fromCenter(center: Offset(x, y), width: 2.6, height: 1.4),
+        ]
+      : [
+          Rect.fromCenter(center: const Offset(-5.5, 2.5), width: 2.6, height: 1.4),
+          Rect.fromCenter(center: const Offset(5.5, 2.5), width: 2.6, height: 1.4),
+          Rect.fromCenter(center: const Offset(0, -3), width: 2.2, height: 1.2),
+        ];
+
+  // How tough the bots are.
+  double get _botThrowGap => const [2.6, 1.7, 1.15][setup.difficulty];
+  double get _botMiss => const [1.3, 0.75, 0.35][setup.difficulty];
+  double get _botDodge => const [0.1, 0.28, 0.5][setup.difficulty];
+  double get _botSpeed => const [2.9, 3.4, 4.1][setup.difficulty];
+  double get _botLead => const [0.2, 0.5, 0.9][setup.difficulty];
 
   double _countdown = 2.4;
-  double _timeLeft = kRoundSeconds;
+  late double _timeLeft = setup.seconds;
   double clock = 0;
   bool _over = false;
   double _overT = 0;
@@ -144,29 +215,64 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   void _setup() {
     guys.clear();
-    me = Guy(Kind.chef, 0, -5.5, player: true);
-    final goofs = [Kind.snooty, Kind.moustache, Kind.clown, Kind.robot, Kind.baby]
-      ..shuffle(_rnd);
-    final spots = [(-7.0, 5.5), (7.0, 5.5), (0.0, 6.0)];
-    guys.add(me);
-    for (var i = 0; i < 3; i++) {
-      final g = Guy(goofs[i], spots[i].$1, spots[i].$2)
-        ..angle = -pi / 2
-        ..throwCd = 2 + i * 0.6;
-      guys.add(g);
+    final n = setup.fighters;
+    final teams = teamGame ? setup.teams : n;
+    me = Guy(Kind.chef, 0, 0, player: true);
+    final fighters = <Guy>[me];
+    var k = _rnd.nextInt(kGoofs.length);
+    for (var i = 1; i < n; i++) {
+      fighters.add(Guy(kGoofs[k++ % kGoofs.length], 0, 0));
     }
-    guys.add(Guy(Kind.granny, -3, 0));
-    guys.add(Guy(Kind.waiter, 3.5, -0.5));
-    guys.add(Guy(Kind.puppy, 1.5, -3.8));
+    // Hand out teams (in a free-for-all everyone is their own team), then
+    // put each team in its own corner of the garden. You start at the front.
+    for (var i = 0; i < n; i++) {
+      final g = fighters[i];
+      g.team = teamGame ? i % teams : i;
+      final a = -pi / 2 + g.team * pi * 2 / teams;
+      final members = fighters.where((o) => o.team == g.team).toList();
+      final slot = members.indexOf(g);
+      final rad = Offset(cos(a) * (halfW - 3), sin(a) * (halfH - 2.5));
+      final side = Offset(-sin(a), cos(a));
+      final row = slot ~/ 3, col = slot % 3 - (min(3, members.length) - 1) / 2;
+      final at = rad + side * (col * 1.4) - Offset(cos(a), sin(a)) * (row * 1.4);
+      g
+        ..x = at.dx
+        ..y = at.dy
+        ..tx = at.dx
+        ..ty = at.dy
+        ..angle = a + pi
+        ..throwCd = 2.5 + _rnd.nextDouble() * 2;
+      if (g.player) g.throwCd = 0;
+    }
+    guys.addAll(fighters);
+    guys.add(Guy(Kind.granny, -3, 0.5));
+    guys.add(Guy(Kind.waiter, 3.5, -0.8));
+    guys.add(Guy(Kind.puppy, 1.5, -2.5));
+    guys.add(Guy(Kind.stranger, -1, 3));
+    if (big) {
+      guys.add(Guy(Kind.granny, 6, 8));
+      guys.add(Guy(Kind.stranger, -6, -8));
+    }
+    for (final g in guys) {
+      g.lives = 3;
+      g.out = false;
+    }
     _cushions
       ..clear()
-      ..add(_Cushion(-7, -4))
-      ..add(_Cushion(7.5, -1));
+      ..add(_Cushion(-halfW * 0.6, -halfH * 0.45))
+      ..add(_Cushion(halfW * 0.65, -halfH * 0.1));
+    if (big) {
+      _cushions
+        ..add(_Cushion(-halfW * 0.4, halfH * 0.7))
+        ..add(_Cushion(halfW * 0.3, halfH * 0.6));
+    }
     _pies.clear();
     _floats.clear();
     _blobs.clear();
     _golden = null;
     _goldenIn = 10;
+    _camX = me.x * 0.75;
+    _camY = me.y;
   }
 
   void _tick(Duration now) {
@@ -175,7 +281,18 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     setState(() => _update(dt));
   }
 
-  Iterable<Guy> get fighters => guys.where((g) => !g.stranger);
+  Iterable<Guy> get fighters => guys.where((g) => !g.bystander);
+
+  double _dist(Guy a, Guy b) => sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+
+  Iterable<Guy> get alive => guys.where((g) => !g.out);
+
+  bool enemies(Guy a, Guy b) => !a.bystander && !b.bystander && a.team != b.team;
+
+  /// Who the camera follows: you, or a teammate once you're out.
+  Guy get watched => me.out
+      ? fighters.firstWhere((g) => !g.out && g.team == me.team, orElse: () => me)
+      : me;
 
   // ------------------------------------------------------------------ update
 
@@ -212,23 +329,29 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     _timeLeft -= dt;
 
     _playerInput(dt);
-    for (final g in guys) {
+    for (final g in alive) {
       if (g.player) continue;
-      g.stranger ? _strangerBrain(g, dt) : _botBrain(g, dt);
+      g.bystander ? _strangerBrain(g, dt) : _botBrain(g, dt);
     }
-    for (final g in guys) {
+    for (final g in alive) {
       _move(g, dt);
     }
     _updatePies(dt);
     _updateStuffOnGrass(dt);
 
     if (_timeLeft <= 0) _finish();
+    if (survival) {
+      final teamsLeft = fighters.where((g) => !g.out).map((g) => g.team).toSet();
+      final myTeamOut = !fighters.any((g) => !g.out && g.team == me.team);
+      if (teamsLeft.length <= 1 || myTeamOut) _finish();
+    }
   }
 
   void _moveCamera(double dt) {
     final k = min(1.0, dt * 4);
-    _camX += (me.x * 0.75 - _camX) * k;
-    _camY += (me.y - _camY) * k;
+    final w = watched;
+    _camX += (w.x * 0.75 - _camX) * k;
+    _camY += (w.y - _camY) * k;
   }
 
   (double, double) get _stick {
@@ -257,7 +380,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     final (mx, my) = _stick;
     me.throwCd -= dt;
     me.dashCd -= dt;
-    if (me.dizzy > 0 || me.dashT > 0) return;
+    if (me.dizzy > 0 || me.dashT > 0 || me.out) return;
     final l = sqrt(mx * mx + my * my);
     if (l > 0.1) {
       me.angle = atan2(my, mx);
@@ -276,17 +399,32 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     if (g.dizzy > 0 || g.dashT > 0) return;
     if (g.think <= 0 || g.target == null) {
       g.think = 0.8 + _rnd.nextDouble() * 1.2;
-      final others = fighters.where((o) => o != g).toList();
-      g.target = _rnd.nextDouble() < 0.45 ? me : others[_rnd.nextInt(others.length)];
+      final foes = alive.where((o) => enemies(g, o)).toList();
+      if (foes.isEmpty) return;
+      foes.sort((a, b) => _dist(g, a).compareTo(_dist(g, b)));
+      final roll = _rnd.nextDouble();
+      final waiter = guys.where((o) => o.kind == Kind.waiter && !o.out).toList();
+      if (roll < 0.06 && waiter.isNotEmpty && !survival) {
+        g.target = waiter.first; // 5 cheeky points
+      } else if (roll < 0.06 + 0.6 / foes.length && foes.contains(me)) {
+        // Don't let everybody gang up on you in the big games.
+        g.target = me;
+      } else if (roll < 0.75) {
+        g.target = foes.first;
+      } else {
+        g.target = foes[_rnd.nextInt(foes.length)];
+      }
       // Find a spot a few steps away from the target to throw from.
       final a = _rnd.nextDouble() * pi * 2;
       final d = 4.5 + _rnd.nextDouble() * 3;
-      g.tx = (g.target!.x + cos(a) * d).clamp(-_halfW + 1, _halfW - 1);
-      g.ty = (g.target!.y + sin(a) * d).clamp(-_halfH + 1, _halfH - 1);
+      g.tx = (g.target!.x + cos(a) * d).clamp(-halfW + 1, halfW - 1);
+      g.ty = (g.target!.y + sin(a) * d).clamp(-halfH + 1, halfH - 1);
     }
     final dx = g.tx - g.x, dy = g.ty - g.y;
     final d = sqrt(dx * dx + dy * dy);
-    final speed = 3.4 * (g.kind == Kind.baby ? 1.15 : 1);
+    if (g.target!.out) g.target = null;
+    if (g.target == null) return;
+    final speed = _botSpeed * (g.kind == Kind.baby ? 1.15 : 1);
     if (d > 0.4) {
       g.vx = dx / d * speed;
       g.vy = dy / d * speed;
@@ -298,14 +436,14 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     g.angle = atan2(t.y - g.y, t.x - g.x);
     final td = sqrt(pow(t.x - g.x, 2) + pow(t.y - g.y, 2));
     if (g.throwCd <= 0 && td < 13) {
-      g.throwCd = 1.6 + _rnd.nextDouble() * 1.3;
+      g.throwCd = _botThrowGap * (0.8 + _rnd.nextDouble() * 0.6);
       final flight = max(0.25, td / 13);
-      final miss = 0.5 + _rnd.nextDouble() * 0.9;
+      final miss = _botMiss * (0.4 + _rnd.nextDouble() * 1.2);
       final ma = _rnd.nextDouble() * pi * 2;
       _throw(
         g,
-        t.x + t.vx * flight * 0.5 + cos(ma) * miss,
-        t.y + t.vy * flight * 0.5 + sin(ma) * miss,
+        t.x + t.vx * flight * _botLead + cos(ma) * miss,
+        t.y + t.vy * flight * _botLead + sin(ma) * miss,
         1.2 * t.kind.size,
       );
       if (_rnd.nextDouble() < 0.3) {
@@ -325,8 +463,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         g.tx = me.x + (_rnd.nextDouble() - 0.5) * 3;
         g.ty = me.y + (_rnd.nextDouble() - 0.5) * 3;
       } else {
-        g.tx = (_rnd.nextDouble() * 2 - 1) * (_halfW - 1.5);
-        g.ty = (_rnd.nextDouble() * 2 - 1) * (_halfH - 1.5);
+        g.tx = (_rnd.nextDouble() * 2 - 1) * (halfW - 1.5);
+        g.ty = (_rnd.nextDouble() * 2 - 1) * (halfH - 1.5);
       }
       if (_rnd.nextDouble() < 0.35) {
         final lines = g.kind.chatter;
@@ -348,6 +486,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   void _move(Guy g, double dt) {
     g.dizzy = max(0, g.dizzy - dt);
+    g.safe = max(0, g.safe - dt);
     var vx = g.vx, vy = g.vy;
     if (g.dizzy > 0) {
       vx = 0;
@@ -364,8 +503,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     g.walk = moving ? g.walk + dt * 11 : g.walk * 0.8;
     // Keep inside the garden fence and out of the tables.
     final r = g.radius;
-    g.x = g.x.clamp(-_halfW + r, _halfW - r);
-    g.y = g.y.clamp(-_halfH + r, _halfH - r);
+    g.x = g.x.clamp(-halfW + r, halfW - r);
+    g.y = g.y.clamp(-halfH + r, halfH - r);
     for (final t in tables) {
       final box = t.inflate(r);
       if (!box.contains(Offset(g.x, g.y))) continue;
@@ -387,7 +526,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       }
     }
     // Don't walk through each other.
-    for (final o in guys) {
+    for (final o in alive) {
       if (identical(o, g)) continue;
       final dx = g.x - o.x, dy = g.y - o.y;
       final d = sqrt(dx * dx + dy * dy);
@@ -420,12 +559,12 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   /// The THROW button: aims at the nearest pie fighter you're facing.
   void throwPie() {
-    if (_over || _countdown > 0 || me.dizzy > 0 || me.throwCd > 0) return;
+    if (_over || _countdown > 0 || me.dizzy > 0 || me.throwCd > 0 || me.out) return;
     me.throwCd = 0.42;
     Guy? best;
     var bestScore = 1e9;
-    for (final g in fighters) {
-      if (g.player) continue;
+    for (final g in alive) {
+      if (!enemies(me, g) && g.kind != Kind.waiter) continue;
       final dx = g.x - me.x, dy = g.y - me.y;
       final d = sqrt(dx * dx + dy * dy);
       if (d > 15) continue;
@@ -464,7 +603,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   /// The DODGE button: a quick dash you can't be splatted during.
   void dodge() {
-    if (_over || _countdown > 0 || me.dizzy > 0 || me.dashCd > 0) return;
+    if (_over || _countdown > 0 || me.dizzy > 0 || me.dashCd > 0 || me.out) return;
     final (mx, my) = _stick;
     final l = sqrt(mx * mx + my * my);
     // Dash the way you're pushing, or sideways if you're standing still.
@@ -484,12 +623,12 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       p.z += p.vz * dt;
       p.spin += dt * 9;
       // Bots sometimes see a pie coming and jump out of the way.
-      for (final g in guys) {
-        if (g.player || g.stranger || identical(g, p.by) || p.dodgeChecked) continue;
+      for (final g in alive) {
+        if (g.player || g.bystander || !enemies(g, p.by) || p.dodgeChecked) continue;
         final d = sqrt(pow(g.x - p.x, 2) + pow(g.y - p.y, 2));
         if (d < 2.2) {
           p.dodgeChecked = true;
-          if (g.dashCd <= 0 && g.dizzy <= 0 && _rnd.nextDouble() < 0.28) {
+          if (g.dashCd <= 0 && g.dizzy <= 0 && _rnd.nextDouble() < _botDodge) {
             final a = atan2(p.vy, p.vx) + (_rnd.nextBool() ? pi / 2 : -pi / 2);
             g
               ..dashX = cos(a)
@@ -500,8 +639,10 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         }
       }
       Guy? hit;
-      for (final g in guys) {
-        if (identical(g, p.by) || g.dashT > 0) continue;
+      for (final g in alive) {
+        // Pies fly straight past your own teammates.
+        if (identical(g, p.by) || g.dashT > 0 || g.safe > 0) continue;
+        if (!g.bystander && !enemies(g, p.by)) continue;
         final d = sqrt(pow(g.x - p.x, 2) + pow(g.y - p.y, 2));
         if (d < g.radius + 0.18 && p.z > 0 && p.z < g.kind.height + 0.1) {
           hit = g;
@@ -517,7 +658,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       for (final t in tables) {
         if (t.contains(Offset(p.x, p.y)) && p.z < 0.95) onTable = true;
       }
-      if (onTable || p.z <= 0 || p.x.abs() > _halfW + 3 || p.y.abs() > _halfH + 3) {
+      if (onTable || p.z <= 0 || p.x.abs() > halfW + 3 || p.y.abs() > halfH + 3) {
         if (!onTable && p.z <= 0) {
           _blobs.add(_Blob(p.x, p.y, 0.45, _rnd.nextDouble() * 1000));
         }
@@ -529,16 +670,25 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   void _splat(Guy g, Guy by) {
     g.splatAge = 0;
-    g.dizzy = g.stranger ? 1.5 : 0.9;
+    g.safe = survival ? 1.6 : 0.8;
+    g.dizzy = g.bystander ? 1.5 : 0.9;
     final lines = g.kind.splatLines;
     g.say(lines[_rnd.nextInt(lines.length)], 1.8);
     final head = V3(g.x, g.y, g.kind.height + 0.2);
     if (g.player) {
-      _faceSplat = 1.8;
+      _faceSplat = big ? 1.1 : 1.5;
       _shake = 0.3;
       SoundService.instance.play(GameSound.hit);
     }
-    if (g.stranger) {
+    if (g.kind == Kind.waiter) {
+      by.score += 5;
+      _blobs.add(_Blob(g.x + 0.5, g.y, 0.6, _rnd.nextDouble() * 1000));
+      _floats.add(_Float(by.player ? '+5 Splat the waiter!' : '+5', head,
+          const Color(0xFFFFEB3B), size: by.player ? 20 : 15));
+      if (by.player) SoundService.instance.play(GameSound.hit);
+      return;
+    }
+    if (g.protected) {
       by.score -= 15;
       by.oops++;
       if (by.player) {
@@ -547,7 +697,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         _floats.add(_Float(
           switch (g.kind) {
             Kind.granny => 'NOT GRANNY!',
-            Kind.waiter => 'NOT THE WAITER!',
+            Kind.stranger => 'NOT THE STRANGER!',
             _ => 'NOT THE PUPPY!',
           },
           head + const V3(0, 0, 0.7),
@@ -564,6 +714,21 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     }
     by.score += 10;
     by.splats++;
+    if (survival) {
+      g.lives--;
+      if (g.lives <= 0) {
+        g.out = true;
+        g.outAt = clock;
+        _floats.add(_Float(
+          g.player ? 'YOU ARE OUT!' : '${g.kind.short} is OUT!',
+          head + const V3(0, 0, 0.5),
+          const Color(0xFFFF8A80),
+          size: g.player ? 30 : 18,
+          life: 1.6,
+        ));
+        _blobs.add(_Blob(g.x, g.y, 0.9, _rnd.nextDouble() * 1000));
+      }
+    }
     _floats.add(_Float(
       by.player ? '+10 SPLAT!' : 'SPLAT!',
       head,
@@ -582,13 +747,13 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       if (c.away > 0) {
         c.away -= dt;
         if (c.away <= 0) {
-          c.x = (_rnd.nextDouble() * 2 - 1) * (_halfW - 2);
-          c.y = (_rnd.nextDouble() * 2 - 1) * (_halfH - 2);
+          c.x = (_rnd.nextDouble() * 2 - 1) * (halfW - 2);
+          c.y = (_rnd.nextDouble() * 2 - 1) * (halfH - 2);
           if (tables.any((t) => t.inflate(1).contains(Offset(c.x, c.y)))) c.away = 0.5;
         }
         continue;
       }
-      for (final g in guys) {
+      for (final g in alive) {
         if (g.dashT > 0) continue;
         if (pow(g.x - c.x, 2) + pow(g.y - c.y, 2) < 0.5) {
           _whoopee(c, g);
@@ -601,14 +766,15 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       if (_goldenIn <= 0) {
         var gx = 0.0, gy = 0.0;
         do {
-          gx = (_rnd.nextDouble() * 2 - 1) * (_halfW - 2);
-          gy = (_rnd.nextDouble() * 2 - 1) * (_halfH - 2);
+          gx = (_rnd.nextDouble() * 2 - 1) * (halfW - 2);
+          gy = (_rnd.nextDouble() * 2 - 1) * (halfH - 2);
         } while (tables.any((t) => t.inflate(1).contains(Offset(gx, gy))));
         _golden = (gx, gy);
       }
     } else {
       final (gx, gy) = _golden!;
       for (final g in fighters) {
+        if (g.out) continue;
         if (pow(g.x - gx, 2) + pow(g.y - gy, 2) < 0.6) {
           g.triple = 3;
           _golden = null;
@@ -651,7 +817,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       1.6,
     );
     SoundService.instance.play(GameSound.tooEarly);
-    for (final o in guys) {
+    for (final o in alive) {
       if (identical(o, g)) continue;
       if (pow(o.x - c.x, 2) + pow(o.y - c.y, 2) < 36) {
         o.say(['Hee hee hee!', 'Ewww!', 'Who did THAT?!', 'HA HA HA!', 'Pardon YOU!'][_rnd.nextInt(5)], 1.4);
@@ -671,15 +837,27 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     SoundService.instance.play(place == 1 ? GameSound.win : GameSound.levelComplete);
   }
 
-  List<Guy> get ranking => fighters.toList()..sort((a, b) => b.score.compareTo(a.score));
+  /// Each team's standing, best first. In a free-for-all a team is one person.
+  List<TeamResult> get standings {
+    final byTeam = <int, TeamResult>{};
+    for (final g in fighters) {
+      (byTeam[g.team] ??= TeamResult(g.team)).members.add(g);
+    }
+    final list = byTeam.values.toList();
+    int key(TeamResult t) => survival
+        ? t.alive * 100000 + t.lives * 1000 + (t.lastOut * 10).round()
+        : t.score;
+    list.sort((a, b) => key(b).compareTo(key(a)));
+    return list;
+  }
 
-  int get place => ranking.indexOf(me) + 1;
+  int get place => standings.indexWhere((t) => t.team == me.team) + 1;
 
   void _restart() {
     setState(() {
       _setup();
       _countdown = 2.4;
-      _timeLeft = kRoundSeconds;
+      _timeLeft = setup.seconds;
       _over = false;
       _faceSplat = 0;
     });
@@ -817,7 +995,6 @@ class PieSplatGameState extends State<PieSplatGameScreen>
       child: child,
     );
     final secs = max(0, _timeLeft.ceil());
-    const places = ['1st', '2nd', '3rd', '4th'];
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       child: SizedBox(
@@ -834,10 +1011,35 @@ class PieSplatGameState extends State<PieSplatGameScreen>
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: pill(
-                  Text(
-                    '${me.score} pts · ${places[place - 1]}',
-                    key: const Key('pie_score'),
-                    style: const TextStyle(color: kInk3, fontSize: 18, fontWeight: FontWeight.w900),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (teamGame) ...[
+                        Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: kTeamColors[me.team],
+                            shape: BoxShape.circle,
+                            border: Border.all(color: kInk3, width: 2),
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      if (survival)
+                        for (var i = 0; i < 3; i++)
+                          Icon(
+                            i < me.lives && !me.out ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                            color: const Color(0xFFE53935),
+                            size: 18,
+                          ),
+                      if (survival) const SizedBox(width: 5),
+                      Text(
+                        _hudText,
+                        key: const Key('pie_score'),
+                        style: const TextStyle(color: kInk3, fontSize: 18, fontWeight: FontWeight.w900),
+                      ),
+                    ],
                   ),
                   color: const Color(0xFFFFE082),
                 ),
@@ -867,6 +1069,22 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     );
   }
 
+  static String ordinal(int n) => switch (n) {
+    1 => '1st',
+    2 => '2nd',
+    3 => '3rd',
+    _ => '${n}th',
+  };
+
+  String get _hudText {
+    if (me.out) return 'OUT! Watching your team';
+    if (survival) {
+      final left = fighters.where((g) => !g.out).length;
+      return '$left left';
+    }
+    return '${teamGame ? standings.firstWhere((t) => t.team == me.team).score : me.score} pts · ${ordinal(place)}';
+  }
+
   static String rankFor(int place, int score) {
     if (place == 1) return 'Supreme Splat Wizard';
     if (score >= 100) return 'Captain Custard';
@@ -877,13 +1095,20 @@ class PieSplatGameState extends State<PieSplatGameScreen>
 
   Widget _results() {
     final best = SaveService.instance.getHighScore(kPieSplatId);
-    final rank = ranking;
+    final rank = standings;
+    final who = teamGame ? 'YOUR TEAM' : 'YOU';
     final headline = switch (place) {
-      1 => 'YOU WIN THE PIE PARTY!',
-      2 => 'So close! 2nd place!',
-      3 => '3rd place! Not bad!',
-      _ => 'Last place... you got creamed!',
+      1 => '$who WON THE PIE PARTY!',
+      2 => 'So close! ${ordinal(place)} place!',
+      _ when place == rank.length => 'Last place... ${teamGame ? 'your team' : 'you'} got creamed!',
+      _ => '${ordinal(place)} place! Not bad!',
     };
+    String label(TeamResult t) => teamGame
+        ? '${kTeamNames[t.team]} team${t.team == me.team ? ' (you)' : ''}'
+        : t.members.first.kind.short;
+    String value(TeamResult t) => survival
+        ? (teamGame ? '${t.alive} left' : (t.alive > 0 ? '${t.lives} ♥' : 'out'))
+        : '${t.score}';
     return Container(
       color: Colors.black54,
       alignment: Alignment.center,
@@ -913,7 +1138,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
                   margin: const EdgeInsets.symmetric(vertical: 2),
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: rank[i].player ? const Color(0xFFFFE082) : Colors.white,
+                    color: rank[i].team == me.team ? const Color(0xFFFFE082) : Colors.white,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: kInk3, width: 1.5),
                   ),
@@ -924,14 +1149,26 @@ class PieSplatGameState extends State<PieSplatGameScreen>
                         child: Text(i == 0 ? '👑' : '${i + 1}.',
                             style: const TextStyle(color: kInk3, fontWeight: FontWeight.w900)),
                       ),
+                      if (teamGame) ...[
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: kTeamColors[rank[i].team],
+                            shape: BoxShape.circle,
+                            border: Border.all(color: kInk3, width: 1.5),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
                       Expanded(
                         child: Text(
-                          rank[i].kind.short,
+                          label(rank[i]),
                           style: const TextStyle(color: kInk3, fontWeight: FontWeight.w800),
                         ),
                       ),
                       Text(
-                        '${rank[i].score}',
+                        value(rank[i]),
                         style: const TextStyle(color: kInk3, fontWeight: FontWeight.w900),
                       ),
                     ],
@@ -944,7 +1181,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
                 style: const TextStyle(color: kInk3, fontSize: 16, fontWeight: FontWeight.w800),
               ),
               Text(
-                'Splats: ${me.splats}   Strangers splatted: ${me.oops}',
+                'Your splats: ${me.splats}   Guests splatted: ${me.oops}',
                 style: TextStyle(color: kInk3.withValues(alpha: 0.75), fontSize: 13),
               ),
               Text(
@@ -1020,13 +1257,13 @@ class _PartyPainter extends CustomPainter {
 
     // Pie in YOUR face.
     if (g._faceSplat > 0) {
-      final k = 1.8 - g._faceSplat;
+      final k = (g.big ? 1.1 : 1.5) - g._faceSplat;
       final a = (g._faceSplat / 0.5).clamp(0.0, 1.0);
       final grow = Curves.easeOutBack.transform(min(1.0, k / 0.15));
       final cream = Paint()..color = kCream3.withValues(alpha: a);
       final rnd = Random(5);
       final centre = Offset(size.width / 2, size.height * 0.45 + k * 30);
-      final r = size.shortestSide * 0.42 * grow;
+      final r = size.shortestSide * 0.34 * grow;
       c.drawCircle(centre, r * 0.75, cream);
       for (var i = 0; i < 10; i++) {
         final an = i * pi / 5 + rnd.nextDouble() * 0.3;
@@ -1058,7 +1295,11 @@ class _PartyPainter extends CustomPainter {
           maxWidth: size.width - 20);
       _text(
         c,
-        "Splat the show-offs. Dodge their pies. Don't splat the strangers!",
+        g.survival
+            ? 'SURVIVAL: 3 splats and you are out! Last one standing wins.'
+            : g.teamGame
+                ? "Splat the other teams. Pies fly past your teammates. Don't splat the guests!"
+                : "Splat the show-offs. Dodge their pies. Don't splat the guests!",
         size.center(Offset(0, big * 0.85)),
         16,
         Colors.white,
@@ -1068,11 +1309,12 @@ class _PartyPainter extends CustomPainter {
   }
 
   Scene3D _scene(Size size) {
+    final hw = g.halfW, hh = g.halfH;
     final portrait = size.width < size.height;
     final back = portrait ? 6.5 : 7.0;
     final up = portrait ? 11.0 : 8.0;
     final camX = g._camX.clamp(-5.0, 5.0);
-    final camY = g._camY.clamp(-_halfH + 4.0, _halfH - 4.0);
+    final camY = g._camY.clamp(-hh + 4.0, hh - 4.0);
     final eye = V3(camX, camY - back, up);
     final look = V3(camX, camY + 1.0, 0);
     final focal = portrait ? size.width * 1.45 : min(size.width * 0.9, size.height * 1.7);
@@ -1093,13 +1335,13 @@ class _PartyPainter extends CustomPainter {
       const V3(40, 40, -0.01),
       const V3(-40, 40, -0.01),
     ], const Color(0xFF558B2F), floor: true, lit: false);
-    for (var i = 0; i < 11; i++) {
-      final x0 = -_halfW + i * 2.0;
+    for (var i = 0; i < (hw).round(); i++) {
+      final x0 = -hw + i * 2.0;
       s.poly([
-        V3(x0, -_halfH, 0),
-        V3(x0 + 2, -_halfH, 0),
-        V3(x0 + 2, _halfH, 0),
-        V3(x0, _halfH, 0),
+        V3(x0, -hh, 0),
+        V3(x0 + 2, -hh, 0),
+        V3(x0 + 2, hh, 0),
+        V3(x0, hh, 0),
       ], i.isEven ? const Color(0xFF7CB342) : const Color(0xFF8BC34A), floor: true, lit: false);
     }
     for (final b in g._blobs) {
@@ -1112,8 +1354,21 @@ class _PartyPainter extends CustomPainter {
       ], const Color(0x55000000), floor: true, lit: false);
     }
 
-    for (final p in g.guys) {
+    for (final p in g.alive) {
       shadow(p.x, p.y, p.radius * 0.9);
+      if (g.teamGame && !p.bystander) {
+        // A ring in your team's colour.
+        final r = p.radius + 0.12;
+        for (var i = 0; i < 12; i++) {
+          final a0 = i * pi / 6, a1 = (i + 1) * pi / 6;
+          s.poly([
+            V3(p.x + cos(a0) * r, p.y + sin(a0) * r, 0.03),
+            V3(p.x + cos(a1) * r, p.y + sin(a1) * r, 0.03),
+            V3(p.x + cos(a1) * (r - 0.12), p.y + sin(a1) * (r - 0.12), 0.03),
+            V3(p.x + cos(a0) * (r - 0.12), p.y + sin(a0) * (r - 0.12), 0.03),
+          ], kTeamColors[p.team], floor: true, lit: false);
+        }
+      }
     }
     for (final p in g._pies) {
       shadow(p.x, p.y, 0.22);
@@ -1122,27 +1377,27 @@ class _PartyPainter extends CustomPainter {
     // The fence.
     const fence = Color(0xFFFFFFFF);
     const ax = V3(1, 0, 0), ay = V3(0, 1, 0);
-    for (var x = -_halfW; x <= _halfW + 0.01; x += 2) {
-      for (final y in [-_halfH, _halfH]) {
+    for (var x = -hw; x <= hw + 0.01; x += 2) {
+      for (final y in [-hh, hh]) {
         s.box(V3(x, y, 0.45), ax, ay, kUp, 0.08, 0.08, 0.45, fence);
       }
     }
-    for (var y = -_halfH + 2; y < _halfH; y += 2) {
-      for (final x in [-_halfW, _halfW]) {
+    for (var y = -hh + 2; y < hh; y += 2) {
+      for (final x in [-hw, hw]) {
         s.box(V3(x, y, 0.45), ax, ay, kUp, 0.08, 0.08, 0.45, fence);
       }
     }
-    for (final y in [-_halfH, _halfH]) {
-      s.box(V3(0, y, 0.6), ax, ay, kUp, _halfW, 0.04, 0.06, fence);
+    for (final y in [-hh, hh]) {
+      s.box(V3(0, y, 0.6), ax, ay, kUp, hw, 0.04, 0.06, fence);
     }
-    for (final x in [-_halfW, _halfW]) {
-      s.box(V3(x, 0, 0.6), ax, ay, kUp, 0.04, _halfH, 0.06, fence);
+    for (final x in [-hw, hw]) {
+      s.box(V3(x, 0, 0.6), ax, ay, kUp, 0.04, hh, 0.06, fence);
     }
     // Balloons on the corners.
     const balloons = [Color(0xFFFF4081), Color(0xFFFFEB3B), Color(0xFF40C4FF), Color(0xFF69F0AE)];
     var bi = 0;
-    for (final x in [-_halfW, _halfW]) {
-      for (final y in [-_halfH, _halfH]) {
+    for (final x in [-hw, hw]) {
+      for (final y in [-hh, hh]) {
         final bob = sin(g.clock * 2 + bi) * 0.12;
         s.box(V3(x, y, 1.4), ax, ay, kUp, 0.015, 0.015, 0.6, Colors.white);
         s.box(V3(x, y, 2.3 + bob), ax, ay, kUp, 0.3, 0.3, 0.38, balloons[bi % 4]);
@@ -1150,7 +1405,7 @@ class _PartyPainter extends CustomPainter {
       }
     }
     // Party tables with cakes.
-    for (final t in PieSplatGameState.tables) {
+    for (final t in g.tables) {
       final c = V3(t.center.dx, t.center.dy, 0);
       s.group(() {
         s.box(c + kUp * 0.4, ax, ay, kUp, t.width / 2, t.height / 2, 0.4,
@@ -1172,7 +1427,7 @@ class _PartyPainter extends CustomPainter {
       addPie(s, V3(gx, gy, 0.6 + sin(g.clock * 3) * 0.15), g.clock * 2, mega: true);
     }
     // Everybody at the party.
-    for (final p in g.guys) {
+    for (final p in g.alive) {
       addGuy(
         s,
         p.kind,
@@ -1195,7 +1450,7 @@ class _PartyPainter extends CustomPainter {
   void _overlays(Canvas c, Scene3D s, Size size) {
     // "YOU" marker over the chef.
     final top = s.project(V3(g.me.x, g.me.y, g.me.kind.height + 0.75));
-    if (top != null && !g._over) {
+    if (top != null && !g._over && !g.me.out) {
       final bob = sin(g.clock * 5) * 3;
       final p = Path()
         ..moveTo(top.dx - 8, top.dy - 10 + bob)
@@ -1211,10 +1466,10 @@ class _PartyPainter extends CustomPainter {
         _text(c, 'x3 PIES', top - Offset(0, 22 - bob), 13, const Color(0xFFFFD54F));
       }
     }
-    for (final p in g.guys) {
+    for (final p in g.alive) {
       final head = s.project(V3(p.x, p.y, p.kind.height + 0.35));
       if (head == null) continue;
-      if (p.dizzy > 0 && !p.stranger) {
+      if (p.dizzy > 0 && !p.bystander) {
         for (var i = 0; i < 3; i++) {
           final a = g.clock * 6 + i * pi * 2 / 3;
           _star(c, head + Offset(cos(a) * 16, sin(a) * 5 - 6), 5);
