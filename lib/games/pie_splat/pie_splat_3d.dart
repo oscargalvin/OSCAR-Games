@@ -338,6 +338,14 @@ void addGuy(
           b(at(-0.04, side * (head + 0.02), hz + 0.04), 0.16, 0.03, 0.09, const Color(0xFF9E9E9E));
         }
         b(at(-head - 0.02, 0, hz + 0.02), 0.03, head, 0.08, const Color(0xFF9E9E9E));
+        // A big bushy dad beard (with a grin poking through).
+        const beard = Color(0xFF8D6E63);
+        b(at(0.17, 0, hz - 0.22), 0.13, head + 0.02, 0.14, beard);
+        b(at(0.2, 0, hz - 0.4), 0.1, 0.16, 0.06, beard);
+        for (final side in [-1.0, 1.0]) {
+          b(at(0, side * (head + 0.015), hz - 0.04), 0.1, 0.03, 0.12, beard);
+        }
+        decal(at(0.302, 0, hz - 0.14), 0.08, 0.022, const Color(0xFFB71C1C));
         // Big bushy eyebrows.
         for (final side in [-1.0, 1.0]) {
           decal(at(front + 0.03, side * 0.1, hz + 0.13), 0.06, 0.018, const Color(0xFF616161));
