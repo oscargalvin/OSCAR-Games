@@ -21,8 +21,8 @@ extension PieModeInfo on PieMode {
   String get title => switch (this) {
     PieMode.comedy => '😂 Comedy',
     PieMode.survival => '💀 Survival',
-    PieMode.cakeGrab => '🎂 Cake Grab',
-    PieMode.kingOfCake => '👑 King of the Cake',
+    PieMode.cakeGrab => '🥧 Pie Grab',
+    PieMode.kingOfCake => '👑 King of the Pie',
     PieMode.hotPie => '💣 Hot Pie',
     PieMode.frenzy => '🌪 Pie Frenzy',
   };
@@ -30,7 +30,7 @@ extension PieModeInfo on PieMode {
   String get blurb => switch (this) {
     PieMode.comedy => 'Most points in 90s wins',
     PieMode.survival => '3 splats and you are out',
-    PieMode.cakeGrab => 'Run and grab the most cakes',
+    PieMode.cakeGrab => 'Run and grab the most pies',
     PieMode.kingOfCake => 'Stand on the golden circle to score',
     PieMode.hotPie => 'Splat someone to pass the ticking pie!',
     PieMode.frenzy => 'Triple pies, super fast, 60 seconds',
@@ -39,7 +39,7 @@ extension PieModeInfo on PieMode {
   String get howTo => switch (this) {
     PieMode.comedy => "Splat the show-offs. Dodge their pies. Don't splat the guests!",
     PieMode.survival => 'SURVIVAL: 3 splats and you are out! Last one standing wins.',
-    PieMode.cakeGrab => 'Grab cakes! Get splatted and you drop half of them.',
+    PieMode.cakeGrab => 'Grab pies! Get splatted and you drop half of them.',
     PieMode.kingOfCake => 'Stand on the golden circle to score points. Splat anyone who tries to take it!',
     PieMode.hotPie => 'Got the HOT PIE? Splat someone to pass it on before it goes KABOOM!',
     PieMode.frenzy => 'PIE FRENZY! Triple pies all the time. Go go go!',
@@ -779,7 +779,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         g.tx = cos(a) * d;
         g.ty = sin(a) * d;
       } else if (cakeMode && _cakes.isNotEmpty && _rnd.nextDouble() < 0.6) {
-        // Run for the nearest cake.
+        // Run for the nearest pie.
         var best = _cakes.first;
         for (final c in _cakes) {
           if (pow(c.$1 - g.x, 2) + pow(c.$2 - g.y, 2) < pow(best.$1 - g.x, 2) + pow(best.$2 - g.y, 2)) {
@@ -1125,7 +1125,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
           (g.y + sin(a) * d).clamp(-halfH + 1, halfH - 1),
         ));
       }
-      _addFloat(_Float('Dropped $drop cake${drop == 1 ? '' : 's'}!', head + const V3(0, 0, 0.5),
+      _addFloat(_Float('Dropped $drop pie${drop == 1 ? '' : 's'}!', head + const V3(0, 0, 0.5),
           const Color(0xFFFFAB91), size: g.player ? 24 : 15));
     }
     if (survival) {
@@ -1174,7 +1174,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         if (i < 0) continue;
         _cakes.removeAt(i);
         g.cakes++;
-        _addFloat(_Float(g.player ? '+1 CAKE!' : '+1', V3(g.x, g.y, 2.3),
+        _addFloat(_Float(g.player ? '+1 PIE!' : '+1', V3(g.x, g.y, 2.3),
             const Color(0xFFF48FB1), size: g.player ? 22 : 14));
         if (g.player) SoundService.instance.play(GameSound.eat);
       }
@@ -1524,7 +1524,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     if (me.out) return 'OUT! Watching your team';
     if (cakeMode) {
       final mine = teamGame ? standings.firstWhere((t) => t.team == me.team).cakes : me.cakes;
-      return '$mine cakes · ${ordinal(place)}';
+      return '$mine pies · ${ordinal(place)}';
     }
     if (elimination) {
       final left = fighters.where((g) => !g.out).length;
@@ -1560,7 +1560,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     String value(TeamResult t) => elimination
         ? (teamGame ? '${t.alive} left' : (t.alive > 0 ? (survival ? '${t.lives} ♥' : 'still in') : 'out'))
         : cakeMode
-            ? '${t.cakes} cakes'
+            ? '${t.cakes} pies'
             : '${t.score}';
     return Container(
       color: Colors.black54,
@@ -1880,19 +1880,19 @@ class _PartyPainter extends CustomPainter {
       addPie(s, V3(gx, gy, 0.6 + sin(g.clock * 3) * 0.15), g.clock * 2, mega: true);
     }
     if (g.kingMode) {
-      // The golden circle, and a giant cake floating above it.
+      // The golden circle, and a giant pie floating above it.
       const R = PieSplatGameState.kingR;
       s.poly([for (var i = 0; i < 24; i++) V3(cos(i * pi / 12) * R, sin(i * pi / 12) * R, 0.02)],
           const Color(0xFFFFD54F), floor: true, lit: false);
       s.poly([for (var i = 0; i < 24; i++) V3(cos(i * pi / 12) * (R - 0.25), sin(i * pi / 12) * (R - 0.25), 0.025)],
           const Color(0xFFFFECB3), floor: true, lit: false);
       final bob = 3.2 + sin(g.clock * 2) * 0.15;
+      // A giant golden pie with a crown on top.
+      addPie(s, V3(0, 0, bob), g.clock * 0.8, mega: true);
       s.group(() {
-        s.box(V3(0, 0, bob), ax, ay, kUp, 0.6, 0.6, 0.22, const Color(0xFFF48FB1), top: kCream3);
-        s.box(V3(0, 0, bob + 0.38), ax, ay, kUp, 0.42, 0.42, 0.16, const Color(0xFF8D6E63), top: kCream3);
         for (var i = 0; i < 5; i++) {
-          final a = i * pi * 2 / 5;
-          s.box(V3(cos(a) * 0.25, sin(a) * 0.25, bob + 0.68), ax, ay, kUp, 0.05, 0.05, 0.12, const Color(0xFFFFC107));
+          final a = i * pi * 2 / 5 + g.clock * 0.8;
+          s.box(V3(cos(a) * 0.22, sin(a) * 0.22, bob + 0.42), ax, ay, kUp, 0.06, 0.06, 0.14, const Color(0xFFFFC107));
         }
       });
     }
@@ -1902,22 +1902,18 @@ class _PartyPainter extends CustomPainter {
       addPie(s, V3(hot.x, hot.y, hot.kind.height + 0.75 + sin(g.clock * 10) * 0.05), g.clock * 4, mega: !flash);
     }
     for (final (cx, cy) in g._cakes) {
-      s.group(() {
-        s.box(V3(cx, cy, 0.12), ax, ay, kUp, 0.22, 0.22, 0.12, const Color(0xFFF48FB1), top: kCream3);
-        s.box(V3(cx, cy, 0.32), ax, ay, kUp, 0.025, 0.025, 0.08, const Color(0xFF64B5F6));
-        s.box(V3(cx, cy, 0.42), ax, ay, kUp, 0.03, 0.03, 0.03, const Color(0xFFFFC107));
-      });
+      addPie(s, V3(cx, cy, 0.18 + sin(g.clock * 3 + cx) * 0.05), g.clock * 1.5 + cy);
     }
     // Everybody at the party.
     for (final p in g.alive) {
       if (p.cakes > 0) {
-        // A wobbly stack of cakes on their head.
+        // A wobbly stack of pies on their head.
         final top = p.kind.height + 0.15;
         s.group(() {
           for (var i = 0; i < min(p.cakes, 5); i++) {
             final wob = sin(g.clock * 6 + i) * 0.03 * i;
-            s.box(V3(p.x + wob, p.y, top + i * 0.2), ax, ay, kUp, 0.18 - i * 0.015, 0.18 - i * 0.015, 0.09,
-                const Color(0xFFF48FB1), top: kCream3);
+            s.box(V3(p.x + wob, p.y, top + i * 0.14), ax, ay, kUp, 0.19 - i * 0.012, 0.19 - i * 0.012, 0.06,
+                kCrust3, top: kCream3);
           }
         });
       }
