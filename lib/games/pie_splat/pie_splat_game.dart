@@ -1,51 +1,65 @@
 import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
+
 import '../../services/save_service.dart';
 import '../../services/sound_service.dart';
 import '../../widgets/full_screen_game.dart';
-import 'pie_splat_art.dart';
+import '../boost_ball/boost_ball_3d.dart' show V3;
+import '../outplay/outplay_3d.dart' show Scene3D, kUp;
+import 'pie_splat_3d.dart';
 
 const String kPieSplatId = 'pie_splat';
-const double kRoundSeconds = 60;
+const double kRoundSeconds = 90;
+const double _halfW = 11, _halfH = 8;
+const double _gravity = 14;
 
-enum _Phase { empty, rising, up, splatted, sinking }
-
-class _Hole {
-  Goof? who;
-  _Phase phase = _Phase.empty;
-  double t = 0;
-  double stay = 0;
-  double cooldown = 0;
-  bool targeted = false;
-  bool angry = false;
+/// Someone at the party: you, a pie-throwing goof, or an innocent stranger.
+class Guy {
+  Guy(this.kind, this.x, this.y, {this.player = false}) : tx = x, ty = y;
+  final Kind kind;
+  final bool player;
+  double x, y;
+  double angle = pi / 2;
+  double walk = 0;
+  double vx = 0, vy = 0;
+  double throwT = 0;
+  double splatAge = -1;
+  double dizzy = 0;
+  double dashT = 0, dashCd = 0;
+  double dashX = 0, dashY = 0;
+  double throwCd = 1.5;
+  int score = 0, splats = 0, oops = 0;
+  int triple = 0;
   String? line;
   double lineT = 0;
+  double tx, ty;
+  double think = 0;
+  Guy? target;
 
-  bool get hittable =>
-      who != null && (phase == _Phase.rising || phase == _Phase.up);
+  bool get stranger => kind.stranger;
+  double get radius => kind == Kind.puppy ? 0.45 : 0.4 * kind.size + 0.08;
 
-  void say(String text, [double time = 1.6]) {
+  void say(String text, [double time = 1.8]) {
     line = text;
     lineT = time;
   }
 }
 
 class _Pie {
-  _Pie(this.from, this.to, this.hole, {this.mega = false})
-    : dur = 0.12 + (to - from).distance / 2600;
-  final Offset from;
-  final Offset to;
-  final int hole; // -1 = splat the wall
-  final bool mega;
-  final double dur;
-  double t = 0;
+  _Pie(this.x, this.y, this.z, this.vx, this.vy, this.vz, this.by);
+  double x, y, z, vx, vy, vz;
+  final Guy by;
+  double spin = 0;
+  bool dodgeChecked = false;
 }
 
 class _Float {
-  _Float(this.text, this.pos, this.color, {this.size = 22, this.life = 1.0});
+  _Float(this.text, this.pos, this.color, {this.size = 20, this.life = 1.1});
   final String text;
-  final Offset pos;
+  final V3 pos;
   final Color color;
   final double size;
   final double life;
@@ -53,170 +67,122 @@ class _Float {
 }
 
 class _Blob {
-  _Blob(this.pos, this.r, this.seed);
-  final Offset pos;
-  final double r;
-  final double seed;
+  _Blob(this.x, this.y, this.r, this.seed);
+  final double x, y, r, seed;
   double age = 0;
 }
 
-/// The actual game: goofs pop out of windows, you throw custard pies.
+class _Cushion {
+  _Cushion(this.x, this.y);
+  double x, y;
+  double away = 0; // > 0 while it is waiting to come back
+}
+
+/// Pie Splat Party in 3D: a garden party pie fight.
 class PieSplatGameScreen extends StatefulWidget {
   const PieSplatGameScreen({super.key, this.seed});
 
-  /// For tests: makes the game play out the same every time.
+  /// For tests: makes the party play out the same every time.
   final int? seed;
 
   @override
-  State<PieSplatGameScreen> createState() => _PieSplatGameScreenState();
+  State<PieSplatGameScreen> createState() => PieSplatGameState();
 }
 
-class _PieSplatGameScreenState extends State<PieSplatGameScreen>
+class PieSplatGameState extends State<PieSplatGameScreen>
     with SingleTickerProviderStateMixin, FullScreenGame {
   late final Random _rnd = Random(widget.seed);
   late final Ticker _ticker;
   Duration _last = Duration.zero;
+  final FocusNode _focus = FocusNode();
 
-  // Round state.
-  double _countdown = 2.4;
-  double _timeLeft = kRoundSeconds;
-  double _elapsed = 0;
-  double _clock = 0;
-  int _score = 0;
-  int _hearts = 3;
-  int _combo = 0;
-  int _bestCombo = 0;
-  int _splats = 0;
-  bool _over = false;
-  double _overT = 0;
-  bool _newBest = false;
-  String _review = '';
-
-  double _spawnIn = 0.4;
-  double _shake = 0;
-  // Granny throws a pie right back at your screen!
-  double _faceSplat = 0;
-  Offset _faceSplatAt = Offset.zero;
-  double _flash = 0;
-  String? _comboWord;
-  double _comboT = 0;
-
-  // Whoopee cushion.
-  double _whoopeeIn = 9;
-  double _whoopeeT = 0; // > 0 while it sits on the grass
-  double _whoopeeX = 0.2;
-  double _whoopeeSquash = 0;
-
-  final List<_Hole> _holes = [];
+  final List<Guy> guys = [];
+  late Guy me;
   final List<_Pie> _pies = [];
   final List<_Float> _floats = [];
   final List<_Blob> _blobs = [];
+  final List<_Cushion> _cushions = [];
+  (double, double)? _golden; // the triple-pie pick-up
+  double _goldenIn = 10;
 
-  // Layout (rebuilt when the screen size changes).
-  Size _size = Size.zero;
-  List<Rect> _windows = [];
-  Rect _wall = Rect.zero;
-  Rect _ground = Rect.zero;
+  static final List<Rect> tables = [
+    Rect.fromCenter(center: const Offset(-5.5, 2.5), width: 2.6, height: 1.4),
+    Rect.fromCenter(center: const Offset(5.5, 2.5), width: 2.6, height: 1.4),
+    Rect.fromCenter(center: const Offset(0, -3), width: 2.2, height: 1.2),
+  ];
+
+  double _countdown = 2.4;
+  double _timeLeft = kRoundSeconds;
+  double clock = 0;
+  bool _over = false;
+  double _overT = 0;
+  bool _newBest = false;
+  double _faceSplat = 0;
+  double _shake = 0;
+
+  // Controls.
+  int? _stickId;
+  Offset? _stickFrom, _stickAt;
+  final Set<LogicalKeyboardKey> _keys = {};
+
+  // Camera (smoothed).
+  double _camX = 0, _camY = -5.5;
 
   @override
   void initState() {
     super.initState();
+    _setup();
     _ticker = createTicker(_tick)..start();
   }
 
   @override
   void dispose() {
     _ticker.dispose();
+    _focus.dispose();
     super.dispose();
+  }
+
+  void _setup() {
+    guys.clear();
+    me = Guy(Kind.chef, 0, -5.5, player: true);
+    final goofs = [Kind.snooty, Kind.moustache, Kind.clown, Kind.robot, Kind.baby]
+      ..shuffle(_rnd);
+    final spots = [(-7.0, 5.5), (7.0, 5.5), (0.0, 6.0)];
+    guys.add(me);
+    for (var i = 0; i < 3; i++) {
+      final g = Guy(goofs[i], spots[i].$1, spots[i].$2)
+        ..angle = -pi / 2
+        ..throwCd = 2 + i * 0.6;
+      guys.add(g);
+    }
+    guys.add(Guy(Kind.granny, -3, 0));
+    guys.add(Guy(Kind.waiter, 3.5, -0.5));
+    guys.add(Guy(Kind.puppy, 1.5, -3.8));
+    _cushions
+      ..clear()
+      ..add(_Cushion(-7, -4))
+      ..add(_Cushion(7.5, -1));
+    _pies.clear();
+    _floats.clear();
+    _blobs.clear();
+    _golden = null;
+    _goldenIn = 10;
   }
 
   void _tick(Duration now) {
     final dt = ((now - _last).inMicroseconds / 1e6).clamp(0.0, 0.05);
     _last = now;
-    if (_size == Size.zero) return;
     setState(() => _update(dt));
   }
 
-  // ---------------------------------------------------------------- layout
+  Iterable<Guy> get fighters => guys.where((g) => !g.stranger);
 
-  void _layout(Size size) {
-    if (size == _size) return;
-    _size = size;
-    const top = 64.0;
-    final groundH = (size.height * 0.14).clamp(56.0, 96.0);
-    _ground = Rect.fromLTRB(0, size.height - groundH, size.width, size.height);
-    _wall = Rect.fromLTRB(6, top, size.width - 6, _ground.top);
-    final aspect = _wall.width / max(1, _wall.height);
-    int cols, rows;
-    if (aspect > 2.3) {
-      cols = 5;
-      rows = 2;
-    } else if (aspect > 1.25) {
-      cols = 4;
-      rows = 2;
-    } else if (aspect < 0.62) {
-      cols = 3;
-      rows = 4;
-    } else {
-      cols = 3;
-      rows = 3;
-    }
-    final cw = _wall.width / cols, ch = _wall.height / rows;
-    final w = min(cw * 0.78, 190.0), h = min(ch * 0.74, 200.0);
-    _windows = [
-      for (var r = 0; r < rows; r++)
-        for (var c = 0; c < cols; c++)
-          Rect.fromCenter(
-            center: Offset(
-              _wall.left + cw * (c + 0.5),
-              _wall.top + ch * (r + 0.56),
-            ),
-            width: w,
-            height: h,
-          ),
-    ];
-    if (_holes.length != _windows.length) {
-      _holes
-        ..clear()
-        ..addAll(List.generate(_windows.length, (_) => _Hole()));
-      _pies.clear();
-    }
-  }
-
-  Offset get _throwFrom => Offset(_size.width / 2, _ground.center.dy);
-
-  double _headR(Rect w) => min(w.width, w.height) * 0.3;
-
-  Offset _headAt(int i, double pop) {
-    final w = _windows[i];
-    final r = _headR(w);
-    return Offset(
-      w.center.dx,
-      w.bottom + r * 1.2 - pop * (r * 1.2 + w.height * 0.48),
-    );
-  }
-
-  double _pop(_Hole h) => switch (h.phase) {
-    _Phase.empty => 0,
-    _Phase.rising => Curves.easeOutBack.transform(min(1.0, h.t / 0.2)),
-    _Phase.up || _Phase.splatted => 1,
-    _Phase.sinking => 1 - min(1.0, h.t / 0.22),
-  };
-
-  Offset get _whoopeePos =>
-      Offset(_size.width * _whoopeeX, _ground.top + _ground.height * 0.45);
-
-  double get _whoopeeR => (_ground.height * 0.28).clamp(16.0, 26.0);
-
-  // ---------------------------------------------------------------- update
+  // ------------------------------------------------------------------ update
 
   void _update(double dt) {
-    _clock += dt;
-    _shake = max(0, _shake - dt);
-    _flash = max(0, _flash - dt);
+    clock += dt;
     _faceSplat = max(0, _faceSplat - dt);
-    _comboT = max(0, _comboT - dt);
-    _whoopeeSquash = max(0, _whoopeeSquash - dt * 1.5);
+    _shake = max(0, _shake - dt);
     for (final f in _floats) {
       f.age += dt;
     }
@@ -224,304 +190,471 @@ class _PieSplatGameScreenState extends State<PieSplatGameScreen>
     for (final b in _blobs) {
       b.age += dt;
     }
-    _blobs.removeWhere((b) => b.age > 2.5);
+    _blobs.removeWhere((b) => b.age > 6);
+    for (final g in guys) {
+      if (g.lineT > 0) g.lineT -= dt;
+      if (g.splatAge >= 0) {
+        g.splatAge += dt;
+        if (g.splatAge > 2.4) g.splatAge = -1;
+      }
+      g.throwT = max(0, g.throwT - dt * 3);
+    }
+    _moveCamera(dt);
 
     if (_over) {
       _overT += dt;
-      _updateHoles(dt, spawn: false);
       return;
     }
     if (_countdown > 0) {
-      final before = _countdown.ceil();
       _countdown -= dt;
-      if (_countdown.ceil() != before && _countdown > 0) {
-        SoundService.instance.play(GameSound.countdownTick);
-      }
       return;
     }
-
     _timeLeft -= dt;
-    _elapsed += dt;
 
-    for (final p in _pies) {
-      p.t += dt;
+    _playerInput(dt);
+    for (final g in guys) {
+      if (g.player) continue;
+      g.stranger ? _strangerBrain(g, dt) : _botBrain(g, dt);
     }
-    final landed = _pies.where((p) => p.t >= p.dur).toList();
-    _pies.removeWhere((p) => p.t >= p.dur);
-    for (final p in landed) {
-      _land(p);
+    for (final g in guys) {
+      _move(g, dt);
     }
+    _updatePies(dt);
+    _updateStuffOnGrass(dt);
 
-    _updateHoles(dt, spawn: true);
+    if (_timeLeft <= 0) _finish();
+  }
 
-    // Whoopee cushion now and then.
-    if (_whoopeeT > 0) {
-      _whoopeeT -= dt;
+  void _moveCamera(double dt) {
+    final k = min(1.0, dt * 4);
+    _camX += (me.x * 0.75 - _camX) * k;
+    _camY += (me.y - _camY) * k;
+  }
+
+  (double, double) get _stick {
+    var mx = 0.0, my = 0.0;
+    if (_stickFrom != null && _stickAt != null) {
+      final d = _stickAt! - _stickFrom!;
+      final l = d.distance;
+      if (l > 6) {
+        final m = min(1.0, l / 50);
+        mx = d.dx / l * m;
+        my = -d.dy / l * m;
+      }
+    }
+    bool k(LogicalKeyboardKey a, LogicalKeyboardKey b) =>
+        _keys.contains(a) || _keys.contains(b);
+    if (k(LogicalKeyboardKey.keyA, LogicalKeyboardKey.arrowLeft)) mx -= 1;
+    if (k(LogicalKeyboardKey.keyD, LogicalKeyboardKey.arrowRight)) mx += 1;
+    if (k(LogicalKeyboardKey.keyW, LogicalKeyboardKey.arrowUp)) my += 1;
+    if (k(LogicalKeyboardKey.keyS, LogicalKeyboardKey.arrowDown)) my -= 1;
+    final l = sqrt(mx * mx + my * my);
+    if (l > 1) return (mx / l, my / l);
+    return (mx, my);
+  }
+
+  void _playerInput(double dt) {
+    final (mx, my) = _stick;
+    me.throwCd -= dt;
+    me.dashCd -= dt;
+    if (me.dizzy > 0 || me.dashT > 0) return;
+    final l = sqrt(mx * mx + my * my);
+    if (l > 0.1) {
+      me.angle = atan2(my, mx);
+      me.vx = mx * 5.4;
+      me.vy = my * 5.4;
     } else {
-      _whoopeeIn -= dt;
-      if (_whoopeeIn <= 0) {
-        _whoopeeT = 3.2;
-        _whoopeeIn = 9 + _rnd.nextDouble() * 6;
-        _whoopeeX = _rnd.nextBool()
-            ? 0.12 + _rnd.nextDouble() * 0.2
-            : 0.68 + _rnd.nextDouble() * 0.2;
-      }
-    }
-
-    if (_timeLeft <= 0 || _hearts <= 0) _finish();
-  }
-
-  void _updateHoles(double dt, {required bool spawn}) {
-    final d = (_elapsed / kRoundSeconds).clamp(0.0, 1.0);
-    for (final h in _holes) {
-      h.t += dt;
-      h.cooldown -= dt;
-      if (h.lineT > 0) h.lineT -= dt;
-      switch (h.phase) {
-        case _Phase.empty:
-          break;
-        case _Phase.rising:
-          if (h.t >= 0.2) {
-            h.phase = _Phase.up;
-            h.t = 0;
-          }
-        case _Phase.up:
-          if (h.t >= h.stay && !h.targeted) {
-            h.phase = _Phase.sinking;
-            h.t = 0;
-            if (!h.who!.noSplat && _rnd.nextDouble() < 0.3) {
-              h.say(
-                [
-                  'Too slow!',
-                  'Nyah nyah!',
-                  'Ha! Missed me!',
-                  'Bye bye!',
-                ][_rnd.nextInt(4)],
-                1.1,
-              );
-            }
-          }
-        case _Phase.splatted:
-          if (h.t >= 1.3) {
-            h.phase = _Phase.sinking;
-            h.t = 0;
-          }
-        case _Phase.sinking:
-          if (h.t >= 0.22) {
-            h.phase = _Phase.empty;
-            h.who = null;
-            h.angry = false;
-            h.cooldown = 0.3;
-            h.t = 0;
-          }
-      }
-    }
-    if (!spawn) return;
-
-    _spawnIn -= dt;
-    final maxUp = (_holes.length * (0.4 + 0.25 * d)).ceil();
-    final up = _holes.where((h) => h.who != null).length;
-    if (_spawnIn <= 0 && up < maxUp) {
-      final free = [
-        for (var i = 0; i < _holes.length; i++)
-          if (_holes[i].who == null && _holes[i].cooldown <= 0) i,
-      ];
-      if (free.isNotEmpty) {
-        final h = _holes[free[_rnd.nextInt(free.length)]];
-        final chickenOut = _holes.any((h) => h.who == Goof.chicken);
-        final roll = _rnd.nextDouble();
-        final Goof who;
-        if (!chickenOut && roll < 0.045 && _elapsed > 5) {
-          who = Goof.chicken;
-        } else if (roll < 0.22 + 0.08 * d) {
-          who = _rnd.nextBool() ? Goof.granny : Goof.puppy;
-        } else {
-          const baddies = [
-            Goof.snooty,
-            Goof.moustache,
-            Goof.baby,
-            Goof.clown,
-            Goof.robot,
-          ];
-          who = baddies[_rnd.nextInt(baddies.length)];
-        }
-        h
-          ..who = who
-          ..phase = _Phase.rising
-          ..t = 0
-          ..targeted = false
-          ..stay =
-              (1.7 - 0.8 * d) +
-              _rnd.nextDouble() * 0.5 +
-              (who.noSplat ? 0.6 : 0) +
-              (who == Goof.chicken ? -0.3 : 0);
-        if (_rnd.nextDouble() < 0.55) {
-          final lines = who.popLines;
-          h.say(lines[_rnd.nextInt(lines.length)]);
-        } else {
-          h.lineT = 0;
-        }
-      }
-      _spawnIn = (0.8 - 0.42 * d) * (0.7 + _rnd.nextDouble() * 0.6);
+      me.vx = 0;
+      me.vy = 0;
     }
   }
 
-  // ---------------------------------------------------------------- input
-
-  void _tap(Offset p) {
-    if (_over || _countdown > 0) return;
-    // The whoopee cushion?
-    if (_whoopeeT > 0 && (p - _whoopeePos).distance < _whoopeeR * 1.8) {
-      _whoopee();
-      return;
+  void _botBrain(Guy g, double dt) {
+    g.throwCd -= dt;
+    g.dashCd -= dt;
+    g.think -= dt;
+    if (g.dizzy > 0 || g.dashT > 0) return;
+    if (g.think <= 0 || g.target == null) {
+      g.think = 0.8 + _rnd.nextDouble() * 1.2;
+      final others = fighters.where((o) => o != g).toList();
+      g.target = _rnd.nextDouble() < 0.45 ? me : others[_rnd.nextInt(others.length)];
+      // Find a spot a few steps away from the target to throw from.
+      final a = _rnd.nextDouble() * pi * 2;
+      final d = 4.5 + _rnd.nextDouble() * 3;
+      g.tx = (g.target!.x + cos(a) * d).clamp(-_halfW + 1, _halfW - 1);
+      g.ty = (g.target!.y + sin(a) * d).clamp(-_halfH + 1, _halfH - 1);
     }
-    for (var i = 0; i < _windows.length; i++) {
-      if (!_windows[i].inflate(8).contains(p)) continue;
-      final h = _holes[i];
-      if (h.targeted) return;
-      if (h.hittable) {
-        h.targeted = true;
-        _pies.add(_Pie(_throwFrom, _headAt(i, 1), i));
-        SoundService.instance.play(GameSound.bowTwang);
-        return;
-      }
-      break;
+    final dx = g.tx - g.x, dy = g.ty - g.y;
+    final d = sqrt(dx * dx + dy * dy);
+    final speed = 3.4 * (g.kind == Kind.baby ? 1.15 : 1);
+    if (d > 0.4) {
+      g.vx = dx / d * speed;
+      g.vy = dy / d * speed;
+    } else {
+      g.vx = 0;
+      g.vy = 0;
     }
-    _pies.add(_Pie(_throwFrom, p, -1));
-    SoundService.instance.play(GameSound.bowTwang);
-  }
-
-  void _land(_Pie p) {
-    if (p.hole < 0) {
-      _blobs.add(_Blob(p.to, 26, _rnd.nextDouble() * 1000));
-      _floats.add(_Float(
-        ['Splorch!', 'Missed!', 'Oops!', 'Whoops!'][_rnd.nextInt(4)],
-        p.to,
-        Colors.white,
-        size: 18,
-      ));
-      if (_combo >= 3) {
-        _floats.add(_Float('Combo lost!', p.to + const Offset(0, 24), const Color(0xFFFFAB91), size: 15));
-      }
-      _combo = 0;
-      // Someone who is still up laughs at you.
-      final up = _holes.where((h) => h.phase == _Phase.up && !h.who!.noSplat).toList();
-      if (up.isNotEmpty && _rnd.nextDouble() < 0.6) {
-        up[_rnd.nextInt(up.length)].say(
-          ['HA! Missed!', 'Hee hee hee!', 'Is that all you got?', 'LOL!'][_rnd.nextInt(4)],
-          1.2,
-        );
-      }
-      return;
-    }
-    final h = _holes[p.hole];
-    h.targeted = false;
-    if (!h.hittable) {
-      // They ducked just in time.
-      _blobs.add(_Blob(p.to, 22, _rnd.nextDouble() * 1000));
-      return;
-    }
-    _splat(p.hole, mega: p.mega);
-  }
-
-  void _splat(int i, {bool mega = false}) {
-    final h = _holes[i];
-    final who = h.who!;
-    h
-      ..phase = _Phase.splatted
-      ..t = 0;
-    final at = _headAt(i, 1);
-    final lines = who.splatLines;
-    h.say(lines[_rnd.nextInt(lines.length)], 1.4);
-
-    if (who.noSplat) {
-      _hearts--;
-      _combo = 0;
-      _shake = 0.4;
-      h.angry = true;
-      _floats.add(_Float('-1 heart', at, const Color(0xFFFF5252), size: 24, life: 1.3));
-      _floats.add(_Float(
-        who == Goof.granny ? 'NOT GRANNY!' : 'NOT THE PUPPY!',
-        Offset(_size.width / 2, _wall.top + 40),
-        const Color(0xFFFF5252),
-        size: 30,
-        life: 1.4,
-      ));
-      SoundService.instance.play(GameSound.noMatch);
-      // Revenge: a pie flies back and splats on your screen.
-      _faceSplat = 2.6;
-      _faceSplatAt = Offset(
-        _size.width * (0.3 + _rnd.nextDouble() * 0.4),
-        _wall.top + _wall.height * (0.3 + _rnd.nextDouble() * 0.4),
+    final t = g.target!;
+    g.angle = atan2(t.y - g.y, t.x - g.x);
+    final td = sqrt(pow(t.x - g.x, 2) + pow(t.y - g.y, 2));
+    if (g.throwCd <= 0 && td < 13) {
+      g.throwCd = 1.6 + _rnd.nextDouble() * 1.3;
+      final flight = max(0.25, td / 13);
+      final miss = 0.5 + _rnd.nextDouble() * 0.9;
+      final ma = _rnd.nextDouble() * pi * 2;
+      _throw(
+        g,
+        t.x + t.vx * flight * 0.5 + cos(ma) * miss,
+        t.y + t.vy * flight * 0.5 + sin(ma) * miss,
+        1.2 * t.kind.size,
       );
-      h.say(who == Goof.granny ? 'Right! Take THAT!' : '*shakes custard everywhere*', 1.6);
-      return;
-    }
-
-    _splats++;
-    if (who == Goof.chicken) {
-      _score += 50;
-      _flash = 0.35;
-      _shake = 0.3;
-      _floats.add(_Float('+50', at, const Color(0xFFFFD54F), size: 28));
-      _floats.add(_Float(
-        'MEGA PIE!!!',
-        Offset(_size.width / 2, _wall.top + 50),
-        const Color(0xFFFFD54F),
-        size: 38,
-        life: 1.5,
-      ));
-      SoundService.instance.play(GameSound.win);
-      // Pies fly at every show-off who is still up.
-      for (var j = 0; j < _holes.length; j++) {
-        final o = _holes[j];
-        if (j == i || !o.hittable || o.targeted || o.who!.noSplat) continue;
-        o.targeted = true;
-        _pies.add(_Pie(_throwFrom, _headAt(j, 1), j, mega: true));
+      if (_rnd.nextDouble() < 0.3) {
+        final lines = g.kind.throwLines;
+        g.say(lines[_rnd.nextInt(lines.length)], 1.2);
       }
-      return;
-    }
-
-    if (!mega) _combo++;
-    _bestCombo = max(_bestCombo, _combo);
-    final mult = min(4, 1 + _combo ~/ 5);
-    final pts = 10 * mult;
-    _score += pts;
-    _floats.add(_Float(mult > 1 ? '+$pts  x$mult' : '+$pts', at, Colors.white, size: 22));
-    SoundService.instance.play(GameSound.hit);
-    const words = {
-      3: 'Giggle!',
-      5: 'Chuckle!',
-      8: 'LOL!',
-      12: 'ROFL!',
-      16: 'HYSTERICAL!',
-      22: 'COMEDY LEGEND!',
-      30: 'UNSTOPPABLE PIE!',
-    };
-    final word = words[_combo];
-    if (word != null) {
-      _comboWord = word;
-      _comboT = 1.3;
     }
   }
 
-  void _whoopee() {
-    _whoopeeT = 0;
-    _whoopeeSquash = 1;
-    _score += 25;
-    _timeLeft += 3;
-    _shake = 0.5;
-    _floats.add(_Float('PFFFFRRRRT!', _whoopeePos - const Offset(0, 40), const Color(0xFFFF80AB), size: 30, life: 1.4));
-    _floats.add(_Float('+25  +3 sec', _whoopeePos - const Offset(0, 8), Colors.white, size: 18, life: 1.3));
+  void _strangerBrain(Guy g, double dt) {
+    g.think -= dt;
+    if (g.dizzy > 0) return;
+    if (g.think <= 0) {
+      g.think = 2 + _rnd.nextDouble() * 3;
+      if (g.kind == Kind.puppy && _rnd.nextDouble() < 0.5) {
+        // Biscuit loves you and follows you about. Careful!
+        g.tx = me.x + (_rnd.nextDouble() - 0.5) * 3;
+        g.ty = me.y + (_rnd.nextDouble() - 0.5) * 3;
+      } else {
+        g.tx = (_rnd.nextDouble() * 2 - 1) * (_halfW - 1.5);
+        g.ty = (_rnd.nextDouble() * 2 - 1) * (_halfH - 1.5);
+      }
+      if (_rnd.nextDouble() < 0.35) {
+        final lines = g.kind.chatter;
+        g.say(lines[_rnd.nextInt(lines.length)], 1.6);
+      }
+    }
+    final dx = g.tx - g.x, dy = g.ty - g.y;
+    final d = sqrt(dx * dx + dy * dy);
+    final speed = g.kind == Kind.puppy ? 2.6 : 1.3;
+    if (d > 0.3) {
+      g.vx = dx / d * speed;
+      g.vy = dy / d * speed;
+      g.angle = atan2(dy, dx);
+    } else {
+      g.vx = 0;
+      g.vy = 0;
+    }
+  }
+
+  void _move(Guy g, double dt) {
+    g.dizzy = max(0, g.dizzy - dt);
+    var vx = g.vx, vy = g.vy;
+    if (g.dizzy > 0) {
+      vx = 0;
+      vy = 0;
+    }
+    if (g.dashT > 0) {
+      g.dashT -= dt;
+      vx = g.dashX * 13;
+      vy = g.dashY * 13;
+    }
+    g.x += vx * dt;
+    g.y += vy * dt;
+    final moving = vx * vx + vy * vy > 0.1;
+    g.walk = moving ? g.walk + dt * 11 : g.walk * 0.8;
+    // Keep inside the garden fence and out of the tables.
+    final r = g.radius;
+    g.x = g.x.clamp(-_halfW + r, _halfW - r);
+    g.y = g.y.clamp(-_halfH + r, _halfH - r);
+    for (final t in tables) {
+      final box = t.inflate(r);
+      if (!box.contains(Offset(g.x, g.y))) continue;
+      final pushes = [
+        (g.x - box.left).abs(),
+        (box.right - g.x).abs(),
+        (g.y - box.top).abs(),
+        (box.bottom - g.y).abs(),
+      ];
+      final m = pushes.reduce(min);
+      if (m == pushes[0]) {
+        g.x = box.left;
+      } else if (m == pushes[1]) {
+        g.x = box.right;
+      } else if (m == pushes[2]) {
+        g.y = box.top;
+      } else {
+        g.y = box.bottom;
+      }
+    }
+    // Don't walk through each other.
+    for (final o in guys) {
+      if (identical(o, g)) continue;
+      final dx = g.x - o.x, dy = g.y - o.y;
+      final d = sqrt(dx * dx + dy * dy);
+      final need = g.radius + o.radius;
+      if (d > 0.001 && d < need) {
+        g.x += dx / d * (need - d) * 0.5;
+        g.y += dy / d * (need - d) * 0.5;
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ pies
+
+  void _throw(Guy g, double tx, double ty, double tz) {
+    final hz = 1.75 * g.kind.size;
+    final sx = g.x + cos(g.angle) * 0.35, sy = g.y + sin(g.angle) * 0.35;
+    var dx = tx - sx, dy = ty - sy;
+    var d = sqrt(dx * dx + dy * dy);
+    if (d > 16) {
+      dx *= 16 / d;
+      dy *= 16 / d;
+      d = 16;
+    }
+    final t = max(0.22, d / 13);
+    final vz = (tz - hz) / t + 0.5 * _gravity * t;
+    _pies.add(_Pie(sx, sy, hz, dx / t, dy / t, vz, g));
+    g.throwT = 1;
+    if (g.player) SoundService.instance.play(GameSound.bowTwang);
+  }
+
+  /// The THROW button: aims at the nearest pie fighter you're facing.
+  void throwPie() {
+    if (_over || _countdown > 0 || me.dizzy > 0 || me.throwCd > 0) return;
+    me.throwCd = 0.42;
+    Guy? best;
+    var bestScore = 1e9;
+    for (final g in fighters) {
+      if (g.player) continue;
+      final dx = g.x - me.x, dy = g.y - me.y;
+      final d = sqrt(dx * dx + dy * dy);
+      if (d > 15) continue;
+      var off = (atan2(dy, dx) - me.angle).abs() % (pi * 2);
+      if (off > pi) off = pi * 2 - off;
+      if (off > 0.75) continue;
+      final score = off * 6 + d * 0.3;
+      if (score < bestScore) {
+        bestScore = score;
+        best = g;
+      }
+    }
+    double tx, ty, tz;
+    if (best != null) {
+      final d = sqrt(pow(best.x - me.x, 2) + pow(best.y - me.y, 2));
+      final flight = max(0.22, d / 13);
+      tx = best.x + best.vx * flight * 0.7;
+      ty = best.y + best.vy * flight * 0.7;
+      tz = 1.2 * best.kind.size;
+      me.angle = atan2(ty - me.y, tx - me.x);
+    } else {
+      tx = me.x + cos(me.angle) * 9;
+      ty = me.y + sin(me.angle) * 9;
+      tz = 0;
+    }
+    _throw(me, tx, ty, tz);
+    if (me.triple > 0) {
+      me.triple--;
+      for (final s in [-0.3, 0.3]) {
+        final a = atan2(ty - me.y, tx - me.x) + s;
+        final d = sqrt(pow(tx - me.x, 2) + pow(ty - me.y, 2));
+        _throw(me, me.x + cos(a) * d, me.y + sin(a) * d, tz);
+      }
+    }
+  }
+
+  /// The DODGE button: a quick dash you can't be splatted during.
+  void dodge() {
+    if (_over || _countdown > 0 || me.dizzy > 0 || me.dashCd > 0) return;
+    final (mx, my) = _stick;
+    final l = sqrt(mx * mx + my * my);
+    // Dash the way you're pushing, or sideways if you're standing still.
+    final a = l > 0.1 ? atan2(my, mx) : me.angle + pi / 2;
+    me.dashX = cos(a);
+    me.dashY = sin(a);
+    me.dashT = 0.24;
+    me.dashCd = 0.9;
+  }
+
+  void _updatePies(double dt) {
+    final gone = <_Pie>{};
+    for (final p in _pies) {
+      p.vz -= _gravity * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.spin += dt * 9;
+      // Bots sometimes see a pie coming and jump out of the way.
+      for (final g in guys) {
+        if (g.player || g.stranger || identical(g, p.by) || p.dodgeChecked) continue;
+        final d = sqrt(pow(g.x - p.x, 2) + pow(g.y - p.y, 2));
+        if (d < 2.2) {
+          p.dodgeChecked = true;
+          if (g.dashCd <= 0 && g.dizzy <= 0 && _rnd.nextDouble() < 0.28) {
+            final a = atan2(p.vy, p.vx) + (_rnd.nextBool() ? pi / 2 : -pi / 2);
+            g
+              ..dashX = cos(a)
+              ..dashY = sin(a)
+              ..dashT = 0.24
+              ..dashCd = 2.5;
+          }
+        }
+      }
+      Guy? hit;
+      for (final g in guys) {
+        if (identical(g, p.by) || g.dashT > 0) continue;
+        final d = sqrt(pow(g.x - p.x, 2) + pow(g.y - p.y, 2));
+        if (d < g.radius + 0.18 && p.z > 0 && p.z < g.kind.height + 0.1) {
+          hit = g;
+          break;
+        }
+      }
+      if (hit != null) {
+        _splat(hit, p.by);
+        gone.add(p);
+        continue;
+      }
+      var onTable = false;
+      for (final t in tables) {
+        if (t.contains(Offset(p.x, p.y)) && p.z < 0.95) onTable = true;
+      }
+      if (onTable || p.z <= 0 || p.x.abs() > _halfW + 3 || p.y.abs() > _halfH + 3) {
+        if (!onTable && p.z <= 0) {
+          _blobs.add(_Blob(p.x, p.y, 0.45, _rnd.nextDouble() * 1000));
+        }
+        gone.add(p);
+      }
+    }
+    _pies.removeWhere(gone.contains);
+  }
+
+  void _splat(Guy g, Guy by) {
+    g.splatAge = 0;
+    g.dizzy = g.stranger ? 1.5 : 0.9;
+    final lines = g.kind.splatLines;
+    g.say(lines[_rnd.nextInt(lines.length)], 1.8);
+    final head = V3(g.x, g.y, g.kind.height + 0.2);
+    if (g.player) {
+      _faceSplat = 1.8;
+      _shake = 0.3;
+      SoundService.instance.play(GameSound.hit);
+    }
+    if (g.stranger) {
+      by.score -= 15;
+      by.oops++;
+      if (by.player) {
+        _shake = 0.4;
+        _floats.add(_Float('-15', head, const Color(0xFFFF5252), size: 26, life: 1.4));
+        _floats.add(_Float(
+          switch (g.kind) {
+            Kind.granny => 'NOT GRANNY!',
+            Kind.waiter => 'NOT THE WAITER!',
+            _ => 'NOT THE PUPPY!',
+          },
+          head + const V3(0, 0, 0.7),
+          const Color(0xFFFF5252),
+          size: 30,
+          life: 1.5,
+        ));
+        SoundService.instance.play(GameSound.noMatch);
+      } else {
+        _floats.add(_Float('Oops! -15 ${by.kind.short}', head, const Color(0xFFFFAB91), size: 15));
+        by.say(['Oops!', 'Sorry Granny!', 'Whoopsie!', 'It was HIM!'][_rnd.nextInt(4)], 1.4);
+      }
+      return;
+    }
+    by.score += 10;
+    by.splats++;
+    _floats.add(_Float(
+      by.player ? '+10 SPLAT!' : 'SPLAT!',
+      head,
+      by.player ? const Color(0xFFFFEB3B) : Colors.white,
+      size: by.player ? 24 : 17,
+    ));
+    if (by.player) {
+      SoundService.instance.play(GameSound.hit);
+    } else if (_rnd.nextDouble() < 0.4) {
+      by.say(['Ha ha ha!', 'Got you!', 'Bullseye!', 'Delicious!'][_rnd.nextInt(4)], 1.3);
+    }
+  }
+
+  void _updateStuffOnGrass(double dt) {
+    for (final c in _cushions) {
+      if (c.away > 0) {
+        c.away -= dt;
+        if (c.away <= 0) {
+          c.x = (_rnd.nextDouble() * 2 - 1) * (_halfW - 2);
+          c.y = (_rnd.nextDouble() * 2 - 1) * (_halfH - 2);
+          if (tables.any((t) => t.inflate(1).contains(Offset(c.x, c.y)))) c.away = 0.5;
+        }
+        continue;
+      }
+      for (final g in guys) {
+        if (g.dashT > 0) continue;
+        if (pow(g.x - c.x, 2) + pow(g.y - c.y, 2) < 0.5) {
+          _whoopee(c, g);
+          break;
+        }
+      }
+    }
+    if (_golden == null) {
+      _goldenIn -= dt;
+      if (_goldenIn <= 0) {
+        var gx = 0.0, gy = 0.0;
+        do {
+          gx = (_rnd.nextDouble() * 2 - 1) * (_halfW - 2);
+          gy = (_rnd.nextDouble() * 2 - 1) * (_halfH - 2);
+        } while (tables.any((t) => t.inflate(1).contains(Offset(gx, gy))));
+        _golden = (gx, gy);
+      }
+    } else {
+      final (gx, gy) = _golden!;
+      for (final g in fighters) {
+        if (pow(g.x - gx, 2) + pow(g.y - gy, 2) < 0.6) {
+          g.triple = 3;
+          _golden = null;
+          _goldenIn = 12;
+          _floats.add(_Float(
+            g.player ? 'TRIPLE PIES!' : '${g.kind.short} got TRIPLE PIES!',
+            V3(g.x, g.y, 2.4),
+            const Color(0xFFFFD54F),
+            size: g.player ? 26 : 16,
+            life: 1.5,
+          ));
+          if (g.player) SoundService.instance.play(GameSound.match);
+          break;
+        }
+      }
+    }
+    // Bots with triple pies throw three at once.
+    for (final g in fighters) {
+      if (g.player || g.triple <= 0 || g.throwT < 0.99) continue;
+      final mine = _pies.where((p) => identical(p.by, g));
+      if (mine.isEmpty) continue;
+      g.triple--;
+      final p = mine.last;
+      for (final s in [-0.3, 0.3]) {
+        final sp = sqrt(p.vx * p.vx + p.vy * p.vy);
+        final a = atan2(p.vy, p.vx) + s;
+        _pies.add(_Pie(p.x, p.y, p.z, cos(a) * sp, sin(a) * sp, p.vz, g));
+      }
+    }
+  }
+
+  void _whoopee(_Cushion c, Guy g) {
+    c.away = 7;
+    g.dizzy = 0.8;
+    _floats.add(_Float('PFFFFRRRRT!', V3(c.x, c.y, 1.2), const Color(0xFFFF80AB), size: 28, life: 1.5));
+    g.say(
+      g.kind == Kind.puppy
+          ? '*sniffs it suspiciously*'
+          : ['Pardon me!', 'It was NOT me!', 'Oh dear...', 'Excuse ME!'][_rnd.nextInt(4)],
+      1.6,
+    );
     SoundService.instance.play(GameSound.tooEarly);
-    // Everyone giggles (and nobody can be bothered to hide for a bit).
-    for (final h in _holes) {
-      if (h.phase == _Phase.up) {
-        h.say(
-          ['Hee hee hee!', 'Who did THAT?!', 'Pardon YOU!', 'Ewww!', 'Excuse me!'][_rnd.nextInt(5)],
-          1.3,
-        );
-        h.stay += 0.6;
+    for (final o in guys) {
+      if (identical(o, g)) continue;
+      if (pow(o.x - c.x, 2) + pow(o.y - c.y, 2) < 36) {
+        o.say(['Hee hee hee!', 'Ewww!', 'Who did THAT?!', 'HA HA HA!', 'Pardon YOU!'][_rnd.nextInt(5)], 1.4);
       }
     }
   }
@@ -530,112 +663,170 @@ class _PieSplatGameScreenState extends State<PieSplatGameScreen>
     if (_over) return;
     _over = true;
     _overT = 0;
-    _whoopeeT = 0;
     _pies.clear();
     final save = SaveService.instance;
-    _newBest = _score > save.getHighScore(kPieSplatId);
-    save.saveHighScore(kPieSplatId, _score);
-    _review = const [
-      "'I laughed so hard my monocle fell off.' - Lord Snootypants",
-      "'Ten out of ten. Very sticky.' - Mr Moustachio",
-      "'GOO GOO! (best game ever)' - Baby Burp",
-      "'Funnier than me. I am retiring.' - Bonko the Clown",
-      "'HUMOUR LEVEL: MAXIMUM.' - Robo-Bob",
-      "'Woof.' - Biscuit the Puppy",
-    ][_rnd.nextInt(6)];
-    SoundService.instance.play(
-      _hearts <= 0 ? GameSound.gameOver : GameSound.levelComplete,
-    );
+    final s = max(0, me.score);
+    _newBest = s > save.getHighScore(kPieSplatId);
+    save.saveHighScore(kPieSplatId, s);
+    SoundService.instance.play(place == 1 ? GameSound.win : GameSound.levelComplete);
   }
+
+  List<Guy> get ranking => fighters.toList()..sort((a, b) => b.score.compareTo(a.score));
+
+  int get place => ranking.indexOf(me) + 1;
 
   void _restart() {
     setState(() {
+      _setup();
       _countdown = 2.4;
       _timeLeft = kRoundSeconds;
-      _elapsed = 0;
-      _score = 0;
-      _hearts = 3;
-      _combo = 0;
-      _bestCombo = 0;
-      _splats = 0;
       _over = false;
-      _spawnIn = 0.4;
-      _whoopeeIn = 9;
-      _whoopeeT = 0;
-      _comboT = 0;
       _faceSplat = 0;
-      _pies.clear();
-      _floats.clear();
-      _blobs.clear();
-      for (final h in _holes) {
-        h
-          ..who = null
-          ..phase = _Phase.empty
-          ..lineT = 0
-          ..targeted = false;
-      }
     });
   }
 
-  static String rankFor(int score) {
-    if (score < 100) return 'Pie Beginner';
-    if (score < 250) return 'Custard Cadet';
-    if (score < 450) return 'Splat Sergeant';
-    if (score < 700) return 'Captain Custard';
-    if (score < 1000) return 'Lord of the Pies';
-    return 'Supreme Splat Wizard';
-  }
-
-  // ---------------------------------------------------------------- build
+  // ------------------------------------------------------------------ build
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF7EC8F2),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, box) {
-            _layout(box.biggest);
-            return Stack(
-              children: [
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (d) => _tap(d.localPosition),
-                    child: CustomPaint(painter: _ScenePainter(this)),
+      body: KeyboardListener(
+        focusNode: _focus,
+        autofocus: true,
+        onKeyEvent: (e) {
+          if (e is KeyDownEvent) {
+            _keys.add(e.logicalKey);
+            if (e.logicalKey == LogicalKeyboardKey.space ||
+                e.logicalKey == LogicalKeyboardKey.enter) {
+              throwPie();
+            }
+            if (e.logicalKey == LogicalKeyboardKey.shiftLeft ||
+                e.logicalKey == LogicalKeyboardKey.keyE) {
+              dodge();
+            }
+          } else if (e is KeyUpEvent) {
+            _keys.remove(e.logicalKey);
+          }
+        },
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, box) {
+              final size = box.biggest;
+              final btn = (size.shortestSide * 0.2).clamp(66.0, 96.0);
+              return Stack(
+                children: [
+                  Positioned.fill(
+                    child: Listener(
+                      behavior: HitTestBehavior.opaque,
+                      onPointerDown: (e) {
+                        if (_stickId != null) return;
+                        if (e.localPosition.dx < size.width * 0.6 && e.localPosition.dy > 60) {
+                          _stickId = e.pointer;
+                          _stickFrom = e.localPosition;
+                          _stickAt = e.localPosition;
+                        } else if (e.localPosition.dy > 60) {
+                          throwPie();
+                        }
+                      },
+                      onPointerMove: (e) {
+                        if (e.pointer == _stickId) _stickAt = e.localPosition;
+                      },
+                      onPointerUp: (e) => _release(e.pointer),
+                      onPointerCancel: (e) => _release(e.pointer),
+                      child: CustomPaint(painter: _PartyPainter(this)),
+                    ),
                   ),
-                ),
-                Positioned(left: 0, right: 0, top: 0, child: _hud()),
-                if (_over && _overT > 0.7) Positioned.fill(child: _results()),
-              ],
-            );
-          },
+                  Positioned(left: 0, right: 0, top: 0, child: _hud()),
+                  if (!_over)
+                    Positioned(
+                      right: 14 + btn * 0.15,
+                      bottom: 16,
+                      child: _roundButton(
+                        const Key('pie_throw'),
+                        'THROW',
+                        btn,
+                        const Color(0xFFFF4081),
+                        throwPie,
+                      ),
+                    ),
+                  if (!_over)
+                    Positioned(
+                      right: 14 + btn * 1.25,
+                      bottom: 12,
+                      child: _roundButton(
+                        const Key('pie_dodge'),
+                        'DODGE',
+                        btn * 0.72,
+                        const Color(0xFF40C4FF),
+                        dodge,
+                      ),
+                    ),
+                  if (_over && _overT > 0.8) Positioned.fill(child: _results()),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _release(int pointer) {
+    if (pointer != _stickId) return;
+    _stickId = null;
+    _stickFrom = null;
+    _stickAt = null;
+  }
+
+  Widget _roundButton(Key key, String label, double size, Color color, VoidCallback onPress) {
+    return Listener(
+      key: key,
+      onPointerDown: (_) => onPress(),
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: kInk3, width: 3),
+          boxShadow: const [BoxShadow(color: kInk3, offset: Offset(0, 4))],
+        ),
+        child: FittedBox(
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
+            ),
+          ),
         ),
       ),
     );
   }
 
   Widget _hud() {
-    const ink = kPieInk;
     Widget pill(Widget child, {Color color = Colors.white}) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: ink, width: 2.5),
+        border: Border.all(color: kInk3, width: 2.5),
       ),
       child: child,
     );
     final secs = max(0, _timeLeft.ceil());
+    const places = ['1st', '2nd', '3rd', '4th'];
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       child: SizedBox(
-        height: 48,
+        height: 46,
         child: Row(
           children: [
             GestureDetector(
               onTap: () => Navigator.of(context).pop(),
-              child: pill(const Icon(Icons.arrow_back_rounded, color: ink, size: 22)),
+              child: pill(const Icon(Icons.arrow_back_rounded, color: kInk3, size: 22)),
             ),
             const SizedBox(width: 6),
             Expanded(
@@ -644,29 +835,12 @@ class _PieSplatGameScreenState extends State<PieSplatGameScreen>
                 alignment: Alignment.centerLeft,
                 child: pill(
                   Text(
-                    '$_score',
+                    '${me.score} pts · ${places[place - 1]}',
                     key: const Key('pie_score'),
-                    style: const TextStyle(color: ink, fontSize: 20, fontWeight: FontWeight.w900),
+                    style: const TextStyle(color: kInk3, fontSize: 18, fontWeight: FontWeight.w900),
                   ),
                   color: const Color(0xFFFFE082),
                 ),
-              ),
-            ),
-            pill(
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.timer_rounded, color: ink, size: 18),
-                  const SizedBox(width: 3),
-                  Text(
-                    '$secs',
-                    style: TextStyle(
-                      color: secs <= 10 ? const Color(0xFFD32F2F) : ink,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
               ),
             ),
             const SizedBox(width: 6),
@@ -674,12 +848,16 @@ class _PieSplatGameScreenState extends State<PieSplatGameScreen>
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (var i = 0; i < 3; i++)
-                    Icon(
-                      i < _hearts ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                      color: const Color(0xFFE53935),
-                      size: 18,
+                  const Icon(Icons.timer_rounded, color: kInk3, size: 18),
+                  const SizedBox(width: 3),
+                  Text(
+                    '$secs',
+                    style: TextStyle(
+                      color: secs <= 10 ? const Color(0xFFD32F2F) : kInk3,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
                     ),
+                  ),
                 ],
               ),
             ),
@@ -689,75 +867,104 @@ class _PieSplatGameScreenState extends State<PieSplatGameScreen>
     );
   }
 
+  static String rankFor(int place, int score) {
+    if (place == 1) return 'Supreme Splat Wizard';
+    if (score >= 100) return 'Captain Custard';
+    if (score >= 40) return 'Splat Sergeant';
+    if (score >= 0) return 'Custard Cadet';
+    return 'Granny Splatter (oh dear)';
+  }
+
   Widget _results() {
     final best = SaveService.instance.getHighScore(kPieSplatId);
-    const ink = kPieInk;
+    final rank = ranking;
+    final headline = switch (place) {
+      1 => 'YOU WIN THE PIE PARTY!',
+      2 => 'So close! 2nd place!',
+      3 => '3rd place! Not bad!',
+      _ => 'Last place... you got creamed!',
+    };
     return Container(
       color: Colors.black54,
       alignment: Alignment.center,
       padding: const EdgeInsets.all(12),
-      // Shrinks to fit when a phone is held sideways.
       child: FittedBox(
         fit: BoxFit.scaleDown,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 340, minWidth: 340),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF6DC),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: ink, width: 3),
-              boxShadow: const [BoxShadow(color: ink, offset: Offset(0, 6))],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _hearts <= 0 ? 'Uh oh! Granny is NOT impressed.' : "Time's up!",
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: ink, fontSize: 22, fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '$_score',
-                  style: const TextStyle(color: Color(0xFFE53935), fontSize: 52, fontWeight: FontWeight.w900, height: 1),
-                ),
-                Text(
-                  _newBest ? 'NEW BEST SCORE!' : 'Best: $best',
-                  style: TextStyle(
-                    color: _newBest ? const Color(0xFF2E7D32) : ink.withValues(alpha: 0.7),
-                    fontWeight: FontWeight.w800,
+        child: Container(
+          width: 340,
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+          decoration: BoxDecoration(
+            color: kCream3,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: kInk3, width: 3),
+            boxShadow: const [BoxShadow(color: kInk3, offset: Offset(0, 6))],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                headline,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: kInk3, fontSize: 22, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 10),
+              for (var i = 0; i < rank.length; i++)
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: rank[i].player ? const Color(0xFFFFE082) : Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: kInk3, width: 1.5),
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 28,
+                        child: Text(i == 0 ? '👑' : '${i + 1}.',
+                            style: const TextStyle(color: kInk3, fontWeight: FontWeight.w900)),
+                      ),
+                      Expanded(
+                        child: Text(
+                          rank[i].kind.short,
+                          style: const TextStyle(color: kInk3, fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      Text(
+                        '${rank[i].score}',
+                        style: const TextStyle(color: kInk3, fontWeight: FontWeight.w900),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'You are a ${rankFor(_score)}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: ink, fontSize: 17, fontWeight: FontWeight.w800),
+              const SizedBox(height: 8),
+              Text(
+                'You are a ${rankFor(place, me.score)}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: kInk3, fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+              Text(
+                'Splats: ${me.splats}   Strangers splatted: ${me.oops}',
+                style: TextStyle(color: kInk3.withValues(alpha: 0.75), fontSize: 13),
+              ),
+              Text(
+                _newBest ? 'NEW BEST SCORE!' : 'Best: $best',
+                style: TextStyle(
+                  color: _newBest ? const Color(0xFF2E7D32) : kInk3.withValues(alpha: 0.7),
+                  fontWeight: FontWeight.w800,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Splats: $_splats   Best combo: $_bestCombo',
-                  style: TextStyle(color: ink.withValues(alpha: 0.75), fontSize: 13),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _review,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: ink.withValues(alpha: 0.8), fontStyle: FontStyle.italic, fontSize: 13),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    _button('Play again', const Color(0xFFFF4081), _restart),
-                    _button('Menu', Colors.white, () => Navigator.of(context).pop()),
-                  ],
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  _button('Play again', const Color(0xFFFF4081), _restart),
+                  _button('Menu', Colors.white, () => Navigator.of(context).pop()),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -772,99 +979,87 @@ class _PieSplatGameScreenState extends State<PieSplatGameScreen>
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kPieInk, width: 2.5),
-          boxShadow: const [BoxShadow(color: kPieInk, offset: Offset(0, 4))],
+          border: Border.all(color: kInk3, width: 2.5),
+          boxShadow: const [BoxShadow(color: kInk3, offset: Offset(0, 4))],
         ),
         child: Text(
           label,
-          style: const TextStyle(color: kPieInk, fontSize: 17, fontWeight: FontWeight.w900),
+          style: const TextStyle(color: kInk3, fontSize: 17, fontWeight: FontWeight.w900),
         ),
       ),
     );
   }
 }
 
-// ------------------------------------------------------------------ painting
+// ------------------------------------------------------------------ drawing
 
-class _ScenePainter extends CustomPainter {
-  _ScenePainter(this.g);
-  final _PieSplatGameScreenState g;
+class _PartyPainter extends CustomPainter {
+  _PartyPainter(this.g);
+  final PieSplatGameState g;
 
   @override
   void paint(Canvas c, Size size) {
-    if (g._windows.isEmpty) return;
+    c.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF5BB8F0), Color(0xFFCDEBFF)],
+        ).createShader(Offset.zero & size),
+    );
     c.save();
     if (g._shake > 0) {
-      final s = g._shake * 14;
-      c.translate(sin(g._clock * 70) * s, cos(g._clock * 53) * s);
+      final s = g._shake * 12;
+      c.translate(sin(g.clock * 70) * s, cos(g.clock * 53) * s);
     }
-    _background(c, size);
-    for (var i = 0; i < g._windows.length; i++) {
-      _window(c, i);
-    }
-    for (final b in g._blobs) {
-      paintWallSplat(c, b.pos, b.r, b.seed, (1 - b.age / 2.5).clamp(0.0, 1.0));
-    }
-    _groundStuff(c, size);
-    for (final p in g._pies) {
-      final k = (p.t / p.dur).clamp(0.0, 1.0);
-      final pos = Offset.lerp(p.from, p.to, k)! - Offset(0, sin(k * pi) * 50);
-      final base = (g._ground.height * 0.32).clamp(18.0, 28.0);
-      paintPie(c, pos, base * (1 - 0.35 * k), spin: k * 6);
-    }
-    for (var i = 0; i < g._holes.length; i++) {
-      final h = g._holes[i];
-      if (h.lineT > 0 && h.line != null) _bubble(c, i, h.line!, size);
-    }
+    final s = _scene(size);
+    s.draw(c);
+    _overlays(c, s, size);
     c.restore();
 
-    for (final f in g._floats) {
-      final k = f.age / f.life;
-      _text(
-        c,
-        f.text,
-        f.pos - Offset(0, 50 * k),
-        f.size * (k < 0.15 ? 0.6 + k * 2.7 : 1),
-        f.color.withValues(alpha: (1 - k * k).clamp(0.0, 1.0)),
-        maxWidth: size.width - 20,
-        clampTo: size,
-      );
-    }
-    if (g._comboT > 0 && g._comboWord != null) {
-      final k = 1 - g._comboT / 1.3;
-      _text(
-        c,
-        g._comboWord!,
-        Offset(size.width / 2, g._wall.top + g._wall.height * 0.5),
-        (min(size.width, 600) / 9) * (k < 0.15 ? 0.5 + k * 3.3 : 1),
-        const Color(0xFFFFEB3B).withValues(alpha: (g._comboT / 0.4).clamp(0.0, 1.0)),
-        maxWidth: size.width - 20,
-      );
-    }
+    // Pie in YOUR face.
     if (g._faceSplat > 0) {
-      // Custard all over your screen, sliding slowly down.
-      final k = 2.6 - g._faceSplat;
+      final k = 1.8 - g._faceSplat;
+      final a = (g._faceSplat / 0.5).clamp(0.0, 1.0);
       final grow = Curves.easeOutBack.transform(min(1.0, k / 0.15));
-      final r = size.shortestSide * 0.33 * grow;
-      final at = g._faceSplatAt + Offset(0, k * 18);
-      paintWallSplat(c, at, r, 7, (g._faceSplat / 0.6).clamp(0.0, 1.0));
-      if (k > 0.2 && k < 2.0) {
-        _text(c, 'SPLAT! Right in your face!', at + Offset(0, r * 0.1), 20, const Color(0xFFFF5252),
-            maxWidth: size.width - 30, clampTo: size);
+      final cream = Paint()..color = kCream3.withValues(alpha: a);
+      final rnd = Random(5);
+      final centre = Offset(size.width / 2, size.height * 0.45 + k * 30);
+      final r = size.shortestSide * 0.42 * grow;
+      c.drawCircle(centre, r * 0.75, cream);
+      for (var i = 0; i < 10; i++) {
+        final an = i * pi / 5 + rnd.nextDouble() * 0.3;
+        final d = r * (0.6 + rnd.nextDouble() * 0.35);
+        c.drawCircle(centre + Offset(cos(an) * d, sin(an) * d), r * (0.15 + rnd.nextDouble() * 0.12), cream);
       }
+      for (var i = 0; i < 5; i++) {
+        final x = centre.dx + (i - 2) * r * 0.3;
+        c.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(x - 9, centre.dy, 18, r * (0.6 + 0.5 * ((i * 37) % 10) / 10) + k * 60),
+            const Radius.circular(9),
+          ),
+          cream,
+        );
+      }
+      c.drawCircle(centre + Offset(r * 0.1, -r * 0.3), r * 0.1, Paint()..color = const Color(0xFFD50000).withValues(alpha: a));
+      _text(c, 'SPLAT!', centre, 44, Colors.white.withValues(alpha: a), maxWidth: size.width);
     }
-    if (g._flash > 0) {
-      c.drawRect(Offset.zero & size, Paint()..color = Colors.white.withValues(alpha: g._flash * 1.5));
-    }
+
+    _stick(c);
+
     if (g._countdown > 0) {
       c.drawRect(Offset.zero & size, Paint()..color = const Color(0x55000000));
       final cd = g._countdown;
-      final shown = cd > 1.8 ? '3' : cd > 1.2 ? '2' : cd > 0.6 ? '1' : 'PIE!';
-      _text(c, shown, size.center(Offset.zero), min(size.shortestSide * 0.3, 120), Colors.white);
+      final shown = cd > 1.8 ? '3' : cd > 1.2 ? '2' : cd > 0.6 ? '1' : 'PIE FIGHT!';
+      final big = min(size.shortestSide * 0.25, 110.0);
+      _text(c, shown, size.center(Offset.zero), shown.length > 1 ? big * 0.6 : big, Colors.white,
+          maxWidth: size.width - 20);
       _text(
         c,
-        "Splat the show-offs! Don't splat Granny or the puppy!",
-        size.center(Offset(0, min(size.shortestSide * 0.3, 120) * 0.8)),
+        "Splat the show-offs. Dodge their pies. Don't splat the strangers!",
+        size.center(Offset(0, big * 0.85)),
         16,
         Colors.white,
         maxWidth: min(size.width - 30, 420),
@@ -872,192 +1067,231 @@ class _ScenePainter extends CustomPainter {
     }
   }
 
-  void _background(Canvas c, Size size) {
-    // Sky with fluffy clouds.
-    c.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF5BB8F0), Color(0xFFB8E4FF)],
-        ).createShader(Offset.zero & size),
+  Scene3D _scene(Size size) {
+    final portrait = size.width < size.height;
+    final back = portrait ? 6.5 : 7.0;
+    final up = portrait ? 11.0 : 8.0;
+    final camX = g._camX.clamp(-5.0, 5.0);
+    final camY = g._camY.clamp(-_halfH + 4.0, _halfH - 4.0);
+    final eye = V3(camX, camY - back, up);
+    final look = V3(camX, camY + 1.0, 0);
+    final focal = portrait ? size.width * 1.45 : min(size.width * 0.9, size.height * 1.7);
+    final s = Scene3D(
+      eye,
+      look - eye,
+      focal,
+      Offset(size.width / 2, size.height * (portrait ? 0.6 : 0.5)),
+      fog: const Color(0xFFCDEBFF),
+      fogFar: 60,
+      fogMax: 0.35,
     );
-    final cloud = Paint()..color = Colors.white.withValues(alpha: 0.85);
-    for (var i = 0; i < 3; i++) {
-      final x = ((g._clock * 12 + i * size.width * 0.45) % (size.width + 160)) - 80;
-      final y = 30.0 + i * 22;
-      c.drawCircle(Offset(x, y), 18, cloud);
-      c.drawCircle(Offset(x + 20, y - 8), 22, cloud);
-      c.drawCircle(Offset(x + 44, y), 17, cloud);
+
+    // Grass outside, then the striped lawn.
+    s.poly([
+      const V3(-40, -30, -0.01),
+      const V3(40, -30, -0.01),
+      const V3(40, 40, -0.01),
+      const V3(-40, 40, -0.01),
+    ], const Color(0xFF558B2F), floor: true, lit: false);
+    for (var i = 0; i < 11; i++) {
+      final x0 = -_halfW + i * 2.0;
+      s.poly([
+        V3(x0, -_halfH, 0),
+        V3(x0 + 2, -_halfH, 0),
+        V3(x0 + 2, _halfH, 0),
+        V3(x0, _halfH, 0),
+      ], i.isEven ? const Color(0xFF7CB342) : const Color(0xFF8BC34A), floor: true, lit: false);
     }
-    // The house wall.
-    final wall = RRect.fromRectAndCorners(
-      g._wall,
-      topLeft: const Radius.circular(18),
-      topRight: const Radius.circular(18),
-    );
-    c.drawRRect(wall, Paint()..color = const Color(0xFFF6B79F));
-    // Bricks.
-    final brick = Paint()
-      ..color = const Color(0x22A0402A)
-      ..strokeWidth = 1.5;
-    c.save();
-    c.clipRRect(wall);
-    for (var y = g._wall.top + 18; y < g._wall.bottom; y += 18) {
-      c.drawLine(Offset(g._wall.left, y), Offset(g._wall.right, y), brick);
-      final row = ((y - g._wall.top) / 18).round();
-      for (var x = g._wall.left + (row.isEven ? 0 : 20); x < g._wall.right; x += 40) {
-        c.drawLine(Offset(x, y - 18), Offset(x, y), brick);
+    for (final b in g._blobs) {
+      addFloorSplat(s, b.x, b.y, b.r * min(1.0, b.age * 8), b.seed);
+    }
+    // Shadows under people and pies help you see where things are.
+    void shadow(double x, double y, double r) {
+      s.poly([
+        for (var i = 0; i < 8; i++) V3(x + cos(i * pi / 4) * r, y + sin(i * pi / 4) * r * 0.9, 0.02),
+      ], const Color(0x55000000), floor: true, lit: false);
+    }
+
+    for (final p in g.guys) {
+      shadow(p.x, p.y, p.radius * 0.9);
+    }
+    for (final p in g._pies) {
+      shadow(p.x, p.y, 0.22);
+    }
+
+    // The fence.
+    const fence = Color(0xFFFFFFFF);
+    const ax = V3(1, 0, 0), ay = V3(0, 1, 0);
+    for (var x = -_halfW; x <= _halfW + 0.01; x += 2) {
+      for (final y in [-_halfH, _halfH]) {
+        s.box(V3(x, y, 0.45), ax, ay, kUp, 0.08, 0.08, 0.45, fence);
       }
     }
-    c.restore();
-    c.drawRRect(wall, Paint()
-      ..color = kPieInk
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3);
-  }
-
-  void _window(Canvas c, int i) {
-    final w = g._windows[i];
-    final h = g._holes[i];
-    final rr = RRect.fromRectAndRadius(w, const Radius.circular(10));
-    c.drawRRect(rr, Paint()..color = const Color(0xFF2B2140));
-    // Warm light inside and little curtains.
-    c.drawRRect(
-      rr.deflate(4),
-      Paint()
-        ..shader = RadialGradient(
-          colors: [const Color(0xFFFFE0A3).withValues(alpha: 0.5), Colors.transparent],
-        ).createShader(w),
-    );
-    final curtain = Paint()..color = const Color(0xFF8E44AD);
-    c.drawPath(
-      Path()
-        ..moveTo(w.left, w.top)
-        ..lineTo(w.left + w.width * 0.28, w.top)
-        ..quadraticBezierTo(w.left + w.width * 0.08, w.top + w.height * 0.4, w.left, w.top + w.height * 0.62)
-        ..close(),
-      curtain,
-    );
-    c.drawPath(
-      Path()
-        ..moveTo(w.right, w.top)
-        ..lineTo(w.right - w.width * 0.28, w.top)
-        ..quadraticBezierTo(w.right - w.width * 0.08, w.top + w.height * 0.4, w.right, w.top + w.height * 0.62)
-        ..close(),
-      curtain,
-    );
-
-    if (h.who != null) {
-      final pop = g._pop(h);
-      final r = g._headR(w);
-      final o = g._headAt(i, pop);
-      c.save();
-      c.clipRRect(rr);
-      c.translate(o.dx, o.dy);
-      final wobble = h.phase == _Phase.splatted
-          ? sin(h.t * 25) * 0.12 * max(0, 1 - h.t * 2)
-          : sin(g._clock * 5 + i) * 0.06;
-      c.rotate(wobble);
-      paintGoof(
-        c,
-        h.who!,
-        Offset.zero,
-        r,
-        time: g._clock + i * 1.3,
-        splat: h.phase == _Phase.splatted || (h.phase == _Phase.sinking && h.angry)
-            ? h.t + (h.phase == _Phase.sinking ? 1.3 : 0)
-            : null,
+    for (var y = -_halfH + 2; y < _halfH; y += 2) {
+      for (final x in [-_halfW, _halfW]) {
+        s.box(V3(x, y, 0.45), ax, ay, kUp, 0.08, 0.08, 0.45, fence);
+      }
+    }
+    for (final y in [-_halfH, _halfH]) {
+      s.box(V3(0, y, 0.6), ax, ay, kUp, _halfW, 0.04, 0.06, fence);
+    }
+    for (final x in [-_halfW, _halfW]) {
+      s.box(V3(x, 0, 0.6), ax, ay, kUp, 0.04, _halfH, 0.06, fence);
+    }
+    // Balloons on the corners.
+    const balloons = [Color(0xFFFF4081), Color(0xFFFFEB3B), Color(0xFF40C4FF), Color(0xFF69F0AE)];
+    var bi = 0;
+    for (final x in [-_halfW, _halfW]) {
+      for (final y in [-_halfH, _halfH]) {
+        final bob = sin(g.clock * 2 + bi) * 0.12;
+        s.box(V3(x, y, 1.4), ax, ay, kUp, 0.015, 0.015, 0.6, Colors.white);
+        s.box(V3(x, y, 2.3 + bob), ax, ay, kUp, 0.3, 0.3, 0.38, balloons[bi % 4]);
+        bi++;
+      }
+    }
+    // Party tables with cakes.
+    for (final t in PieSplatGameState.tables) {
+      final c = V3(t.center.dx, t.center.dy, 0);
+      s.group(() {
+        s.box(c + kUp * 0.4, ax, ay, kUp, t.width / 2, t.height / 2, 0.4,
+            const Color(0xFFF8BBD0), top: Colors.white);
+        s.box(c + kUp * 0.98, ax, ay, kUp, 0.4, 0.4, 0.18, const Color(0xFF8D6E63), top: kCream3);
+        s.box(c + kUp * 1.26, ax, ay, kUp, 0.28, 0.28, 0.1, const Color(0xFFF48FB1), top: kCream3);
+        s.box(c + kUp * 1.45, ax, ay, kUp, 0.03, 0.03, 0.09, const Color(0xFF64B5F6));
+        s.box(c + kUp * 1.57, ax, ay, kUp, 0.035, 0.035, 0.035, const Color(0xFFFFC107));
+      });
+    }
+    // Whoopee cushions and the golden pie.
+    for (final cu in g._cushions) {
+      if (cu.away > 0) continue;
+      s.box(V3(cu.x, cu.y, 0.08), ax, ay, kUp, 0.35, 0.3, 0.08, const Color(0xFFFF4081));
+      s.box(V3(cu.x + 0.42, cu.y, 0.05), ax, ay, kUp, 0.08, 0.06, 0.04, const Color(0xFFF50057));
+    }
+    if (g._golden != null) {
+      final (gx, gy) = g._golden!;
+      addPie(s, V3(gx, gy, 0.6 + sin(g.clock * 3) * 0.15), g.clock * 2, mega: true);
+    }
+    // Everybody at the party.
+    for (final p in g.guys) {
+      addGuy(
+        s,
+        p.kind,
+        p.x,
+        p.y,
+        p.angle + (p.dashT > 0 ? p.dashT * 26 : 0) + (p.dizzy > 0 && p.splatAge < 0 ? sin(g.clock * 20) * 0.4 : 0),
+        walk: p.walk,
+        throwT: p.throwT,
+        splat: p.splatAge,
+        z: p.dashT > 0 ? sin(p.dashT / 0.24 * pi) * 0.4 : 0,
+        time: g.clock + p.kind.index,
       );
-      c.restore();
     }
-
-    // Window frame and sill on top.
-    c.drawRRect(rr, Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5);
-    c.drawRRect(rr.inflate(2.5), Paint()
-      ..color = kPieInk
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2);
-    final sill = RRect.fromRectAndRadius(
-      Rect.fromLTRB(w.left - 6, w.bottom - 2, w.right + 6, w.bottom + 9),
-      const Radius.circular(4),
-    );
-    c.drawRRect(sill, Paint()..color = Colors.white);
-    c.drawRRect(sill, Paint()
-      ..color = kPieInk
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2);
+    for (final p in g._pies) {
+      addPie(s, V3(p.x, p.y, p.z), p.spin);
+    }
+    return s;
   }
 
-  void _groundStuff(Canvas c, Size size) {
-    final gr = g._ground;
-    c.drawRect(gr, Paint()..color = const Color(0xFF66BB6A));
-    c.drawLine(gr.topLeft, gr.topRight, Paint()
-      ..color = kPieInk
-      ..strokeWidth = 3);
-    final tuft = Paint()
-      ..color = const Color(0xFF43A047)
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-    for (var x = 10.0; x < size.width; x += 34) {
-      final y = gr.top + 14 + (x * 7) % 20;
-      c.drawLine(Offset(x, y), Offset(x - 4, y - 8), tuft);
-      c.drawLine(Offset(x, y), Offset(x + 4, y - 9), tuft);
-    }
-    // The pie table, with a big stack of pies ready to throw.
-    final t = g._throwFrom;
-    final pr = (gr.height * 0.32).clamp(18.0, 28.0);
-    final table = Rect.fromCenter(center: t + Offset(0, pr * 0.9), width: pr * 4.4, height: pr * 0.5);
-    c.drawRRect(RRect.fromRectAndRadius(table, const Radius.circular(4)), Paint()..color = const Color(0xFF8D6E63));
-    for (var k = 0; k < 3; k++) {
-      paintPie(c, t + Offset((k - 1) * pr * 1.3, pr * 0.35 - (k == 1 ? pr * 0.25 : 0)), pr * 0.75);
-    }
-    if (g._whoopeeT > 0 || g._whoopeeSquash > 0) {
-      final grow = g._whoopeeT > 0 ? min(1.0, (3.2 - g._whoopeeT) / 0.25) : 1.0;
-      paintWhoopee(c, g._whoopeePos, g._whoopeeR * grow, g._whoopeeSquash, g._clock);
-      if (g._whoopeeT > 0) {
-        _text(c, 'TAP ME!', g._whoopeePos - Offset(0, g._whoopeeR * 1.4), 12, kPieInk, maxWidth: 80);
+  void _overlays(Canvas c, Scene3D s, Size size) {
+    // "YOU" marker over the chef.
+    final top = s.project(V3(g.me.x, g.me.y, g.me.kind.height + 0.75));
+    if (top != null && !g._over) {
+      final bob = sin(g.clock * 5) * 3;
+      final p = Path()
+        ..moveTo(top.dx - 8, top.dy - 10 + bob)
+        ..lineTo(top.dx + 8, top.dy - 10 + bob)
+        ..lineTo(top.dx, top.dy + bob)
+        ..close();
+      c.drawPath(p, Paint()..color = const Color(0xFFFFEB3B));
+      c.drawPath(p, Paint()
+        ..color = kInk3
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2);
+      if (g.me.triple > 0) {
+        _text(c, 'x3 PIES', top - Offset(0, 22 - bob), 13, const Color(0xFFFFD54F));
       }
     }
+    for (final p in g.guys) {
+      final head = s.project(V3(p.x, p.y, p.kind.height + 0.35));
+      if (head == null) continue;
+      if (p.dizzy > 0 && !p.stranger) {
+        for (var i = 0; i < 3; i++) {
+          final a = g.clock * 6 + i * pi * 2 / 3;
+          _star(c, head + Offset(cos(a) * 16, sin(a) * 5 - 6), 5);
+        }
+      }
+      if (p.lineT > 0 && p.line != null) _bubble(c, head - const Offset(0, 14), p.line!, size);
+    }
+    for (final f in g._floats) {
+      final at = s.project(f.pos + V3(0, 0, f.age * 1.2));
+      if (at == null) continue;
+      final k = f.age / f.life;
+      _text(
+        c,
+        f.text,
+        at,
+        f.size * (k < 0.12 ? 0.6 + k * 3.3 : 1),
+        f.color.withValues(alpha: (1 - k * k).clamp(0.0, 1.0)),
+        maxWidth: size.width - 20,
+        clampTo: size,
+      );
+    }
   }
 
-  void _bubble(Canvas c, int i, String text, Size size) {
-    final w = g._windows[i];
-    final fontSize = (w.width / 9).clamp(11.0, 15.0);
+  void _stick(Canvas c) {
+    final from = g._stickFrom, at = g._stickAt;
+    if (from == null || at == null) return;
+    c.drawCircle(from, 50, Paint()..color = Colors.white.withValues(alpha: 0.25));
+    c.drawCircle(from, 50, Paint()
+      ..color = Colors.white.withValues(alpha: 0.6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3);
+    var d = at - from;
+    if (d.distance > 50) d = d / d.distance * 50;
+    c.drawCircle(from + d, 24, Paint()..color = Colors.white.withValues(alpha: 0.8));
+  }
+
+  void _star(Canvas c, Offset o, double r) {
+    final p = Path();
+    for (var i = 0; i < 10; i++) {
+      final a = i * pi / 5 - pi / 2;
+      final d = i.isEven ? r : r * 0.45;
+      final pt = o + Offset(cos(a) * d, sin(a) * d);
+      i == 0 ? p.moveTo(pt.dx, pt.dy) : p.lineTo(pt.dx, pt.dy);
+    }
+    p.close();
+    c.drawPath(p, Paint()..color = const Color(0xFFFFEB3B));
+  }
+
+  void _bubble(Canvas c, Offset at, String text, Size size) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(color: kPieInk, fontSize: fontSize, fontWeight: FontWeight.w800, height: 1.1),
+        style: const TextStyle(color: kInk3, fontSize: 13, fontWeight: FontWeight.w800, height: 1.1),
       ),
       textAlign: TextAlign.center,
       textDirection: TextDirection.ltr,
-    )..layout(maxWidth: max(90, w.width * 1.25));
-    final bw = tp.width + 16, bh = tp.height + 10;
-    var cx = w.center.dx;
-    cx = cx.clamp(bw / 2 + 4, size.width - bw / 2 - 4);
-    var top = w.top - bh - 6;
-    top = max(top, g._wall.top - 6);
-    final box = Rect.fromLTWH(cx - bw / 2, top, bw, bh);
-    final rr = RRect.fromRectAndRadius(box, const Radius.circular(12));
+    )..layout(maxWidth: min(150, size.width * 0.4));
+    final bw = tp.width + 14, bh = tp.height + 8;
+    final cx = at.dx.clamp(bw / 2 + 4, max(bw / 2 + 4, size.width - bw / 2 - 4));
+    final topY = max(52.0, at.dy - bh - 8);
+    final box = Rect.fromLTWH(cx - bw / 2, topY, bw, bh);
+    final rr = RRect.fromRectAndRadius(box, const Radius.circular(10));
     final tail = Path()
-      ..moveTo(w.center.dx - 7, box.bottom - 1)
-      ..lineTo(w.center.dx + 7, box.bottom - 1)
-      ..lineTo(w.center.dx + 2, box.bottom + 9)
+      ..moveTo(at.dx - 6, box.bottom - 1)
+      ..lineTo(at.dx + 6, box.bottom - 1)
+      ..lineTo(at.dx, box.bottom + 8)
       ..close();
     final fill = Paint()..color = Colors.white;
     final line = Paint()
-      ..color = kPieInk
+      ..color = kInk3
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
     c.drawPath(tail, fill);
     c.drawPath(tail, line);
     c.drawRRect(rr, fill);
     c.drawRRect(rr, line);
-    tp.paint(c, Offset(box.left + 8, box.top + 5));
+    tp.paint(c, Offset(box.left + 7, box.top + 4));
   }
 
   void _text(
@@ -1082,7 +1316,7 @@ class _ScenePainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = max(3, size / 7)
         ..strokeJoin = StrokeJoin.round
-        ..color = kPieInk.withValues(alpha: color.a),
+        ..color = kInk3.withValues(alpha: color.a),
     ));
     final fill = make(TextStyle(fontSize: size, fontWeight: FontWeight.w900, height: 1.1, color: color));
     var tl = center - Offset(fill.width / 2, fill.height / 2);
