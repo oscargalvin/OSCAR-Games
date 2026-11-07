@@ -9,12 +9,39 @@ import '../outplay/outplay_3d.dart' show Scene3D, kUp;
 // camera and z is height. A person is about 1.8 tall.
 
 /// Everyone at the party. The first ones are pie fighters; the rest are
-/// strangers who just came for the cake and must NOT be splatted.
-enum Kind { chef, snooty, moustache, clown, robot, baby, granny, waiter, puppy }
+/// guests who just came for the cake.
+enum Kind {
+  chef,
+  snooty,
+  moustache,
+  clown,
+  robot,
+  baby,
+  granny,
+  waiter,
+  puppy,
+  stranger,
+}
+
+/// The goofs that fight, in the order bots are handed out.
+const List<Kind> kGoofs = [
+  Kind.snooty,
+  Kind.moustache,
+  Kind.clown,
+  Kind.robot,
+  Kind.baby,
+];
 
 extension KindInfo on Kind {
-  bool get stranger =>
-      this == Kind.granny || this == Kind.waiter || this == Kind.puppy;
+  /// Guests wander about and don't throw pies.
+  bool get bystander =>
+      this == Kind.granny ||
+      this == Kind.waiter ||
+      this == Kind.puppy ||
+      this == Kind.stranger;
+
+  /// Guests you must NOT splat. (The waiter is fair game!)
+  bool get protected => bystander && this != Kind.waiter;
 
   String get title => switch (this) {
     Kind.chef => 'You (the Chef)',
@@ -26,6 +53,7 @@ extension KindInfo on Kind {
     Kind.granny => 'Granny',
     Kind.waiter => 'The Waiter',
     Kind.puppy => 'Biscuit the Puppy',
+    Kind.stranger => 'The Stranger',
   };
 
   String get short => switch (this) {
@@ -38,6 +66,7 @@ extension KindInfo on Kind {
     Kind.granny => 'Granny',
     Kind.waiter => 'Waiter',
     Kind.puppy => 'Biscuit',
+    Kind.stranger => 'Stranger',
   };
 
   /// How tall they are compared with a grown-up.
@@ -69,8 +98,9 @@ extension KindInfo on Kind {
     Kind.robot => ['ERROR: PIE IN FACE.', 'SYSTEM... STICKY.', 'REBOOTING DIGNITY...'],
     Kind.baby => ['Waaah! ...yum!', 'Again! AGAIN!', 'BLEURGH!'],
     Kind.granny => ['YOUNG MAN!!', 'I am telling your MUM!', 'Back in my day pies were for EATING!'],
-    Kind.waiter => ['My CAKE!', 'I am just the waiter!', 'That is NOT on the menu!'],
+    Kind.waiter => ['My CAKE!', 'I am just the waiter!', 'That is NOT on the menu!', 'I quit!'],
     Kind.puppy => ['*licks it all up*', 'Woof?!', '*happy wiggle*'],
+    Kind.stranger => ['You have made a powerful enemy.', 'My disguise is RUINED!', 'Hmph. Rude.', 'I was never here...'],
   };
 
   /// Things strangers say while they wander about.
@@ -78,6 +108,7 @@ extension KindInfo on Kind {
     Kind.granny => ['Lovely party!', 'Who wants a biscuit?', "I'm knitting a jumper!", 'Ooh, cake!'],
     Kind.waiter => ['Cake, anyone?', 'Mind the cake please!', 'Excuse me, coming through!'],
     Kind.puppy => ['Woof!', '*wags tail*', 'Is it walkies?', '*sniff sniff*'],
+    Kind.stranger => ['...', 'Nothing to see here.', 'I am a totally normal guest.', 'Have we met?', '*mysterious whistling*'],
     _ => const [],
   };
 }
@@ -125,6 +156,7 @@ void addGuy(
     Kind.granny => (const Color(0xFFE995B5), const Color(0xFF9E9E9E), const Color(0xFFFFDCC7)),
     Kind.waiter => (const Color(0xFF212121), const Color(0xFF212121), _skin),
     Kind.puppy => (Colors.brown, Colors.brown, Colors.brown),
+    Kind.stranger => (const Color(0xFFC8A165), const Color(0xFF37474F), _skin),
   };
 
   s.group(() {
@@ -161,6 +193,11 @@ void addGuy(
         decal(at(0.171, -0.12, 1.25), 0.05, 0.05, const Color(0xFFE53935));
         decal(at(0.171, 0.1, 1.05), 0.05, 0.05, const Color(0xFF1E88E5));
         decal(at(0.171, -0.05, 0.92), 0.05, 0.05, const Color(0xFF43A047));
+      case Kind.stranger:
+        // Trench coat: long, with the collar turned up.
+        b(at(0, 0, 0.72), 0.18, 0.31, 0.2, shirt);
+        decal(at(0.19, 0, 1.0), 0.015, 0.4, const Color(0xFF8D6E43));
+        b(at(-0.02, 0, 1.47), 0.14, 0.27, 0.06, shirt);
       case Kind.granny:
         for (var i = -2; i <= 2; i++) {
           decal(at(0.171, i * 0.06, 1.38 - i.abs() * 0.025), 0.022, 0.022, Colors.white);
@@ -268,6 +305,12 @@ void addGuy(
         }
       case Kind.waiter:
         b(at(-0.02, 0, hz + head + 0.02), head + 0.01, head + 0.01, 0.04, kInk3);
+      case Kind.stranger:
+        // Sunglasses and a big hat pulled down low.
+        decal(at(front + 0.03, 0, hz + 0.05), 0.2, 0.06, kInk3);
+        b(at(0, 0, hz + head + 0.02), 0.4, 0.4, 0.025, const Color(0xFF5D4037));
+        b(at(0, 0, hz + head + 0.15), 0.24, 0.24, 0.12, const Color(0xFF5D4037));
+        b(at(0, 0, hz + head + 0.06), 0.245, 0.245, 0.03, kInk3);
       case Kind.puppy:
         break;
     }

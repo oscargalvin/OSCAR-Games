@@ -28,7 +28,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
 
   void _play() {
     Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const PieSplatGameScreen()))
+        .push(MaterialPageRoute(builder: (_) => const PieSplatSetupScreen()))
         .then((_) {
           if (mounted) setState(() {});
         });
@@ -104,9 +104,10 @@ class _PieSplatScreenState extends State<PieSplatScreen>
                 _rule('🕹', 'Drag on the left side to run about. On a computer use WASD or the arrow keys.'),
                 _rule('🥧', 'Press THROW (or Space) to lob a pie. It aims at the show-off you are facing.'),
                 _rule('💨', 'Press DODGE (or Shift) to dash out of the way of a pie.'),
-                _rule('👵', 'Splat Granny, the Waiter or Biscuit the puppy and you lose 15 points!'),
+                _rule('🕵', "Don't splat Granny, Biscuit the puppy or the Stranger: you lose 15 points! The Waiter is fair game (5 points)."),
+                _rule('🎮', 'Pick Comedy or Survival, Easy, Normal or Hard, and play 2 to 4 players or 2 to 5 teams.'),
                 _rule('⭐', 'Grab the golden pie for TRIPLE PIES. Watch out for whoopee cushions!'),
-                _rule('👑', 'Most points after 90 seconds wins the party.'),
+                _rule('👑', 'Comedy: most points after 90 seconds wins. Survival: 3 splats and you are out, last one standing wins.'),
               ],
             ),
             const SizedBox(height: 14),
@@ -156,7 +157,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
   );
 
   Widget _portrait(Kind g) {
-    final danger = g.stranger;
+    final danger = g.protected;
     return SizedBox(
       width: 92,
       child: Column(
@@ -184,7 +185,13 @@ class _PieSplatScreenState extends State<PieSplatScreen>
             style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
           ),
           Text(
-            danger ? "DON'T splat!" : g == Kind.chef ? "That's you!" : 'Splat!',
+            danger
+                ? "DON'T splat!"
+                : g == Kind.chef
+                    ? "That's you!"
+                    : g == Kind.waiter
+                        ? 'Splat for 5 pts'
+                        : 'Splat!',
             style: TextStyle(
               color: danger ? const Color(0xFFFF8A80) : const Color(0xFFB9F6CA),
               fontSize: 11,
@@ -249,4 +256,154 @@ class _HeroPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _HeroPainter old) => old.t != t;
+}
+
+/// Pick how to play: mode, difficulty, and how many people / teams.
+class PieSplatSetupScreen extends StatefulWidget {
+  const PieSplatSetupScreen({super.key});
+
+  @override
+  State<PieSplatSetupScreen> createState() => _PieSplatSetupScreenState();
+}
+
+class _PieSplatSetupScreenState extends State<PieSplatSetupScreen> {
+  // Remembered while the app is open.
+  static PieMode _mode = PieMode.comedy;
+  static int _difficulty = 1;
+  static int _choice = 2; // index into _sizes
+
+  static const _sizes = [
+    (2, 0, '2 players', 'You vs 1'),
+    (3, 0, '3 players', 'You vs 2'),
+    (4, 0, '4 players', 'You vs 3'),
+    (0, 2, '2 teams', '6 v 6 (12 people)'),
+    (0, 3, '3 teams', '4 v 4 v 4 (12 people)'),
+    (0, 4, '4 teams', '3 each (12 people)'),
+    (0, 5, '5 teams', '3 each (15 people)'),
+  ];
+
+  void _start() {
+    final (players, teams, _, _) = _sizes[_choice];
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PieSplatGameScreen(
+          setup: PieSetup(
+            mode: _mode,
+            difficulty: _difficulty,
+            players: players == 0 ? 4 : players,
+            teams: teams,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(String title, String sub, bool on, VoidCallback tap, {Key? key, double width = 150}) {
+    return GestureDetector(
+      key: key,
+      onTap: () => setState(tap),
+      child: Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: on ? const Color(0xFFFFE082) : Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: on ? kInk3 : Colors.white24, width: on ? 3 : 1.5),
+        ),
+        child: Column(
+          children: [
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: on ? kInk3 : Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+            ),
+            if (sub.isNotEmpty)
+              Text(
+                sub,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: on ? kInk3 : Colors.white70, fontSize: 12),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _heading(String t) => Padding(
+    padding: const EdgeInsets.only(top: 18, bottom: 8),
+    child: Text(t, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return GameScaffold(
+      title: 'Set up the party',
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 56, 16, 24),
+        child: Column(
+          children: [
+            _heading('Game mode'),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                _chip('😂 Comedy', 'Most points in 90s wins', _mode == PieMode.comedy,
+                    () => _mode = PieMode.comedy, key: const Key('pie_mode_comedy')),
+                _chip('💀 Survival', '3 splats and you are out', _mode == PieMode.survival,
+                    () => _mode = PieMode.survival, key: const Key('pie_mode_survival')),
+              ],
+            ),
+            _heading('How hard?'),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                for (final (i, name) in const [(0, 'Easy'), (1, 'Normal'), (2, 'Hard')])
+                  _chip(name, '', _difficulty == i, () => _difficulty = i, width: 96),
+              ],
+            ),
+            _heading('Who is playing?'),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                for (var i = 0; i < _sizes.length; i++)
+                  _chip(_sizes[i].$3, _sizes[i].$4, _choice == i, () => _choice = i,
+                      key: Key('pie_size_$i')),
+              ],
+            ),
+            const SizedBox(height: 22),
+            GestureDetector(
+              key: const Key('pie_start'),
+              onTap: _start,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF4081),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: kInk3, width: 3),
+                  boxShadow: const [BoxShadow(color: kInk3, offset: Offset(0, 5))],
+                ),
+                child: const Text(
+                  'START THE PARTY!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Online multiplayer is coming next!',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white60, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
