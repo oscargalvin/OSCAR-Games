@@ -26,6 +26,8 @@ import 'package:oscar_games/games/target_shooter/shop_screen.dart';
 import 'package:oscar_games/games/target_shooter/target_game_screen.dart';
 import 'package:oscar_games/games/target_shooter/world_select_screen.dart';
 import 'package:oscar_games/games/tic_tac_toe/tic_tac_toe_screen.dart';
+import 'package:oscar_games/games/sky_tower/sky_tower_game.dart';
+import 'package:oscar_games/games/sky_tower/sky_tower_screen.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_data.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_game.dart';
 import 'package:oscar_games/games/zombie_attack/zombie_screen.dart';
@@ -92,6 +94,8 @@ final _screens = <String, Widget Function()>{
   'zombie_graveyard': () =>
       const ZombieGameScreen(map: ZombieMap.graveyard, level: 2),
   'zombie_snow': () => const ZombieGameScreen(map: ZombieMap.snow),
+  'sky_tower': () => const SkyTowerScreen(),
+  'sky_tower_play': () => const SkyTowerGameScreen(),
   'board_game': () => const BoardGameScreen(),
   'boat_fishing': () => const BoatFishingScreen(),
   'tic_tac_toe': () => const TicTacToeScreen(),
