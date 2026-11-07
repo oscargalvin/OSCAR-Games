@@ -123,6 +123,9 @@ class Guy {
   double throwCd = 1.5;
   int score = 0, splats = 0, oops = 0;
   int triple = 0;
+
+  /// Fling Pie power: pies coming at you get flung straight back.
+  double fling = 0;
   int team = 0;
   int lives = 3;
   double zoneT = 0;
@@ -150,7 +153,8 @@ class Guy {
 class _Pie {
   _Pie(this.x, this.y, this.z, this.vx, this.vy, this.vz, this.by);
   double x, y, z, vx, vy, vz;
-  final Guy by;
+  Guy by;
+  int flings = 0;
   double spin = 0;
   bool dodgeChecked = false;
 }
@@ -225,6 +229,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
   final List<_Cushion> _cushions = [];
   (double, double)? _golden; // the triple-pie pick-up
   double _goldenIn = 10;
+  (double, double)? _flingPie; // the Fling Pie pick-up
+  double _flingIn = 16;
 
   PieSetup get setup => widget.setup;
   bool get survival => setup.mode == PieMode.survival;
@@ -369,6 +375,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     _blobs.clear();
     _golden = null;
     _goldenIn = 10;
+    _flingPie = null;
+    _flingIn = 16;
     _cakes.clear();
     _cakeIn = 1;
     hotHolder = null;
@@ -469,12 +477,13 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         [
           _r(g.x), _r(g.y), _r(g.angle), _r(g.walk), _r(g.splatAge), _r(g.dizzy),
           _r(g.dashT), _r(g.throwT), g.score, g.lives, g.out ? 1 : 0, g.triple,
-          g.lineT > 0 ? (g.line ?? '') : '', _r(g.lineT), g.cakes, g.splats, g.oops, _r(g.outAt),
+          g.lineT > 0 ? (g.line ?? '') : '', _r(g.lineT), g.cakes, g.splats, g.oops, _r(g.outAt), _r(g.fling),
         ],
     ],
     'p': [for (final p in _pies) [_r(p.x), _r(p.y), _r(p.z), _r(p.spin)]],
     'cu': [for (final c in _cushions) [_r(c.x), _r(c.y), _r(c.away)]],
     'go': _golden == null ? null : [_r(_golden!.$1), _r(_golden!.$2)],
+    'fp': _flingPie == null ? null : [_r(_flingPie!.$1), _r(_flingPie!.$2)],
     'ck': [for (final c in _cakes) [_r(c.$1), _r(c.$2)]],
     'hp': hotHolder == null ? -1 : guys.indexOf(hotHolder!),
     'ht': _r(hotT),
@@ -505,7 +514,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
         ..cakes = (v[14] as num).toInt()
         ..splats = (v[15] as num).toInt()
         ..oops = (v[16] as num).toInt()
-        ..outAt = _d(v[17]);
+        ..outAt = _d(v[17])
+        ..fling = v.length > 18 ? _d(v[18]) : 0;
       final line = v[12] as String;
       if (line.isNotEmpty) {
         g
@@ -540,6 +550,8 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     hotT = _d(m['ht']);
     final go = m['go'];
     _golden = go is List ? (_d(go[0]), _d(go[1])) : null;
+    final fp = m['fp'];
+    _flingPie = fp is List ? (_d(fp[0]), _d(fp[1])) : null;
     _cakes
       ..clear()
       ..addAll([for (final c in (m['ck'] as List? ?? const [])) (_d(c[0]), _d(c[1]))]);
@@ -635,6 +647,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     }
     _updatePies(dt);
     _updateStuffOnGrass(dt);
+    _updateFlingPie(dt);
 
     if (_timeLeft <= 0) _finish();
     if (kingMode) _updateKing(dt);
@@ -865,6 +878,7 @@ class PieSplatGameState extends State<PieSplatGameScreen>
   void _move(Guy g, double dt) {
     g.dizzy = max(0, g.dizzy - dt);
     g.safe = max(0, g.safe - dt);
+    g.fling = max(0, g.fling - dt);
     var vx = g.vx, vy = g.vy;
     if (g.dizzy > 0) {
       vx = 0;
@@ -1008,6 +1022,66 @@ class PieSplatGameState extends State<PieSplatGameScreen>
     me.dashCd = 0.9;
   }
 
+  /// [g] has the Fling Pie: send [p] whizzing straight back at whoever threw it.
+  void _flingBack(_Pie p, Guy g) {
+    final back = p.by;
+    final dx = back.x - p.x, dy = back.y - p.y;
+    final d = max(0.5, sqrt(dx * dx + dy * dy));
+    final t = max(0.22, d / 15);
+    p
+      ..x = g.x + dx / d * (g.radius + 0.3)
+      ..y = g.y + dy / d * (g.radius + 0.3)
+      ..vx = dx / t
+      ..vy = dy / t
+      ..vz = (back.kind.height * 0.75 - p.z) / t + 0.5 * _gravity * t
+      ..by = g
+      ..flings += 1
+      ..dodgeChecked = false;
+    g.throwT = 1;
+    g.say(['Nope! Back at ya!', 'FLING!', 'Return to sender!', 'No thank you!'][_rnd.nextInt(4)], 1.2);
+    final at = V3(g.x, g.y, g.kind.height + 0.4);
+    if (g.player || back.player) {
+      _addFloat(_Float(g.player ? 'FLUNG IT BACK!' : 'FLUNG BACK AT YOU!', at, const Color(0xFF69F0AE),
+          size: 24, life: 1.2));
+      SoundService.instance.play(GameSound.bowTwang);
+    } else {
+      _addFloat(_Float('FLING!', at, const Color(0xFF69F0AE), size: 15));
+    }
+  }
+
+  void _updateFlingPie(double dt) {
+    if (_flingPie == null) {
+      _flingIn -= dt;
+      if (_flingIn <= 0) {
+        var fx = 0.0, fy = 0.0;
+        do {
+          fx = (_rnd.nextDouble() * 2 - 1) * (halfW - 2);
+          fy = (_rnd.nextDouble() * 2 - 1) * (halfH - 2);
+        } while (tables.any((t) => t.inflate(1).contains(Offset(fx, fy))));
+        _flingPie = (fx, fy);
+      }
+      return;
+    }
+    final (fx, fy) = _flingPie!;
+    for (final g in fighters) {
+      if (g.out) continue;
+      if (pow(g.x - fx, 2) + pow(g.y - fy, 2) < 0.6) {
+        g.fling = 10;
+        _flingPie = null;
+        _flingIn = 18;
+        _addFloat(_Float(
+          g.player ? 'FLING PIE! Pies bounce back!' : '${g.kind.short} got the FLING PIE!',
+          V3(g.x, g.y, 2.4),
+          const Color(0xFF69F0AE),
+          size: g.player ? 24 : 16,
+          life: 1.6,
+        ));
+        if (g.player) SoundService.instance.play(GameSound.match);
+        break;
+      }
+    }
+  }
+
   void _updatePies(double dt) {
     final gone = <_Pie>{};
     for (final p in _pies) {
@@ -1042,6 +1116,10 @@ class PieSplatGameState extends State<PieSplatGameScreen>
           hit = g;
           break;
         }
+      }
+      if (hit != null && hit.fling > 0 && !hit.bystander && p.flings < 4) {
+        _flingBack(p, hit);
+        continue;
       }
       if (hit != null) {
         _splat(hit, p.by);
@@ -1889,6 +1967,20 @@ class _PartyPainter extends CustomPainter {
       final (gx, gy) = g._golden!;
       addPie(s, V3(gx, gy, 0.6 + sin(g.clock * 3) * 0.15), g.clock * 2, mega: true);
     }
+    if (g._flingPie != null) {
+      // The Fling Pie: a pie sitting on a big green bouncy spring.
+      final (fx, fy) = g._flingPie!;
+      final bounce = (sin(g.clock * 6)).abs() * 0.25;
+      s.group(() {
+        for (var i = 0; i < 4; i++) {
+          final a = g.clock * 3 + i * pi / 2;
+          final w = V3(cos(a), sin(a), 0);
+          s.box(V3(fx, fy, 0.1 + i * (0.12 + bounce * 0.3)), w, w.cross(kUp).unit, kUp, 0.18, 0.18, 0.03,
+              const Color(0xFF00E676));
+        }
+      });
+      addPie(s, V3(fx, fy, 0.7 + bounce), g.clock * 2);
+    }
     if (g.kingMode) {
       // The golden circle, and a giant pie floating above it.
       const R = PieSplatGameState.kingR;
@@ -1916,6 +2008,17 @@ class _PartyPainter extends CustomPainter {
     }
     // Everybody at the party.
     for (final p in g.alive) {
+      if (p.fling > 0 && (p.fling > 2 || (g.clock * 8).floor().isEven)) {
+        // Green sparkles whizzing round anyone with the Fling Pie.
+        s.group(() {
+          for (var i = 0; i < 5; i++) {
+            final a = g.clock * 5 + i * pi * 2 / 5;
+            final r = p.radius + 0.25;
+            s.box(V3(p.x + cos(a) * r, p.y + sin(a) * r, 0.5 + i * 0.25), ax, ay, kUp, 0.06, 0.06, 0.06,
+                const Color(0xFF69F0AE));
+          }
+        });
+      }
       if (p.cakes > 0) {
         // A wobbly stack of pies on their head.
         final top = p.kind.height + 0.15;
@@ -1963,6 +2066,10 @@ class _PartyPainter extends CustomPainter {
         ..strokeWidth = 2);
       if (g.me.triple > 0) {
         _text(c, 'x3 PIES', top - Offset(0, 22 - bob), 13, const Color(0xFFFFD54F));
+      }
+      if (g.me.fling > 0) {
+        _text(c, 'FLING ${g.me.fling.ceil()}', top - Offset(0, (g.me.triple > 0 ? 38 : 22) - bob), 13,
+            const Color(0xFF69F0AE));
       }
     }
     for (final p in g.alive) {

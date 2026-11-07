@@ -131,6 +131,7 @@ class _PieSplatScreenState extends State<PieSplatScreen>
                 _rule('👨‍🦲', "Dad is bald. Pie him right on his shiny head for 10 points!"),
                 _rule('🎮', 'Pick Comedy or Survival, Easy, Normal or Hard, and play 2 to 4 players or 2 to 5 teams.'),
                 _rule('⭐', 'Grab the golden pie for TRIPLE PIES. Watch out for whoopee cushions!'),
+                _rule('🌀', 'Grab the FLING PIE on the green spring: for 10 seconds, pies thrown at you fling straight back at the thrower!'),
                 _rule('👑', 'Comedy: most points after 90 seconds wins. Survival: 3 splats and you are out, last one standing wins.'),
               ],
             ),
