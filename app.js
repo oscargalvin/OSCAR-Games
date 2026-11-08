@@ -928,7 +928,27 @@ function makeMixer(screen, cam, faceImg) {
     v.play().catch(() => {});
   }
   let mainStream = screen, sized = false;
-  const m = { size: 0.26, x: 0.82, y: 0.74 };
+  const m = { size: 0.26, x: 0.82, y: 0.74, face: { x: 0.5, y: 0.42, s: 0.6 } };
+  // Follow your face (on browsers that can find faces), so the bubble stays on you as you move.
+  let faceTimer = null;
+  if ('FaceDetector' in window) {
+    try {
+      const fd = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+      let busy = false;
+      faceTimer = setInterval(async () => {
+        if (!m.sameCam || busy || !sv.videoWidth) return;
+        busy = true;
+        try {
+          const [face] = await fd.detect(sv);
+          if (face) {
+            const b = face.boundingBox, vw = sv.videoWidth, vh = sv.videoHeight;
+            m.faceTarget = { x: (b.x + b.width / 2) / vw, y: (b.y + b.height / 2) / vh, s: Math.min(0.9, Math.max(0.25, (b.width * 1.9) / Math.min(vw, vh))) };
+          }
+        } catch { clearInterval(faceTimer); }
+        busy = false;
+      }, 400);
+    } catch {}
+  }
   const set = screen.getVideoTracks()[0].getSettings();
   canvas.width = set.width || 1280; canvas.height = set.height || 720;
   function draw() {
@@ -942,7 +962,23 @@ function makeMixer(screen, cam, faceImg) {
       ctx.save(); ctx.translate(W / 2, H / 2); if (m.mirrorMain) ctx.scale(-1, 1);
       ctx.drawImage(sv, -w / 2, -h / 2, w, h); ctx.restore();
     }
-    const fsrc = m.hideBubble ? null : cam && cv.videoWidth ? cv : faceImg;
+    if (m.sameCam && !m.hideBubble && sv.videoWidth) {
+      // Bubble = live zoom on your face, from the same camera.
+      const vw = sv.videoWidth, vh = sv.videoHeight, f = m.face;
+      if (m.faceTarget) for (const k of ['x', 'y', 's']) f[k] += (m.faceTarget[k] - f[k]) * 0.15;
+      const side = Math.min(vw, vh) * f.s;
+      const sx = Math.min(vw - side, Math.max(0, f.x * vw - side / 2)), sy = Math.min(vh - side, Math.max(0, f.y * vh - side / 2));
+      const r = Math.min(W, H) * m.size / 2;
+      const cx = Math.min(W - r - 4, Math.max(r + 4, m.x * W)), cy = Math.min(H - r - 4, Math.max(r + 4, m.y * H));
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
+      ctx.translate(cx, cy); if (m.mirrorMain) ctx.scale(-1, 1);
+      ctx.drawImage(sv, sx, sy, side, side, -r, -r, 2 * r, 2 * r);
+      ctx.restore();
+      ctx.lineWidth = Math.max(3, r * 0.06); ctx.strokeStyle = '#fff';
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    }
+    const fsrc = m.hideBubble || m.sameCam ? null : cam && cv.videoWidth ? cv : faceImg;
     if (fsrc) {
       const fw = fsrc.videoWidth || fsrc.width, fh = fsrc.videoHeight || fsrc.height;
       const r = Math.min(W, H) * m.size / 2;
@@ -998,6 +1034,7 @@ function makeMixer(screen, cam, faceImg) {
   };
   m.stop = () => {
     worker.terminate();
+    clearInterval(faceTimer);
     [screen, cam, mainStream].forEach((st) => st && st.getTracks().forEach((t) => t.stop()));
     if (ac) ac.close().catch(() => {});
     sv.srcObject = cv.srcObject = null;
@@ -1020,10 +1057,10 @@ async function showRecord() {
   const bubbleBtn = $('bubble-toggle');
   // Buttons you can use any time, even in the middle of a video.
   function paintLiveControls() {
-    bubbleBtn.hidden = !mixer || mixer.single;
+    bubbleBtn.hidden = !mixer;
     if (mixer) bubbleBtn.textContent = mixer.hideBubble ? '😀 Show face bubble' : '🙈 Hide face bubble';
     if (mixer && mixer.twoCams) flipBtn.textContent = '🔄 Swap big and small';
-    else if (mixer && mixer.single) flipBtn.textContent = mixer.facing === 'user' ? '🔄 Switch to the other way' : '🔄 Switch to your face';
+    else if (mixer && mixer.single) flipBtn.textContent = '🔄 Flip camera';
   }
   bubbleBtn.onclick = () => { if (!mixer) return; mixer.hideBubble = !mixer.hideBubble; paintLiveControls(); };
   const bubble = { x: 0.82, y: 0.74 }; // where the face bubble sits (0..1 across and down)
@@ -1068,10 +1105,17 @@ async function showRecord() {
     if (mixer && mixer.twoCams) { mixer.swap(); return; }
     if (mixer && mixer.single) {
       const next = mixer.facing === 'user' ? 'environment' : 'user';
+      let video = { facingMode: next };
+      if (!isPhone()) {
+        const cams = [...camSel.options].map((o) => o.value);
+        if (cams.length < 2) { toast('Your computer only has one camera, so there is nothing to flip to.'); return; }
+        camSel.value = cams[(cams.indexOf(camSel.value) + 1) % cams.length];
+        video = { deviceId: { exact: camSel.value } };
+      }
       flipBtn.disabled = true;
       try {
         mixer.setMain(new MediaStream()); // let go of this camera first
-        const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: next } });
+        const st = await navigator.mediaDevices.getUserMedia({ video });
         mixer.setMain(st);
         mixer.facing = next; mixer.mirrorMain = next === 'user';
         paintLiveControls();
@@ -1211,18 +1255,18 @@ async function showRecord() {
             mixer = makeMixer(two.main, two.face);
             mixer.mirror = true;
             mixer.twoCams = true;
-          } else if (!isPhone() && canScreen) {
-            // A computer with one camera: the other way is your screen.
-            throw Object.assign(new Error('one camera'), { name: 'ToScreen' });
           } else {
-            // This device can only use one camera at a time. Keep everything live:
-            // start on your face, and 🔄 Flip switches live to the other way (even while recording).
+            // One camera (or one at a time): the background is your camera, and the bubble
+            // is a live zoom on your face from the same camera. Works on every device.
+            const video = camSel.value && !isPhone() ? { deviceId: { exact: camSel.value } } : { facingMode: 'user' };
             let main;
-            try { main = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } }, audio }); }
-            catch { main = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }); }
+            try { main = await navigator.mediaDevices.getUserMedia({ video: { ...video, width: { ideal: 1280 }, height: { ideal: 720 } }, audio }); }
+            catch (err) {
+              if (err.name === 'NotAllowedError' || err.name === 'SecurityError') throw err;
+              main = await navigator.mediaDevices.getUserMedia({ video: true });
+            }
             mixer = makeMixer(main, null);
-            mixer.single = true; mixer.facing = 'user'; mixer.mirrorMain = true;
-            singleCamNote = true;
+            mixer.single = true; mixer.sameCam = true; mixer.facing = 'user'; mixer.mirrorMain = true;
           }
           mixer.size = +bubbleSize.value;
           Object.defineProperty(mixer, 'x', { get: () => bubble.x });
@@ -1288,11 +1332,7 @@ async function showRecord() {
       preview.srcObject = stream;
       hideMsg();
       paintLiveControls();
-      if (singleCamNote) {
-        singleCamNote = false;
-        bubbleWrap.hidden = bubbleHint.hidden = true;
-        toast("This phone can only use one camera at a time. Everything stays live: press 🔄 Switch any time, even while recording, to show the other way.");
-      }
+
       listDevices();
       return true;
     })();
