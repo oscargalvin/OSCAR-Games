@@ -187,7 +187,8 @@ select {
 .be-emojis button.sel, .be-colors button.sel { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
 .be-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 560px) {
-  .badge-editor { grid-template-columns: 1fr; }
+  .badge-editor { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .avatar-xl { width: 96px; height: 96px; font-size: 42px; }
 }
 
 /* ---------- bottom bar ---------- */
@@ -323,3 +324,25 @@ select {
 }
 .paused-cover strong { font-size: 24px; }
 .paused-cover span { color: var(--muted); }
+
+/* ---------- badge drawing ---------- */
+.draw-wrap { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; width: 100%; min-width: 0; }
+.be-group { min-width: 0; max-width: 100%; }
+#be-drawing-group { justify-items: stretch; }
+.draw-canvas {
+  width: 240px; max-width: 100%; height: auto; aspect-ratio: 1; border-radius: 50%; margin-inline: auto;
+  background: white; cursor: crosshair; touch-action: none; flex: none;
+  box-shadow: 0 0 0 3px var(--panel-2);
+}
+.draw-tools { display: grid; gap: 10px; min-width: 200px; flex: 1; }
+.draw-colors { display: flex; flex-wrap: wrap; gap: 6px; max-width: 232px; }
+.draw-colors button { width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: 0 0 0 1px rgba(255,255,255,0.2); }
+.draw-colors button.sel { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
+.draw-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.draw-size, .draw-tool {
+  height: 38px; min-width: 38px; padding: 0 10px; border-radius: 10px; border: 2px solid transparent;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  display: inline-grid; place-items: center;
+}
+.draw-size i { display: block; border-radius: 50%; background: var(--text); }
+.draw-size.sel, .draw-tool[aria-pressed="true"] { border-color: var(--text); }

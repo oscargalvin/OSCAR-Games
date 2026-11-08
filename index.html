@@ -122,6 +122,7 @@
               <button class="be-tab" data-type="letter">Letter</button>
               <button class="be-tab" data-type="emoji">Emoji</button>
               <button class="be-tab" data-type="photo">Photo</button>
+              <button class="be-tab" data-type="drawing">✏️ Draw</button>
             </div>
           </div>
           <div class="be-group" id="be-letter-group">
@@ -139,6 +140,27 @@
               <input id="be-photo" type="file" accept="image/*" hidden>
             </label>
             <small class="muted">On a phone you can take a new photo too.</small>
+          </div>
+          <div class="be-group" id="be-drawing-group" hidden>
+            <h3>Draw your badge</h3>
+            <div class="draw-wrap">
+              <canvas id="draw-canvas" class="draw-canvas" width="384" height="384" aria-label="Drawing area for your badge"></canvas>
+              <div class="draw-tools">
+                <div id="draw-colors" class="draw-colors" role="group" aria-label="Pen colour"></div>
+                <div class="draw-row" role="group" aria-label="Pen size">
+                  <button class="draw-size" data-size="6" aria-label="Thin pen"><i style="width:6px;height:6px"></i></button>
+                  <button class="draw-size sel" data-size="14" aria-label="Medium pen"><i style="width:12px;height:12px"></i></button>
+                  <button class="draw-size" data-size="30" aria-label="Thick pen"><i style="width:20px;height:20px"></i></button>
+                  <button id="draw-eraser" class="draw-tool" aria-pressed="false" title="Eraser">🧽 Eraser</button>
+                </div>
+                <div class="draw-row">
+                  <button id="draw-fill" class="draw-tool" aria-pressed="false" title="Tap an area to colour it in">🪣 Fill</button>
+                  <button id="draw-undo" class="draw-tool">↶ Undo</button>
+                  <button id="draw-clear" class="draw-tool">🗑 Clear</button>
+                </div>
+              </div>
+            </div>
+            <small class="muted">The circle shows what will be on your badge.</small>
           </div>
           <div class="be-group" id="be-color-group">
             <h3>Background colour</h3>

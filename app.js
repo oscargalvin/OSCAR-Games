@@ -46,10 +46,11 @@ function paintAvatar(el, name = channelName(), badge = getBadge()) {
   el.classList.remove('photo', 'emoji');
   el.style.backgroundImage = '';
   el.style.setProperty('--avatar', badge.color || defaultColor(name));
-  if (type === 'photo' && badge.photo) {
+  const img = type === 'photo' ? badge.photo : type === 'drawing' ? badge.drawing : null;
+  if (img) {
     el.textContent = '';
     el.classList.add('photo');
-    el.style.backgroundImage = `url("${badge.photo}")`;
+    el.style.backgroundImage = `url("${img}")`;
   } else if (type === 'emoji' && badge.emoji) {
     el.textContent = badge.emoji;
     el.classList.add('emoji');
@@ -241,7 +242,8 @@ function setupBadgeEditor(onSaved) {
   const $ = (id) => document.getElementById(id);
   const editor = $('badge-editor'), preview = $('be-avatar');
   let draft = {};
-  const groups = { letter: $('be-letter-group'), emoji: $('be-emoji-group'), photo: $('be-photo-group') };
+  const groups = { letter: $('be-letter-group'), emoji: $('be-emoji-group'), photo: $('be-photo-group'), drawing: $('be-drawing-group') };
+  const pad = setupDrawingPad((dataUrl) => { draft.drawing = dataUrl; draft.type = 'drawing'; paintAvatar(preview, channelName(), draft); });
 
   $('be-emojis').innerHTML = BADGE_EMOJIS.map((e) => `<button type="button" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('');
   $('be-colors').innerHTML = AVATAR_COLORS.map((c) => `<button type="button" data-color="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('');
@@ -250,7 +252,7 @@ function setupBadgeEditor(onSaved) {
     const type = draft.type || 'letter';
     document.querySelectorAll('.be-tab').forEach((t) => t.classList.toggle('active', t.dataset.type === type));
     for (const k in groups) groups[k].hidden = k !== type;
-    $('be-color-group').hidden = type === 'photo';
+    $('be-color-group').hidden = type === 'photo' || type === 'drawing';
     const color = draft.color || defaultColor(channelName());
     document.querySelectorAll('#be-emojis button').forEach((b) => b.classList.toggle('sel', b.dataset.emoji === draft.emoji));
     document.querySelectorAll('#be-colors button').forEach((b) => b.classList.toggle('sel', b.dataset.color === color));
@@ -259,6 +261,7 @@ function setupBadgeEditor(onSaved) {
   function open() {
     draft = { ...getBadge() };
     $('be-letters').value = draft.letters || '';
+    if (draft.type === 'drawing') pad.load(draft.drawing);
     editor.hidden = false;
     update();
     editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -269,6 +272,7 @@ function setupBadgeEditor(onSaved) {
     draft.type = t.dataset.type;
     if (draft.type === 'emoji' && !draft.emoji) draft.emoji = BADGE_EMOJIS[0];
     if (draft.type === 'photo' && !draft.photo) $('be-photo').click();
+    if (draft.type === 'drawing') pad.load(draft.drawing);
     update();
   }));
   $('be-letters').oninput = (e) => { draft.letters = e.target.value.replace(/\s/g, '').slice(0, 2); update(); };
@@ -284,12 +288,138 @@ function setupBadgeEditor(onSaved) {
   $('be-cancel').onclick = () => { editor.hidden = true; };
   $('be-save').onclick = () => {
     if ((draft.type || 'letter') === 'photo' && !draft.photo) { toast('Choose a photo first'); return; }
+    if (draft.type === 'drawing') {
+      if (pad.isBlank()) { toast('Draw something first'); return; }
+      draft.drawing = pad.export();
+    }
     prefs.set('badge', JSON.stringify(draft));
     if (getBadge().type !== draft.type) { toast("Your browser couldn't save the badge"); return; }
     editor.hidden = true;
     refreshAvatars();
     onSaved();
     toast('Badge saved');
+  };
+}
+
+// ---------- drawing pad for the badge ----------
+const DRAW_COLORS = ['#111111', '#ffffff', '#e11d48', '#f97316', '#facc15', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#a16207', '#9ca3af'];
+function setupDrawingPad(onChange) {
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('draw-canvas'), ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  let color = DRAW_COLORS[2], size = 14, erasing = false, filling = false, drawing = false, last = null, history = [], blank = true;
+
+  $('draw-colors').innerHTML = DRAW_COLORS.map((c) => `<button type="button" data-c="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('');
+  const markColor = () => document.querySelectorAll('#draw-colors button').forEach((b) => b.classList.toggle('sel', b.dataset.c === color && !erasing));
+  function reset() {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, W);
+    history = []; blank = true;
+  }
+  const snapshot = () => { history.push(ctx.getImageData(0, 0, W, W)); if (history.length > 30) history.shift(); };
+  const changed = () => { blank = false; onChange(canvas.toDataURL('image/png')); };
+  const point = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (W / r.width), y: (e.clientY - r.top) * (W / r.height) };
+  };
+  function stroke(a, b) {
+    ctx.strokeStyle = erasing ? '#ffffff' : color;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = size * (W / 240);
+    ctx.lineCap = ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (a.x === b.x && a.y === b.y) { ctx.arc(a.x, a.y, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill(); }
+    else { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    snapshot();
+    if (filling) { const p = point(e); floodFill(p.x, p.y); changed(); return; }
+    drawing = true; last = point(e);
+    stroke(last, last);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drawing) return;
+    const p = point(e);
+    stroke(last, p); last = p;
+  });
+  const end = () => { if (drawing) { drawing = false; changed(); } };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+
+  $('draw-colors').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    color = b.dataset.c; erasing = false; $('draw-eraser').setAttribute('aria-pressed', 'false'); markColor();
+    if (!filling) canvas.style.cursor = 'crosshair';
+  };
+  document.querySelectorAll('.draw-size').forEach((b) => (b.onclick = () => {
+    size = +b.dataset.size;
+    document.querySelectorAll('.draw-size').forEach((x) => x.classList.toggle('sel', x === b));
+  }));
+  $('draw-eraser').onclick = () => {
+    erasing = !erasing; filling = false;
+    $('draw-eraser').setAttribute('aria-pressed', String(erasing)); $('draw-fill').setAttribute('aria-pressed', 'false');
+    markColor();
+  };
+  $('draw-fill').onclick = () => {
+    filling = !filling;
+    if (filling) { erasing = false; $('draw-eraser').setAttribute('aria-pressed', 'false'); }
+    $('draw-fill').setAttribute('aria-pressed', String(filling));
+    markColor();
+  };
+  // Bucket fill: colour in the area you tap.
+  function floodFill(x, y) {
+    x = Math.floor(x); y = Math.floor(y);
+    const img = ctx.getImageData(0, 0, W, W), px = img.data;
+    const at = (i) => [px[i], px[i + 1], px[i + 2]];
+    const start = at((y * W + x) * 4);
+    const n = parseInt(color.slice(1), 16), fill = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    const near = (c) => Math.abs(c[0] - start[0]) + Math.abs(c[1] - start[1]) + Math.abs(c[2] - start[2]) < 90;
+    if (Math.abs(fill[0] - start[0]) + Math.abs(fill[1] - start[1]) + Math.abs(fill[2] - start[2]) < 3) return;
+    const seen = new Uint8Array(W * W), stack = [y * W + x];
+    while (stack.length) {
+      const p = stack.pop();
+      if (seen[p]) continue;
+      seen[p] = 1;
+      const i = p * 4;
+      if (!near(at(i))) continue;
+      px[i] = fill[0]; px[i + 1] = fill[1]; px[i + 2] = fill[2]; px[i + 3] = 255;
+      const px_ = p % W;
+      if (px_ > 0) stack.push(p - 1);
+      if (px_ < W - 1) stack.push(p + 1);
+      if (p >= W) stack.push(p - W);
+      if (p < W * (W - 1)) stack.push(p + W);
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  $('draw-undo').onclick = () => {
+    const prev = history.pop();
+    if (!prev) return;
+    ctx.putImageData(prev, 0, 0);
+    if (!history.length) blank = true;
+    onChange(canvas.toDataURL('image/png'));
+  };
+  $('draw-clear').onclick = () => { snapshot(); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, W); blank = true; onChange(canvas.toDataURL('image/png')); };
+
+  reset();
+  markColor();
+  return {
+    load(dataUrl) {
+      reset();
+      if (!dataUrl) return;
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, 0, 0, W, W); blank = false; };
+      img.src = dataUrl;
+    },
+    isBlank: () => blank,
+    // A smaller copy for saving, so it fits in browser storage.
+    export() {
+      const out = document.createElement('canvas'); out.width = out.height = 192;
+      out.getContext('2d').drawImage(canvas, 0, 0, 192, 192);
+      return out.toDataURL('image/png');
+    },
   };
 }
 
