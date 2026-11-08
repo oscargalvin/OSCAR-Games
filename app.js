@@ -1258,12 +1258,24 @@ async function showRecord() {
       devices.filter((d) => d.kind === kind).forEach((d, i) => {
         const o = document.createElement('option');
         o.value = d.deviceId;
-        o.textContent = d.label || `${label} ${i + 1}`;
+        o.textContent = kind === 'videoinput' ? camName(d, i) : d.label || `${label} ${i + 1}`;
         if (d.deviceId === currentId) o.selected = true;
         sel.appendChild(o);
       });
       sel.hidden = sel.options.length < 2 || (kind === 'videoinput' && source === 'screen');
 
+    };
+    // Friendly camera names: "Front camera (your face)" / "Back camera (the other way)".
+    const seen = {};
+    const camName = (d, i) => {
+      const l = d.label || '';
+      let name;
+      if (/front|user|facetime|integrated|built-?in|selfie/i.test(l)) name = '🤳 Front camera (your face)';
+      else if (/back|rear|environment|world/i.test(l)) name = '🔄 Back camera (the other way)';
+      else if (!isPhone() && i === 0) name = '🤳 Front camera (your face)';
+      else name = '📷 ' + (l.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)/i, '') || 'Camera ' + (i + 1));
+      seen[name] = (seen[name] || 0) + 1;
+      return seen[name] > 1 ? `${name} ${seen[name]}` : name;
     };
     fill(camSel, 'videoinput', 'Camera');
     fill(micSel, 'audioinput', 'Microphone');
