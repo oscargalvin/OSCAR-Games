@@ -167,7 +167,7 @@ async function uploadVideo(blob, title, recorded) {
     createdAt: new Date().toISOString(),
     channelId: myChannelId(),
     channelName: channelName(),
-    badge: getBadge(),
+    badge: (({ photoSrc, photoPos, ...b }) => b)(getBadge()),
     blob,
   };
   await store.put(v);
@@ -329,15 +329,16 @@ async function showChannel() {
 
 // ---------- badge editor ----------
 // Shrink a photo to a small square so it fits in browser storage.
-function photoToBadge(file) {
+// Load a photo and shrink it (to 640px) so it can be kept in browser storage and re-adjusted later.
+function loadPhoto(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
-      const size = 192, c = document.createElement('canvas');
-      c.width = c.height = size;
-      const side = Math.min(img.width, img.height);
-      c.getContext('2d').drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+      const max = 640, k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
       resolve(c.toDataURL('image/jpeg', 0.85));
     };
@@ -345,12 +346,106 @@ function photoToBadge(file) {
     img.src = url;
   });
 }
+// Photo cropper: zoom in and drag to choose what shows in the round badge.
+function setupPhotoCrop(onChange) {
+  const canvas = document.getElementById('crop-canvas'), ctx = canvas.getContext('2d');
+  const zoomIn = document.getElementById('crop-zoom');
+  const W = canvas.width;
+  let img = null, zoom = 1, ox = 0, oy = 0;
+  const pointers = new Map();
+  let pinchStart = null;
+
+  function scale() { return Math.max(W / img.width, W / img.height) * zoom; }
+  function clamp() {
+    const s = scale(), halfW = (img.width * s - W) / 2, halfH = (img.height * s - W) / 2;
+    ox = Math.max(-halfW, Math.min(halfW, ox));
+    oy = Math.max(-halfH, Math.min(halfH, oy));
+  }
+  function draw(notify = true) {
+    if (!img) return;
+    clamp();
+    const s = scale(), w = img.width * s, h = img.height * s;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, W);
+    ctx.drawImage(img, (W - w) / 2 + ox, (W - h) / 2 + oy, w, h);
+    if (notify) {
+      clearTimeout(draw.t);
+      draw.t = setTimeout(() => onChange(exportCrop(), { zoom, x: ox / W, y: oy / W }), 60);
+    }
+  }
+  function exportCrop() {
+    const out = document.createElement('canvas'); out.width = out.height = 192;
+    out.getContext('2d').drawImage(canvas, 0, 0, 192, 192);
+    return out.toDataURL('image/jpeg', 0.88);
+  }
+  function setZoom(z) {
+    const old = zoom;
+    zoom = Math.max(1, Math.min(5, z));
+    ox *= zoom / old; oy *= zoom / old; // zoom around the middle
+    zoomIn.value = zoom;
+    draw();
+  }
+  const toCanvas = (dx) => dx * (W / canvas.getBoundingClientRect().width);
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom };
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!img || !pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2 && pinchStart) {
+      const [a, b] = [...pointers.values()];
+      setZoom(pinchStart.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinchStart.dist);
+    } else if (pointers.size === 1) {
+      ox += toCanvas(e.clientX - prev.x); oy += toCanvas(e.clientY - prev.y);
+      draw();
+    }
+  });
+  const up = (e) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinchStart = null; };
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('wheel', (e) => { if (!img) return; e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.1 : 0.9)); }, { passive: false });
+  zoomIn.addEventListener('input', () => setZoom(+zoomIn.value));
+
+  return {
+    // Show a photo in the cropper, at a saved zoom and position if there is one.
+    load(src, pos) {
+      return new Promise((resolve) => {
+        const i = new Image();
+        i.onload = () => {
+          img = i;
+          zoom = (pos && pos.zoom) || 1; ox = ((pos && pos.x) || 0) * W; oy = ((pos && pos.y) || 0) * W;
+          zoomIn.value = zoom;
+          draw(false);
+          resolve();
+        };
+        i.onerror = () => resolve();
+        i.src = src;
+      });
+    },
+    export: exportCrop,
+    position: () => ({ zoom, x: ox / W, y: oy / W }),
+    hasPhoto: () => !!img,
+  };
+}
+
 function setupBadgeEditor(onSaved) {
   const $ = (id) => document.getElementById(id);
   const editor = $('badge-editor'), preview = $('be-avatar');
   let draft = {};
   const groups = { letter: $('be-letter-group'), emoji: $('be-emoji-group'), photo: $('be-photo-group'), drawing: $('be-drawing-group') };
   const pad = setupDrawingPad((dataUrl) => { draft.drawing = dataUrl; draft.type = 'drawing'; paintAvatar(preview, channelName(), draft); });
+  const crop = setupPhotoCrop((dataUrl, pos) => { draft.photo = dataUrl; draft.photoPos = pos; draft.type = 'photo'; paintAvatar(preview, channelName(), draft); });
+  async function showCrop() {
+    const src = draft.photoSrc || draft.photo;
+    $('crop-area').hidden = !src;
+    if (src) await crop.load(src, draft.photoSrc ? draft.photoPos : null);
+  }
 
   $('be-emojis').innerHTML = BADGE_EMOJIS.map((e) => `<button type="button" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('');
   $('be-colors').innerHTML = AVATAR_COLORS.map((c) => `<button type="button" data-color="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('')
@@ -373,6 +468,7 @@ function setupBadgeEditor(onSaved) {
     draft = { ...getBadge() };
     $('be-letters').value = draft.letters || '';
     if (draft.type === 'drawing') pad.load(draft.drawing);
+    if (draft.type === 'photo') showCrop();
     editor.hidden = false;
     update();
     editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -382,7 +478,7 @@ function setupBadgeEditor(onSaved) {
   document.querySelectorAll('.be-tab').forEach((t) => (t.onclick = () => {
     draft.type = t.dataset.type;
     if (draft.type === 'emoji' && !draft.emoji) draft.emoji = BADGE_EMOJIS[0];
-    if (draft.type === 'photo' && !draft.photo) $('be-photo').click();
+    if (draft.type === 'photo') { if (!draft.photo) $('be-photo').click(); else showCrop(); }
     if (draft.type === 'drawing') pad.load(draft.drawing);
     update();
   }));
@@ -409,8 +505,15 @@ function setupBadgeEditor(onSaved) {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    try { draft.photo = await photoToBadge(file); draft.type = 'photo'; update(); }
-    catch (err) { toast(err.message); }
+    try {
+      draft.photoSrc = await loadPhoto(file);
+      draft.photoPos = { zoom: 1, x: 0, y: 0 };
+      draft.type = 'photo';
+      await showCrop();
+      draft.photo = crop.export();
+      update();
+      $('crop-area').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (err) { toast(err.message); }
   };
   $('be-cancel').onclick = () => { editor.hidden = true; };
   $('be-save').onclick = () => {
@@ -419,6 +522,7 @@ function setupBadgeEditor(onSaved) {
       if (pad.isBlank()) { toast('Draw something first'); return; }
       draft.drawing = pad.export();
     }
+    if (draft.type === 'photo' && crop.hasPhoto()) { draft.photo = crop.export(); draft.photoPos = crop.position(); }
     prefs.set('badge', JSON.stringify(draft));
     editor.hidden = true;
     refreshAvatars();

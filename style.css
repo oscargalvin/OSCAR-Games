@@ -396,3 +396,10 @@ select {
   color: var(--muted); display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
 }
 .shelf-head .clear-search { margin-left: auto; }
+
+/* ---------- photo cropper ---------- */
+.crop-area { display: grid; gap: 10px; justify-items: center; width: 100%; max-width: 300px; }
+.crop-canvas { cursor: grab; background: #000; }
+.crop-canvas:active { cursor: grabbing; }
+.crop-zoom { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 260px; }
+.crop-zoom input { flex: 1; accent-color: var(--accent); height: 28px; }
