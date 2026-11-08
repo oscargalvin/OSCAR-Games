@@ -1206,9 +1206,8 @@ async function showRecord() {
     source = s;
     flipBtn.textContent = '🔄 Flip camera';
     bubbleBtn.hidden = true;
-    const cam = s === 'camera' || s === 'dual';
-    srcCamera.classList.toggle('active', cam); srcCamera.setAttribute('aria-pressed', cam);
-    dualBtn.setAttribute('aria-pressed', s === 'dual'); dualBtn.hidden = !cam;
+    srcCamera.classList.toggle('active', s === 'camera'); srcCamera.setAttribute('aria-pressed', s === 'camera');
+    dualBtn.classList.toggle('active', s === 'dual'); dualBtn.setAttribute('aria-pressed', s === 'dual');
     srcScreen.classList.toggle('active', s === 'screen'); srcScreen.setAttribute('aria-pressed', s === 'screen');
     srcBoth.classList.toggle('active', s === 'both'); srcBoth.setAttribute('aria-pressed', s === 'both');
     mirrorWrap.hidden = s !== 'camera';
@@ -1225,7 +1224,7 @@ async function showRecord() {
   srcCamera.onclick = () => setSource('camera');
   srcScreen.onclick = () => setSource('screen');
   srcBoth.onclick = () => setSource('both');
-  dualBtn.onclick = () => setSource(source === 'dual' ? 'camera' : 'dual');
+  dualBtn.onclick = () => setSource('dual');
 
   // Turn on the camera (or screen). Returns true when there is something to record.
   async function startSource() {
@@ -1246,6 +1245,8 @@ async function showRecord() {
             stream = await navigator.mediaDevices.getUserMedia({ video: true });
             toast('No microphone found, recording without sound');
           }
+        } else if (source === 'dual' && !HTMLCanvasElement.prototype.captureStream) {
+          throw Object.assign(new Error('no canvas'), { name: 'NoMix' });
         } else if (source === 'dual') {
           // Your face in a bubble + the other way (what's in front of you).
           showMsg('Starting your cameras… If your browser asks, press Allow.', false);
@@ -1305,7 +1306,9 @@ async function showRecord() {
       } catch (e) {
         stream = null;
         if (leaving) return false;
-        if (e.name === 'ToScreen') {
+        if (e.name === 'NoMix') {
+          showMsg("This browser is too old to put your face in a bubble. Update it, or open VidGame in Chrome, Edge, Firefox or Safari.", false);
+        } else if (e.name === 'ToScreen') {
           setTimeout(() => {
             setSource('both');
             showMsg('This computer has one camera, so the other way will be your screen. Press the red button and pick what to show. Your face goes in the bubble.', false);
