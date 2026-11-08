@@ -1209,6 +1209,12 @@ async function showRecord() {
     const ok = ft && mt.readyState === 'live' && ft.readyState === 'live' && !mt.muted && !ft.muted &&
       (!mt.getSettings().deviceId || mt.getSettings().deviceId !== ft.getSettings().deviceId);
     if (!ok || !(await bothMoving(main, face))) { stopAll(); return null; }
+    // Make sure the back camera is the background and the front camera is your face.
+    const mf = mt.getSettings().facingMode, ff = ft.getSettings().facingMode;
+    if (isPhone()) {
+      if (mf === 'user' && ff === 'environment') return { main: face, face: main };
+      if (mf && ff && mf === ff) { stopAll(); return null; } // both are the same side: not really two cameras
+    }
     return { main, face };
   }
   // Some phones say both cameras are on, but one picture is frozen. Check both are really moving.
