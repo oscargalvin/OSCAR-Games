@@ -100,17 +100,50 @@ async function tx(mode, fn) {
       ? 'Your browser is out of space. Delete some videos and try again.' : 'Could not save the video.'));
   });
 }
+// Example videos from the "VidGame Examples" channel, so Home always has something to watch.
+const EXAMPLES_CHANNEL = { channelId: 'vidgame-examples', channelName: 'VidGame Examples', badge: { type: 'emoji', emoji: '⭐', color: '#e11d48' } };
+const EXAMPLES = [
+  { id: 'ex-ball', title: 'Bouncing ball challenge', file: 'examples/ball.webm', hoursAgo: 5, baseViews: 128 },
+  { id: 'ex-tutorial', title: 'How to record a video on VidGame', file: 'tutorial.webm', hoursAgo: 20, baseViews: 210 },
+  { id: 'ex-count', title: 'Colour countdown 10 to 1', file: 'examples/count.webm', hoursAgo: 30, baseViews: 54 },
+  { id: 'ex-rocket', title: 'Rocket launch into space', file: 'examples/rocket.webm', hoursAgo: 60, baseViews: 342 },
+  { id: 'ex-wave', title: 'Waving at everyone', file: 'examples/wave.webm', hoursAgo: 400, baseViews: 87 },
+];
+function exampleVideos() {
+  let first = +prefs.get('firstSeen', 0);
+  if (!first) { first = Date.now(); prefs.set('firstSeen', String(first)); }
+  let extra = {};
+  try { extra = JSON.parse(prefs.get('exampleViews', '{}')) || {}; } catch {}
+  return EXAMPLES.map((e) => ({
+    ...EXAMPLES_CHANNEL,
+    id: e.id, title: e.title, type: 'video/webm', size: 0, recorded: true, example: true,
+    src: (window.VIDGAME_MEDIA && window.VIDGAME_MEDIA[e.file]) || e.file,
+    views: e.baseViews + (extra[e.id] || 0),
+    createdAt: new Date(first - e.hoursAgo * 36e5).toISOString(),
+  }));
+}
 const store = {
   async list() {
-    const all = await tx('readonly', (s) => s.getAll());
-    return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    let all = [];
+    try { all = await tx('readonly', (s) => s.getAll()); } catch (e) { toast(e.message); }
+    return [...all, ...exampleVideos()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
-  get: (id) => tx('readonly', (s) => s.get(id)),
-  put: (v) => tx('readwrite', (s) => s.put(v)),
+  get: (id) => id.startsWith('ex-') ? exampleVideos().find((v) => v.id === id) : tx('readonly', (s) => s.get(id)),
+  put: (v) => {
+    if (v.example) {
+      let extra = {};
+      try { extra = JSON.parse(prefs.get('exampleViews', '{}')) || {}; } catch {}
+      extra[v.id] = (extra[v.id] || 0) + 1;
+      prefs.set('exampleViews', JSON.stringify(extra));
+      return Promise.resolve();
+    }
+    return tx('readwrite', (s) => s.put(v));
+  },
   remove: (id) => tx('readwrite', (s) => s.delete(id)),
 };
 const urls = new Map(); // id -> object URL, so each video blob is only wrapped once
 function mediaUrl(v) {
+  if (v.src) return v.src;
   if (!urls.has(v.id)) urls.set(v.id, URL.createObjectURL(v.blob));
   return urls.get(v.id);
 }
@@ -215,8 +248,8 @@ async function showHome() {
     .sort((x, y) => watched[y.channelId] - watched[x.channelId] || y.createdAt.localeCompare(x.createdAt)).slice(0, 12);
 
   addShelf(box, '🆕 Brand new', 'Posted in the last 7 days', brandNew, true, 'New videos show up here as soon as they are posted.');
+  addShelf(box, '👀 People you watch', 'Channels you watch a lot', following, true, "Watch someone's video and their channel shows up here.");
   addShelf(box, '🔥 Popular right now', 'Most watched lately', popular, true, 'Videos with the most views right now show up here.');
-  addShelf(box, '👀 People you watch', 'Channels you watch a lot', following, true, "When you watch other people's videos, their channels show up here.");
   addShelf(box, '📺 All videos', `${videos.length} video${videos.length === 1 ? '' : 's'}`, videos, false, 'No videos yet.', false, true);
 }
 showHome.token = 0;
@@ -618,7 +651,7 @@ async function showWatch(id) {
     document.getElementById('delete').hidden = true;
   }
   document.getElementById('watch-info').textContent =
-    `${viewsText(v.views)} · ${timeAgo(v.createdAt)} · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in VidGame' : ''}`;
+    `${viewsText(v.views)} · ${timeAgo(v.createdAt)}` + (v.example ? ' · Example video' : ` · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in VidGame' : ''}`);
   const dl = document.getElementById('download');
   dl.href = mediaUrl(v);
   dl.download = v.title.replace(/[^\w\- ]+/g, '').trim() + '.' + extOf(v);

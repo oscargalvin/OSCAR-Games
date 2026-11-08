@@ -6,7 +6,7 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = __dirname;
-const ALLOWED = new Set(['/index.html', '/app.js', '/style.css', '/tutorial.webm']);
+const ALLOWED = new Set(['/index.html', '/app.js', '/style.css', '/tutorial.webm', '/examples/ball.webm', '/examples/count.webm', '/examples/rocket.webm', '/examples/wave.webm']);
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
