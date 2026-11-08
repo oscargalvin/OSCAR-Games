@@ -6,12 +6,15 @@
   <meta name="theme-color" content="#0f0f12">
   <title>VidGame</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23e11d48'/><path d='M9 7l8 5-8 5z' fill='white'/></svg>">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1794141031">
 </head>
 <body>
   <header class="top">
     <a class="logo" href="#/"><span class="logo-mark">▶</span> VidGame</a>
-    <input id="search" class="search" type="search" placeholder="Search videos" aria-label="Search videos">
+    <form id="search-form" class="search-form" role="search">
+      <input id="search" class="search" type="search" placeholder="Search videos and channels" aria-label="Search videos and channels" enterkeyhint="search">
+      <button class="search-btn" aria-label="Search">🔍</button>
+    </form>
     <button id="help-btn" class="icon-btn" title="Watch the tutorial" aria-label="Watch the tutorial">?</button>
   </header>
 
@@ -247,6 +250,6 @@
     </section>
   </template>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=1794141031"></script>
 </body>
 </html>

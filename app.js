@@ -185,22 +185,21 @@ async function showHome() {
   if (document.getElementById('tutorial').hidden) tv.play().catch(() => {});
   cleanup = () => tv.pause();
   wirePostButtons();
+  const token = ++showHome.token; // ignore older searches that finish late
   let videos = [];
   try { videos = await store.list(); } catch (e) { toast(e.message); }
   const box = document.getElementById('sections');
-  if (!box || !document.getElementById('home-tut-video')) return; // you moved to another page
-  const empty = document.getElementById('empty');
+  if (token !== showHome.token || !box || !document.getElementById('home-tut-video')) return;
+  box.innerHTML = '';
+  document.getElementById('empty').hidden = true;
   const q = searchBox.value.trim().toLowerCase();
   if (q) {
-    const found = videos.filter((v) => v.title.toLowerCase().includes(q) || (v.channelName || '').toLowerCase().includes(q));
+    const found = videos.filter((v) => v.title.toLowerCase().includes(q) || (isMine(v) ? channelName() : v.channelName || '').toLowerCase().includes(q));
     document.getElementById('featured').hidden = true;
-    empty.hidden = found.length > 0;
-    empty.querySelector('p').textContent = `No videos match "${searchBox.value}".`;
-    if (found.length) addShelf(box, `Search results for "${searchBox.value}"`, `${found.length} found`, found, false);
+    addShelf(box, `🔍 Results for "${searchBox.value.trim()}"`, `${found.length} found`, found, false,
+      `No videos match "${searchBox.value.trim()}". Try another word.`, true);
     return;
   }
-  empty.hidden = videos.length > 0;
-  if (!videos.length) return;
   const now = Date.now();
   const ageHours = (v) => (now - new Date(v.createdAt)) / 36e5;
 
@@ -215,19 +214,35 @@ async function showHome() {
   const following = videos.filter((v) => !isMine(v) && watched[v.channelId])
     .sort((x, y) => watched[y.channelId] - watched[x.channelId] || y.createdAt.localeCompare(x.createdAt)).slice(0, 12);
 
-  if (brandNew.length) addShelf(box, '🆕 Brand new', 'Just posted', brandNew, true);
-  if (popular.length) addShelf(box, '🔥 Popular right now', 'Most watched lately', popular, true);
-  if (following.length) addShelf(box, '👀 People you watch', 'Channels you watch a lot', following, true);
-  addShelf(box, '📺 All videos', `${videos.length} video${videos.length === 1 ? '' : 's'}`, videos, false);
+  addShelf(box, '🆕 Brand new', 'Posted in the last 7 days', brandNew, true, 'New videos show up here as soon as they are posted.');
+  addShelf(box, '🔥 Popular right now', 'Most watched lately', popular, true, 'Videos with the most views right now show up here.');
+  addShelf(box, '👀 People you watch', 'Channels you watch a lot', following, true, "When you watch other people's videos, their channels show up here.");
+  addShelf(box, '📺 All videos', `${videos.length} video${videos.length === 1 ? '' : 's'}`, videos, false, 'No videos yet.', false, true);
 }
-function addShelf(box, title, sub, videos, asRow) {
+showHome.token = 0;
+function addShelf(box, title, sub, videos, asRow, emptyText, clearBtn, postBtn) {
   const sec = document.createElement('section');
   sec.className = 'shelf';
   sec.innerHTML = `<div class="shelf-head"><h2></h2><small></small></div><div class="${asRow ? 'row' : 'grid'}"></div>`;
   sec.querySelector('h2').textContent = title;
   sec.querySelector('small').textContent = sub;
+  if (clearBtn) {
+    const c = document.createElement('button');
+    c.className = 'btn clear-search'; c.textContent = '✕ Clear search';
+    c.onclick = () => { searchBox.value = ''; showHome(); };
+    sec.firstElementChild.appendChild(c);
+  }
   box.appendChild(sec);
-  fillGrid(sec.lastElementChild, videos);
+  if (videos.length) { fillGrid(sec.lastElementChild, videos); return; }
+  const e = document.createElement('div');
+  e.className = 'shelf-empty';
+  e.textContent = emptyText;
+  if (postBtn) {
+    const b = document.createElement('button');
+    b.className = 'btn btn-primary'; b.textContent = '＋ Post a video'; b.onclick = openPostSheet;
+    e.appendChild(b);
+  }
+  sec.lastElementChild.replaceWith(e);
 }
 
 // ---------- your channel ----------
@@ -927,9 +942,15 @@ function route() {
   if (page === 'channel') return showChannel();
   return showHome();
 }
-searchBox.addEventListener('input', () => {
+function runSearch() {
   if (location.hash.length > 2) location.hash = '#/';
   else showHome();
+}
+searchBox.addEventListener('input', runSearch);
+document.getElementById('search-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  searchBox.blur();
+  runSearch();
 });
 window.addEventListener('hashchange', route);
 route();
