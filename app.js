@@ -29,13 +29,33 @@ const prefs = {
   get(k, d) { try { const v = localStorage.getItem('vidgame.' + k); return v === null ? d : v; } catch { return d; } },
   set(k, v) { try { localStorage.setItem('vidgame.' + k, v); } catch {} },
 };
-const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#ea580c', '#db2777', '#4f46e5', '#16a34a'];
+const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#16a34a', '#ca8a04', '#ea580c', '#e11d48', '#db2777', '#4f46e5', '#0891b2', '#475569', '#111827'];
+const BADGE_EMOJIS = ['😎', '🎮', '🔥', '⚽', '🏀', '🚀', '🦖', '🐱', '🐶', '🦊', '🐼', '🦁', '🐸', '👾', '🤖', '👻', '💎', '⭐', '🌈', '🍕', '🎸', '🏆', '⚡', '🎬'];
 function channelName() { return prefs.get('channel', 'My Channel'); }
-function paintAvatar(el, name = channelName()) {
-  if (!el) return;
-  el.textContent = (name.trim()[0] || 'V').toUpperCase();
+// Your badge: { type: 'letter' | 'emoji' | 'photo', letters, emoji, photo (small image), color }
+function getBadge() {
+  try { return JSON.parse(prefs.get('badge', '')) || {}; } catch { return {}; }
+}
+function defaultColor(name) {
   let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  el.style.setProperty('--avatar', AVATAR_COLORS[h % AVATAR_COLORS.length]);
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function paintAvatar(el, name = channelName(), badge = getBadge()) {
+  if (!el) return;
+  const type = badge.type || 'letter';
+  el.classList.remove('photo', 'emoji');
+  el.style.backgroundImage = '';
+  el.style.setProperty('--avatar', badge.color || defaultColor(name));
+  if (type === 'photo' && badge.photo) {
+    el.textContent = '';
+    el.classList.add('photo');
+    el.style.backgroundImage = `url("${badge.photo}")`;
+  } else if (type === 'emoji' && badge.emoji) {
+    el.textContent = badge.emoji;
+    el.classList.add('emoji');
+  } else {
+    el.textContent = (badge.letters || name.trim()[0] || 'V').toUpperCase();
+  }
 }
 function refreshAvatars() { document.querySelectorAll('#tab-avatar, #ch-avatar, #watch-avatar').forEach((el) => paintAvatar(el)); }
 function viewsText(n) { n = n || 0; return `${n} view${n === 1 ? '' : 's'}`; }
@@ -154,7 +174,8 @@ async function showHome() {
   if (q) videos = videos.filter((v) => v.title.toLowerCase().includes(q));
   document.getElementById('empty').hidden = videos.length > 0;
   if (q && !videos.length) document.querySelector('#empty p').textContent = `No videos match "${searchBox.value}".`;
-  fillGrid(document.getElementById('grid'), videos);
+  const grid = document.getElementById('grid');
+  if (grid && document.getElementById('home-tut-video')) fillGrid(grid, videos);
 }
 
 // ---------- your channel ----------
@@ -182,10 +203,12 @@ async function showChannel() {
     toast('Channel name saved');
   };
   document.getElementById('ch-tutorial').onclick = () => tutorial.open();
+  setupBadgeEditor(() => { paint(); showChannelVideos(); });
   async function showChannelVideos() {
     let videos = [];
     try { videos = await store.list(); } catch (e) { toast(e.message); }
     const views = videos.reduce((n, v) => n + (v.views || 0), 0);
+    if (!document.getElementById('ch-stats')) return;
     document.getElementById('ch-stats').textContent =
       `${videos.length} video${videos.length === 1 ? '' : 's'} · ${viewsText(views)}`;
     document.getElementById('empty').hidden = videos.length > 0;
@@ -194,6 +217,80 @@ async function showChannel() {
     fillGrid(grid, videos);
   }
   showChannelVideos();
+}
+
+// ---------- badge editor ----------
+// Shrink a photo to a small square so it fits in browser storage.
+function photoToBadge(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const size = 192, c = document.createElement('canvas');
+      c.width = c.height = size;
+      const side = Math.min(img.width, img.height);
+      c.getContext('2d').drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That photo couldn't be opened. Try a JPG or PNG.")); };
+    img.src = url;
+  });
+}
+function setupBadgeEditor(onSaved) {
+  const $ = (id) => document.getElementById(id);
+  const editor = $('badge-editor'), preview = $('be-avatar');
+  let draft = {};
+  const groups = { letter: $('be-letter-group'), emoji: $('be-emoji-group'), photo: $('be-photo-group') };
+
+  $('be-emojis').innerHTML = BADGE_EMOJIS.map((e) => `<button type="button" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('');
+  $('be-colors').innerHTML = AVATAR_COLORS.map((c) => `<button type="button" data-color="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('');
+
+  function update() {
+    const type = draft.type || 'letter';
+    document.querySelectorAll('.be-tab').forEach((t) => t.classList.toggle('active', t.dataset.type === type));
+    for (const k in groups) groups[k].hidden = k !== type;
+    $('be-color-group').hidden = type === 'photo';
+    const color = draft.color || defaultColor(channelName());
+    document.querySelectorAll('#be-emojis button').forEach((b) => b.classList.toggle('sel', b.dataset.emoji === draft.emoji));
+    document.querySelectorAll('#be-colors button').forEach((b) => b.classList.toggle('sel', b.dataset.color === color));
+    paintAvatar(preview, channelName(), draft);
+  }
+  function open() {
+    draft = { ...getBadge() };
+    $('be-letters').value = draft.letters || '';
+    editor.hidden = false;
+    update();
+    editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  $('ch-badge').onclick = open;
+  $('ch-avatar-btn').onclick = open;
+  document.querySelectorAll('.be-tab').forEach((t) => (t.onclick = () => {
+    draft.type = t.dataset.type;
+    if (draft.type === 'emoji' && !draft.emoji) draft.emoji = BADGE_EMOJIS[0];
+    if (draft.type === 'photo' && !draft.photo) $('be-photo').click();
+    update();
+  }));
+  $('be-letters').oninput = (e) => { draft.letters = e.target.value.replace(/\s/g, '').slice(0, 2); update(); };
+  $('be-emojis').onclick = (e) => { const b = e.target.closest('button'); if (b) { draft.emoji = b.dataset.emoji; update(); } };
+  $('be-colors').onclick = (e) => { const b = e.target.closest('button'); if (b) { draft.color = b.dataset.color; update(); } };
+  $('be-photo').onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try { draft.photo = await photoToBadge(file); draft.type = 'photo'; update(); }
+    catch (err) { toast(err.message); }
+  };
+  $('be-cancel').onclick = () => { editor.hidden = true; };
+  $('be-save').onclick = () => {
+    if ((draft.type || 'letter') === 'photo' && !draft.photo) { toast('Choose a photo first'); return; }
+    prefs.set('badge', JSON.stringify(draft));
+    if (getBadge().type !== draft.type) { toast("Your browser couldn't save the badge"); return; }
+    editor.hidden = true;
+    refreshAvatars();
+    onSaved();
+    toast('Badge saved');
+  };
 }
 
 // ---------- watch ----------
@@ -207,6 +304,7 @@ async function showWatch(id) {
     await store.put(v);
   } catch (e) { app.innerHTML = `<p class="empty">${e.message} <a class="btn" href="#/">Back</a></p>`; return; }
   const player = document.getElementById('player');
+  if (!player) return; // you already moved to another page
   player.src = mediaUrl(v);
   player.addEventListener('loadedmetadata', () => fixDuration(player).then(() => player.play().catch(() => {})), { once: true });
   document.getElementById('watch-title').textContent = v.title;

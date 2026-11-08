@@ -92,7 +92,10 @@
   <template id="tpl-channel">
     <section class="channel">
       <div class="channel-head">
-        <span id="ch-avatar" class="avatar avatar-lg">V</span>
+        <button id="ch-avatar-btn" class="avatar-btn" aria-label="Change your badge" title="Change your badge">
+          <span id="ch-avatar" class="avatar avatar-lg">V</span>
+          <span class="avatar-edit" aria-hidden="true">✎</span>
+        </button>
         <div class="channel-info">
           <h1 id="ch-name"></h1>
           <form id="ch-form" class="ch-form" hidden>
@@ -102,7 +105,48 @@
           <p id="ch-stats" class="muted"></p>
           <div class="channel-actions">
             <button id="ch-edit" class="btn">Edit name</button>
+            <button id="ch-badge" class="btn">Change badge</button>
             <button id="ch-tutorial" class="btn">Watch tutorial</button>
+          </div>
+        </div>
+      </div>
+      <div id="badge-editor" class="badge-editor" hidden>
+        <div class="be-preview">
+          <span id="be-avatar" class="avatar avatar-xl">V</span>
+          <small class="muted">Preview</small>
+        </div>
+        <div class="be-options">
+          <div class="be-group">
+            <h3>Badge style</h3>
+            <div class="be-tabs" role="group" aria-label="Badge style">
+              <button class="be-tab" data-type="letter">Letter</button>
+              <button class="be-tab" data-type="emoji">Emoji</button>
+              <button class="be-tab" data-type="photo">Photo</button>
+            </div>
+          </div>
+          <div class="be-group" id="be-letter-group">
+            <h3>Your letters</h3>
+            <input id="be-letters" class="be-input" maxlength="2" placeholder="Up to 2 letters" aria-label="Badge letters">
+          </div>
+          <div class="be-group" id="be-emoji-group" hidden>
+            <h3>Pick an emoji</h3>
+            <div id="be-emojis" class="be-emojis"></div>
+          </div>
+          <div class="be-group" id="be-photo-group" hidden>
+            <h3>Your photo</h3>
+            <label class="btn">
+              🖼 Choose a photo
+              <input id="be-photo" type="file" accept="image/*" hidden>
+            </label>
+            <small class="muted">On a phone you can take a new photo too.</small>
+          </div>
+          <div class="be-group" id="be-color-group">
+            <h3>Background colour</h3>
+            <div id="be-colors" class="be-colors"></div>
+          </div>
+          <div class="be-actions">
+            <button id="be-save" class="btn btn-primary">Save badge</button>
+            <button id="be-cancel" class="btn">Cancel</button>
           </div>
         </div>
       </div>
