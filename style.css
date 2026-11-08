@@ -443,3 +443,9 @@ select {
   .rail-icon { width: 46px; height: 46px; font-size: 24px; }
   .tab { font-size: 11px; }
 }
+
+/* ---------- screen + face ---------- */
+.source-toggle { flex-wrap: wrap; }
+.stage.both #preview { cursor: grab; touch-action: none; }
+.stage.both #preview:active { cursor: grabbing; }
+#bubble-wrap input { accent-color: var(--accent); width: 120px; vertical-align: middle; }

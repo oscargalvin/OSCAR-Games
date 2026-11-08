@@ -910,13 +910,80 @@ function pickMimeType() {
   return options.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
 }
 
+// Screen + face: draws the screen with your camera in a round bubble on top,
+// and mixes the screen's sound with your microphone, into one stream to record.
+function makeMixer(screen, cam) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const sv = document.createElement('video'), cv = document.createElement('video');
+  for (const [v, src] of [[sv, screen], [cv, cam]]) {
+    if (!src) continue;
+    v.muted = true; v.playsInline = true;
+    v.srcObject = new MediaStream(src.getVideoTracks());
+    v.play().catch(() => {});
+  }
+  const m = { size: 0.26, x: 0.82, y: 0.74 };
+  const set = screen.getVideoTracks()[0].getSettings();
+  canvas.width = set.width || 1280; canvas.height = set.height || 720;
+  function draw() {
+    if (sv.videoWidth && (sv.videoWidth !== canvas.width || sv.videoHeight !== canvas.height)) {
+      canvas.width = sv.videoWidth; canvas.height = sv.videoHeight;
+    }
+    const W = canvas.width, H = canvas.height;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    if (sv.videoWidth) ctx.drawImage(sv, 0, 0, W, H);
+    if (cam && cv.videoWidth) {
+      const r = Math.min(W, H) * m.size / 2;
+      const cx = Math.min(W - r - 4, Math.max(r + 4, m.x * W)), cy = Math.min(H - r - 4, Math.max(r + 4, m.y * H));
+      const s = Math.max((2 * r) / cv.videoWidth, (2 * r) / cv.videoHeight);
+      const w = cv.videoWidth * s, h = cv.videoHeight * s;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
+      ctx.translate(cx, cy); if (m.mirror) ctx.scale(-1, 1);
+      ctx.drawImage(cv, -w / 2, -h / 2, w, h);
+      ctx.restore();
+      ctx.lineWidth = Math.max(3, r * 0.06); ctx.strokeStyle = '#fff';
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+  // A worker timer keeps drawing even when you switch to another tab or window.
+  const worker = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 33)'], { type: 'text/javascript' })));
+  worker.onmessage = draw;
+  draw();
+  const out = canvas.captureStream(30);
+  // Sound: mix the screen's sound and your microphone together.
+  const audioIn = [...screen.getAudioTracks(), ...(cam ? cam.getAudioTracks() : [])];
+  let ac = null;
+  if (audioIn.length === 1) out.addTrack(audioIn[0]);
+  else if (audioIn.length > 1) {
+    try {
+      ac = new AudioContext();
+      const dest = ac.createMediaStreamDestination();
+      audioIn.forEach((t) => ac.createMediaStreamSource(new MediaStream([t])).connect(dest));
+      dest.stream.getAudioTracks().forEach((t) => out.addTrack(t));
+    } catch { out.addTrack(audioIn[0]); }
+  }
+  m.stream = out;
+  m.stop = () => {
+    worker.terminate();
+    [screen, cam].forEach((st) => st && st.getTracks().forEach((t) => t.stop()));
+    if (ac) ac.close().catch(() => {});
+    sv.srcObject = cv.srcObject = null;
+  };
+  return m;
+}
+
 async function showRecord() {
   render('tpl-record');
   const $ = (id) => document.getElementById(id);
   const preview = $('preview'), stage = document.querySelector('.stage');
   const msgBox = $('cam-msg'), msgText = $('cam-msg-text'), retry = $('cam-retry');
   const camSel = $('camera-select'), micSel = $('mic-select'), mirror = $('mirror'), mirrorWrap = $('mirror-wrap');
-  const srcCamera = $('src-camera'), srcScreen = $('src-screen');
+  const srcCamera = $('src-camera'), srcScreen = $('src-screen'), srcBoth = $('src-both');
+  const flipBtn = $('flip-cam'), bubbleWrap = $('bubble-wrap'), bubbleSize = $('bubble-size'), bubbleHint = $('bubble-hint');
+  let facing = 'user';      // which camera on a phone: 'user' = front (your face), 'environment' = back
+  let mixer = null;         // screen + face: draws both onto one picture
+  const bubble = { x: 0.82, y: 0.74 }; // where the face bubble sits (0..1 across and down)
   const btnStart = $('btn-start'), btnPause = $('btn-pause'), btnStop = $('btn-stop');
   const badge = $('rec-badge'), timer = $('timer'), pausedCover = $('paused-cover'), recLabel = $('rec-label');
   const review = $('review'), reviewPlayer = $('review-player'), titleInput = $('title');
@@ -929,9 +996,13 @@ async function showRecord() {
   const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
   const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   const canScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
-  if (!canScreen) srcScreen.hidden = true;
+  if (!canScreen) srcScreen.hidden = srcBoth.hidden = true;
 
-  const stopStream = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; preview.srcObject = null; };
+  const stopStream = () => {
+    if (mixer) { mixer.stop(); mixer = null; }
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null; preview.srcObject = null;
+  };
   cleanup = () => {
     leaving = true;
     if (recorder && recorder.state !== 'inactive') recorder.stop();
@@ -949,20 +1020,52 @@ async function showRecord() {
   const recording = () => recorder && recorder.state !== 'inactive';
 
   mirror.onchange = () => stage.classList.toggle('mirror', mirror.checked && source === 'camera');
+  const usesCamera = () => source !== 'screen';
+  flipBtn.onclick = () => {
+    if (recording()) return;
+    facing = facing === 'user' ? 'environment' : 'user';
+    mirror.checked = facing === 'user'; // the back camera shouldn't be mirrored
+    camSel.value = '';
+    stage.classList.toggle('mirror', mirror.checked && source === 'camera');
+    if (source === 'camera') { stopStream(); startSource(); }
+    toast(facing === 'user' ? 'Using your front camera' : 'Using your back camera');
+  };
+  bubbleSize.oninput = () => { if (mixer) mixer.size = +bubbleSize.value; };
+  // Drag the face bubble around the preview.
+  preview.addEventListener('pointerdown', (e) => {
+    if (!mixer) return;
+    e.preventDefault();
+    preview.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const r = preview.getBoundingClientRect();
+      bubble.x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+      bubble.y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+    };
+    move(e);
+    preview.onpointermove = move;
+    preview.onpointerup = preview.onpointercancel = () => { preview.onpointermove = null; };
+  });
 
   function setSource(s) {
     if (recording()) return;
     source = s;
     srcCamera.classList.toggle('active', s === 'camera'); srcCamera.setAttribute('aria-pressed', s === 'camera');
     srcScreen.classList.toggle('active', s === 'screen'); srcScreen.setAttribute('aria-pressed', s === 'screen');
-    camSel.hidden = mirrorWrap.hidden = s === 'screen';
+    srcBoth.classList.toggle('active', s === 'both'); srcBoth.setAttribute('aria-pressed', s === 'both');
+    mirrorWrap.hidden = s !== 'camera';
+    camSel.hidden = s === 'screen' || camSel.options.length < 2;
+    flipBtn.hidden = s === 'screen';
+    bubbleWrap.hidden = bubbleHint.hidden = s !== 'both';
+    stage.classList.toggle('both', s === 'both');
     stage.classList.toggle('mirror', mirror.checked && s === 'camera');
     stopStream();
     if (s === 'camera') startCamera();
+    else if (s === 'both') showMsg('Press the red button, then pick the screen or window. Your face will show in a bubble on top.', false);
     else showMsg('Press the red button, then pick the screen or window you want to record.', false);
   }
   srcCamera.onclick = () => setSource('camera');
   srcScreen.onclick = () => setSource('screen');
+  srcBoth.onclick = () => setSource('both');
 
   // Turn on the camera (or screen). Returns true when there is something to record.
   async function startSource() {
@@ -973,7 +1076,7 @@ async function showRecord() {
       try {
         if (source === 'camera') {
           showMsg('Starting camera… If your browser asks, press Allow.', false);
-          const video = camSel.value ? { deviceId: { exact: camSel.value } } : {};
+          const video = camSel.value ? { deviceId: { exact: camSel.value } } : { facingMode: facing };
           const audio = micSel.value ? { deviceId: { exact: micSel.value } } : true;
           try {
             stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...video }, audio });
@@ -983,6 +1086,25 @@ async function showRecord() {
             stream = await navigator.mediaDevices.getUserMedia({ video: true });
             toast('No microphone found, recording without sound');
           }
+        } else if (source === 'both') {
+          const screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+          let cam = null;
+          try {
+            cam = await navigator.mediaDevices.getUserMedia({
+              video: camSel.value ? { deviceId: { exact: camSel.value } } : { facingMode: facing, width: { ideal: 640 } },
+              audio: micSel.value ? { deviceId: { exact: micSel.value } } : true,
+            });
+          } catch (e) {
+            try { cam = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing } }); } catch {}
+            toast(cam ? 'No microphone found, recording without your voice' : "Your camera couldn't start, so only the screen will be recorded");
+          }
+          mixer = makeMixer(screen, cam);
+          mixer.size = +bubbleSize.value;
+          mixer.mirror = facing === 'user';
+          Object.defineProperty(mixer, 'x', { get: () => bubble.x });
+          Object.defineProperty(mixer, 'y', { get: () => bubble.y });
+          stream = mixer.stream;
+          screen.getVideoTracks()[0].addEventListener('ended', () => { if (recording()) recorder.stop(); else stopStream(); });
         } else {
           const screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
           // Add the microphone so you can talk over the screen recording.
@@ -997,7 +1119,7 @@ async function showRecord() {
       } catch (e) {
         stream = null;
         if (leaving) return false;
-        if (source === 'screen') {
+        if (source !== 'camera') {
           showMsg(e.name === 'NotAllowedError'
             ? 'Screen recording was cancelled. Press the red button to try again.'
             : "Screen recording couldn't start on this device. Try the 📷 Camera instead.", false);
@@ -1043,6 +1165,7 @@ async function showRecord() {
         sel.appendChild(o);
       });
       sel.hidden = sel.options.length < 2 || (kind === 'videoinput' && source === 'screen');
+      if (kind === 'videoinput' && sel.options.length < 2 && !matchMedia('(pointer: coarse)').matches) flipBtn.hidden = true;
     };
     fill(camSel, 'videoinput', 'Camera');
     fill(micSel, 'audioinput', 'Microphone');
@@ -1075,10 +1198,10 @@ async function showRecord() {
       clearInterval(tick);
       badge.hidden = true;
       pausedCover.hidden = true;
-      srcCamera.disabled = srcScreen.disabled = false;
+      srcCamera.disabled = srcScreen.disabled = srcBoth.disabled = flipBtn.disabled = false;
       camSel.disabled = micSel.disabled = false;
       if (leaving) return;
-      if (source === 'screen') { stopStream(); showMsg('Press the red button to record your screen again.', false); }
+      if (source !== 'camera') { stopStream(); showMsg('Press the red button to record your screen again.', false); }
       btnPause.hidden = btnStop.hidden = true;
       btnStart.hidden = false;
       recLabel.textContent = 'Press the red button to record again';
@@ -1111,7 +1234,7 @@ async function showRecord() {
     btnStart.hidden = true;
     btnPause.hidden = typeof recorder.pause !== 'function';
     btnStop.hidden = false;
-    srcCamera.disabled = srcScreen.disabled = true;
+    srcCamera.disabled = srcScreen.disabled = srcBoth.disabled = flipBtn.disabled = true;
     camSel.disabled = micSel.disabled = true;
   };
 
