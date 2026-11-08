@@ -916,7 +916,8 @@ function makeMixer(screen, cam, faceImg, host) {
   const canvas = document.createElement('canvas');
   canvas.className = 'player mix-canvas';
   const ctx = canvas.getContext('2d');
-  const sv = document.createElement('video'), cv = document.createElement('video');
+  const mainEl = screen instanceof HTMLVideoElement ? screen : null;
+  const sv = mainEl || document.createElement('video'), cv = document.createElement('video');
   // Keep the camera videos really on the page, just hidden behind the picture we draw:
   // phones (especially iPhones) stop updating videos that aren't on the page.
   const hold = document.createElement('div');
@@ -925,13 +926,15 @@ function makeMixer(screen, cam, faceImg, host) {
   // Show the drawn picture itself as the preview (more reliable on phones than a video of it).
   if (host) host.insertBefore(canvas, host.firstChild);
   for (const [v, src] of [[sv, screen], [cv, cam]]) {
-    v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.autoplay = true;
+    v.playsInline = true; v.setAttribute('playsinline', '');
     hold.appendChild(v);
+    if (v === mainEl) continue; // a recorded clip: it plays when recording starts
+    v.muted = true; v.autoplay = true;
     if (!src) continue;
     v.srcObject = new MediaStream(src.getVideoTracks());
     v.play().catch(() => {});
   }
-  let mainStream = screen, sized = false;
+  let mainStream = mainEl ? null : screen, sized = false;
   const m = { size: 0.26, x: 0.82, y: 0.74, face: { x: 0.5, y: 0.42, s: 0.6 } };
   // Follow your face (on browsers that can find faces), so the bubble stays on you as you move.
   let faceTimer = null;
@@ -953,7 +956,7 @@ function makeMixer(screen, cam, faceImg, host) {
       }, 400);
     } catch {}
   }
-  const set = screen.getVideoTracks()[0].getSettings();
+  const set = mainEl ? { width: mainEl.videoWidth, height: mainEl.videoHeight } : screen.getVideoTracks()[0].getSettings();
   canvas.width = set.width || 1280; canvas.height = set.height || 720;
   function draw() {
     // Pick the video size once, so switching cameras mid-video doesn't change it.
@@ -1009,9 +1012,18 @@ function makeMixer(screen, cam, faceImg, host) {
   draw();
   const out = canvas.captureStream(30);
   // Sound: mix the screen's sound and your microphone together.
-  const audioIn = [...screen.getAudioTracks(), ...(cam ? cam.getAudioTracks() : [])];
+  const audioIn = [...(mainEl ? [] : screen.getAudioTracks()), ...(cam ? cam.getAudioTracks() : [])];
   let ac = null;
-  if (audioIn.length === 1) out.addTrack(audioIn[0]);
+  if (mainEl) {
+    // Mix the background clip's sound with your microphone.
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      const dest = ac.createMediaStreamDestination();
+      ac.createMediaElementSource(mainEl).connect(dest);
+      audioIn.forEach((t) => ac.createMediaStreamSource(new MediaStream([t])).connect(dest));
+      dest.stream.getAudioTracks().forEach((t) => out.addTrack(t));
+    } catch { mainEl.muted = true; if (audioIn[0]) out.addTrack(audioIn[0]); }
+  } else if (audioIn.length === 1) out.addTrack(audioIn[0]);
   else if (audioIn.length > 1) {
     try {
       ac = new AudioContext();
@@ -1022,6 +1034,7 @@ function makeMixer(screen, cam, faceImg, host) {
   }
   m.stream = out;
   m.canvas = canvas;
+  m.ac = ac;
   // Swap which picture is big and which is in the bubble (works mid-video).
   m.swap = () => {
     if (!cam) return;
@@ -1032,7 +1045,7 @@ function makeMixer(screen, cam, faceImg, host) {
   };
   // Swap the big picture to another camera without stopping the recording.
   m.setMain = (st) => {
-    mainStream.getVideoTracks().forEach((t) => t.stop());
+    if (mainStream) mainStream.getVideoTracks().forEach((t) => t.stop());
     mainStream = st;
     sv.srcObject = new MediaStream(st.getVideoTracks());
     sv.play().catch(() => {});
@@ -1040,7 +1053,8 @@ function makeMixer(screen, cam, faceImg, host) {
   m.stop = () => {
     worker.terminate();
     clearInterval(faceTimer);
-    [screen, cam, mainStream].forEach((st) => st && st.getTracks().forEach((t) => t.stop()));
+    [mainEl ? null : screen, cam, mainStream].forEach((st) => st && st.getTracks && st.getTracks().forEach((t) => t.stop()));
+    if (mainEl) mainEl.pause();
     if (ac) ac.close().catch(() => {});
     sv.srcObject = cv.srcObject = null;
     hold.remove();
@@ -1060,11 +1074,21 @@ async function showRecord() {
   let facing = 'user';      // which camera on a phone: 'user' = front (your face), 'environment' = back
   let mixer = null;         // screen + face: draws both onto one picture
   let singleCamNote = false;
+  // Phones that can only use one camera: Face + background is made in 2 steps.
+  let dualStep = 0, bgVideo = null;
+  const stepBox = $('dual-step');
+  function showStep(html) { stepBox.innerHTML = html; stepBox.hidden = !html; }
+  function resetSteps() {
+    dualStep = 0;
+    if (bgVideo) { URL.revokeObjectURL(bgVideo.src); bgVideo = null; }
+    showStep('');
+  }
   const bubbleBtn = $('bubble-toggle');
   // Buttons you can use any time, even in the middle of a video.
   function paintLiveControls() {
     bubbleBtn.hidden = !mixer;
     if (mixer) bubbleBtn.textContent = mixer.hideBubble ? '😀 Show face bubble' : '🙈 Hide face bubble';
+    flipBtn.hidden = !!dualStep || source === 'screen';
     if (mixer && mixer.twoCams) flipBtn.textContent = '🔄 Swap big and small';
     else if (mixer && mixer.single) flipBtn.textContent = '🔄 Flip camera';
   }
@@ -1214,6 +1238,7 @@ async function showRecord() {
     source = s;
     flipBtn.textContent = '🔄 Flip camera';
     bubbleBtn.hidden = true;
+    resetSteps();
     srcCamera.classList.toggle('active', s === 'camera'); srcCamera.setAttribute('aria-pressed', s === 'camera');
     dualBtn.classList.toggle('active', s === 'dual'); dualBtn.setAttribute('aria-pressed', s === 'dual');
     srcScreen.classList.toggle('active', s === 'screen'); srcScreen.setAttribute('aria-pressed', s === 'screen');
@@ -1259,8 +1284,29 @@ async function showRecord() {
           // Your face in a bubble + the other way (what's in front of you).
           showMsg('Starting your cameras… If your browser asks, press Allow.', false);
           const audio = micSel.value ? { deviceId: { exact: micSel.value } } : true;
-          const two = await openTwoCameras(audio);
-          if (two) {
+          const two = dualStep ? null : await openTwoCameras(audio);
+          if (dualStep === 2) {
+            // Step 2: your face live in the bubble, with the background clip playing behind it.
+            let face;
+            try { face = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 } }, audio }); }
+            catch (err) {
+              if (err.name === 'NotAllowedError' || err.name === 'SecurityError') throw err;
+              face = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+            }
+            mixer = makeMixer(bgVideo, face, null, stage);
+            mixer.mirror = true; mixer.twoStep = true;
+            showStep('<b>Step 2 of 2:</b> now film your face. Your background plays behind you. Press the red button and go!');
+          } else if (!two && isPhone()) {
+            // Step 1: film the background with the back camera.
+            dualStep = 1;
+            try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio }); }
+            catch (err) {
+              if (err.name === 'NotAllowedError' || err.name === 'SecurityError') throw err;
+              stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio });
+            }
+            stage.classList.remove('mirror');
+            showStep("<b>Step 1 of 2:</b> film the background with your back camera. Press the red button, then ■ Stop when you're done.");
+          } else if (two) {
             mixer = makeMixer(two.main, two.face, null, stage);
             mixer.mirror = true;
             mixer.twoCams = true;
@@ -1276,12 +1322,13 @@ async function showRecord() {
             }
             mixer = makeMixer(main, null, null, stage);
             mixer.single = true; mixer.sameCam = true; mixer.facing = 'user'; mixer.mirrorMain = true;
-            if (isPhone()) setTimeout(() => toast("This phone's browser can only use one camera at a time, so the background is from your front camera too."), 400);
           }
-          mixer.size = +bubbleSize.value;
-          Object.defineProperty(mixer, 'x', { get: () => bubble.x });
-          Object.defineProperty(mixer, 'y', { get: () => bubble.y });
-          stream = mixer.stream;
+          if (mixer) {
+            mixer.size = +bubbleSize.value;
+            Object.defineProperty(mixer, 'x', { get: () => bubble.x });
+            Object.defineProperty(mixer, 'y', { get: () => bubble.y });
+            stream = mixer.stream;
+          }
         } else if (source === 'both') {
           const screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
           let cam = null;
@@ -1421,6 +1468,23 @@ async function showRecord() {
       if (leaving) return;
       if (source === 'screen' || source === 'both') { stopStream(); showMsg('Press the red button to record your screen again.', false); }
       btnPause.hidden = btnStop.hidden = true;
+      if (dualStep === 2 && bgVideo) { bgVideo.pause(); showStep('<b>Done!</b> ↺ Record again redoes your face. Tap 😀 Face + background for a new background.'); }
+      if (dualStep === 1) {
+        btnStart.hidden = false;
+        if (!chunks.length) { toast('Nothing was recorded. Try again.'); return; }
+        // Background done: get it ready to play behind your face.
+        const bg = new Blob(chunks, { type: (recorder.mimeType || 'video/webm').split(';')[0] });
+        stopStream();
+        bgVideo = document.createElement('video');
+        bgVideo.playsInline = true; bgVideo.setAttribute('playsinline', ''); bgVideo.preload = 'auto';
+        bgVideo.src = URL.createObjectURL(bg);
+        dualStep = 2;
+        recLabel.textContent = 'Press the red button to film your face';
+        showMsg('Getting your background ready…', false);
+        bgVideo.addEventListener('loadeddata', () => { fixDuration(bgVideo).then(() => { bgVideo.currentTime = 0.05; startSource(); }); }, { once: true });
+        bgVideo.load();
+        return;
+      }
       btnStart.hidden = false;
       recLabel.textContent = 'Press the red button to record again';
       if (!chunks.length) { toast('Nothing was recorded. Try again.'); return; }
@@ -1437,6 +1501,12 @@ async function showRecord() {
       btnSave.textContent = 'Post video';
       review.scrollIntoView({ behavior: 'smooth' });
     };
+    if (dualStep === 2 && bgVideo) {
+      if (mixer && mixer.ac) mixer.ac.resume().catch(() => {});
+      bgVideo.currentTime = 0;
+      bgVideo.play().catch(() => { bgVideo.muted = true; bgVideo.play().catch(() => {}); });
+      bgVideo.onended = () => { if (recording()) recorder.stop(); };
+    }
     // Paused time is never written to the file, so breaks don't show up in the video.
     recorder.start(1000);
     review.hidden = true;
@@ -1458,8 +1528,8 @@ async function showRecord() {
   };
 
   btnPause.onclick = () => {
-    if (recorder.state === 'recording') { recorder.pause(); setPausedUi(true); }
-    else if (recorder.state === 'paused') { recorder.resume(); setPausedUi(false); }
+    if (recorder.state === 'recording') { recorder.pause(); setPausedUi(true); if (dualStep === 2 && bgVideo) bgVideo.pause(); }
+    else if (recorder.state === 'paused') { recorder.resume(); setPausedUi(false); if (dualStep === 2 && bgVideo) bgVideo.play().catch(() => {}); }
   };
   btnStop.onclick = () => { if (recording()) recorder.stop(); };
   btnRetake.onclick = () => { review.hidden = true; reviewPlayer.pause(); window.scrollTo(0, 0); btnStart.click(); };
