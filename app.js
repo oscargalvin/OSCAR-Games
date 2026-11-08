@@ -927,21 +927,22 @@ function makeMixer(screen, cam, faceImg) {
     v.srcObject = new MediaStream(src.getVideoTracks());
     v.play().catch(() => {});
   }
-  let mainStream = screen;
+  let mainStream = screen, sized = false;
   const m = { size: 0.26, x: 0.82, y: 0.74 };
   const set = screen.getVideoTracks()[0].getSettings();
   canvas.width = set.width || 1280; canvas.height = set.height || 720;
   function draw() {
-    if (sv.videoWidth && (sv.videoWidth !== canvas.width || sv.videoHeight !== canvas.height)) {
-      canvas.width = sv.videoWidth; canvas.height = sv.videoHeight;
-    }
+    // Pick the video size once, so switching cameras mid-video doesn't change it.
+    if (!sized && sv.videoWidth) { canvas.width = sv.videoWidth; canvas.height = sv.videoHeight; sized = true; }
     const W = canvas.width, H = canvas.height;
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     if (sv.videoWidth) {
-      if (m.mirrorMain) { ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1); ctx.drawImage(sv, 0, 0, W, H); ctx.restore(); }
-      else ctx.drawImage(sv, 0, 0, W, H);
+      // Fit the whole picture in (no stretching), centred.
+      const k = Math.min(W / sv.videoWidth, H / sv.videoHeight), w = sv.videoWidth * k, h = sv.videoHeight * k;
+      ctx.save(); ctx.translate(W / 2, H / 2); if (m.mirrorMain) ctx.scale(-1, 1);
+      ctx.drawImage(sv, -w / 2, -h / 2, w, h); ctx.restore();
     }
-    const fsrc = cam && cv.videoWidth ? cv : faceImg;
+    const fsrc = m.hideBubble ? null : cam && cv.videoWidth ? cv : faceImg;
     if (fsrc) {
       const fw = fsrc.videoWidth || fsrc.width, fh = fsrc.videoHeight || fsrc.height;
       const r = Math.min(W, H) * m.size / 2;
@@ -980,6 +981,14 @@ function makeMixer(screen, cam, faceImg) {
     } catch { out.addTrack(audioIn[0]); }
   }
   m.stream = out;
+  // Swap which picture is big and which is in the bubble (works mid-video).
+  m.swap = () => {
+    if (!cam) return;
+    const a = sv.srcObject; sv.srcObject = cv.srcObject; cv.srcObject = a;
+    sv.play().catch(() => {}); cv.play().catch(() => {});
+    [m.mirrorMain, m.mirror] = [!!m.mirror, !!m.mirrorMain];
+    m.swapped = !m.swapped;
+  };
   // Swap the big picture to another camera without stopping the recording.
   m.setMain = (st) => {
     mainStream.getVideoTracks().forEach((t) => t.stop());
@@ -1008,6 +1017,15 @@ async function showRecord() {
   let facing = 'user';      // which camera on a phone: 'user' = front (your face), 'environment' = back
   let mixer = null;         // screen + face: draws both onto one picture
   let singleCamNote = false;
+  const bubbleBtn = $('bubble-toggle');
+  // Buttons you can use any time, even in the middle of a video.
+  function paintLiveControls() {
+    bubbleBtn.hidden = !mixer || mixer.single;
+    if (mixer) bubbleBtn.textContent = mixer.hideBubble ? '😀 Show face bubble' : '🙈 Hide face bubble';
+    if (mixer && mixer.twoCams) flipBtn.textContent = '🔄 Swap big and small';
+    else if (mixer && mixer.single) flipBtn.textContent = mixer.facing === 'user' ? '🔄 Switch to the other way' : '🔄 Switch to your face';
+  }
+  bubbleBtn.onclick = () => { if (!mixer) return; mixer.hideBubble = !mixer.hideBubble; paintLiveControls(); };
   const bubble = { x: 0.82, y: 0.74 }; // where the face bubble sits (0..1 across and down)
   const btnStart = $('btn-start'), btnPause = $('btn-pause'), btnStop = $('btn-stop');
   const badge = $('rec-badge'), timer = $('timer'), pausedCover = $('paused-cover'), recLabel = $('rec-label');
@@ -1047,6 +1065,7 @@ async function showRecord() {
   mirror.onchange = () => stage.classList.toggle('mirror', mirror.checked && source === 'camera');
   const isPhone = () => matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   flipBtn.onclick = async () => {
+    if (mixer && mixer.twoCams) { mixer.swap(); return; }
     if (mixer && mixer.single) {
       const next = mixer.facing === 'user' ? 'environment' : 'user';
       flipBtn.disabled = true;
@@ -1055,7 +1074,7 @@ async function showRecord() {
         const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: next } });
         mixer.setMain(st);
         mixer.facing = next; mixer.mirrorMain = next === 'user';
-        flipBtn.textContent = next === 'user' ? '🔄 Switch to the other way' : '🔄 Switch to your face';
+        paintLiveControls();
       } catch { toast("The other camera couldn't start."); }
       flipBtn.disabled = false;
       return;
@@ -1142,6 +1161,7 @@ async function showRecord() {
     if (recording()) return;
     source = s;
     flipBtn.textContent = '🔄 Flip camera';
+    bubbleBtn.hidden = true;
     const cam = s === 'camera' || s === 'dual';
     srcCamera.classList.toggle('active', cam); srcCamera.setAttribute('aria-pressed', cam);
     dualBtn.setAttribute('aria-pressed', s === 'dual'); dualBtn.hidden = !cam;
@@ -1190,6 +1210,7 @@ async function showRecord() {
           if (two) {
             mixer = makeMixer(two.main, two.face);
             mixer.mirror = true;
+            mixer.twoCams = true;
           } else if (!isPhone() && canScreen) {
             // A computer with one camera: the other way is your screen.
             throw Object.assign(new Error('one camera'), { name: 'ToScreen' });
@@ -1266,10 +1287,10 @@ async function showRecord() {
       if (leaving) { stopStream(); return false; }
       preview.srcObject = stream;
       hideMsg();
+      paintLiveControls();
       if (singleCamNote) {
         singleCamNote = false;
         bubbleWrap.hidden = bubbleHint.hidden = true;
-        flipBtn.textContent = '🔄 Switch to the other way';
         toast("This phone can only use one camera at a time. Everything stays live: press 🔄 Switch any time, even while recording, to show the other way.");
       }
       listDevices();
@@ -1379,7 +1400,7 @@ async function showRecord() {
     btnPause.hidden = typeof recorder.pause !== 'function';
     btnStop.hidden = false;
     srcCamera.disabled = srcScreen.disabled = srcBoth.disabled = dualBtn.disabled = true;
-    flipBtn.disabled = !(mixer && mixer.single);
+    flipBtn.disabled = !(mixer && (mixer.single || mixer.twoCams));
     camSel.disabled = micSel.disabled = true;
   };
 

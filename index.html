@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f0f12">
   <title>VidGame</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 44'%3E %3Cpath d='M16 5h32c8 0 12.5 5.5 13.8 13.5l1.6 11c.9 6.3-4.2 10.4-9.3 7.6-2.8-1.6-5.4-4.7-7.6-7.6H17.5c-2.2 2.9-4.8 6-7.6 7.6C4.8 40.9-.3 36.8.6 30.5l1.6-11C3.5 10.5 8 5 16 5z' fill='%23000' stroke='%23fff' stroke-width='2.2' stroke-linejoin='round'/%3E %3Cpath d='M12.5 13.5h4v4h4v4h-4v4h-4v-4h-4v-4h4z' fill='%23fff'/%3E %3Ccircle cx='50' cy='14.5' r='2.6' fill='%23fff'/%3E %3Ccircle cx='55' cy='19.5' r='2.6' fill='%23fff'/%3E %3Ccircle cx='45' cy='19.5' r='2.6' fill='%23fff'/%3E %3Ccircle cx='50' cy='24.5' r='2.6' fill='%23fff'/%3E %3Crect x='24.5' y='13' width='15' height='11.5' rx='2.4' fill='%23fff'/%3E %3Crect x='28' y='10.6' width='5.5' height='3.2' rx='1' fill='%23fff'/%3E %3Ccircle cx='32' cy='18.75' r='4' fill='%23000'/%3E %3Ccircle cx='32' cy='18.75' r='2.1' fill='%23e11d48'/%3E %3Ccircle cx='37.2' cy='15.4' r='0.9' fill='%23e11d48'/%3E %3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=1794151439">
+  <link rel="stylesheet" href="style.css?v=1794151904">
 </head>
 <body>
   <header class="top">
@@ -273,6 +273,7 @@
         <button id="flip-cam" class="btn" title="Switch between your front and back camera">🔄 Flip camera</button>
         <button id="dual-cam" class="btn" aria-pressed="false" title="Your face in a bubble, plus whatever is the other way">😀 Your face + 🔄 the other way</button>
         <label class="check" id="mirror-wrap"><input id="mirror" type="checkbox" checked> Mirror</label>
+        <button id="bubble-toggle" class="btn" hidden>🙈 Hide face bubble</button>
         <label class="check" id="bubble-wrap" hidden>Face size <input id="bubble-size" type="range" min="0.15" max="0.45" step="0.01" value="0.26"></label>
       </div>
 
@@ -282,7 +283,7 @@
         <button id="btn-stop" class="btn btn-danger btn-big" hidden>■ Stop</button>
       </div>
       <p id="rec-label" class="rec-label">Press the red button to start recording</p>
-      <p id="bubble-hint" class="rec-limit muted" hidden>Drag your face bubble to move it anywhere on the video.</p>
+      <p id="bubble-hint" class="rec-limit muted" hidden>Drag your face bubble to move it anywhere. You can move it, resize it, hide it or swap it any time, even in the middle of a video.</p>
       <p class="rec-limit muted">Videos can be as short as you like, up to 48 hours long.</p>
 
       <div id="review" class="review" hidden>
@@ -298,6 +299,6 @@
     </section>
   </template>
 
-  <script src="app.js?v=1794151439"></script>
+  <script src="app.js?v=1794151904"></script>
 </body>
 </html>
