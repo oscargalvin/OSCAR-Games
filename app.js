@@ -912,7 +912,7 @@ function pickMimeType() {
 
 // Screen + face: draws the screen with your camera in a round bubble on top,
 // and mixes the screen's sound with your microphone, into one stream to record.
-function makeMixer(screen, cam) {
+function makeMixer(screen, cam, faceImg) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const sv = document.createElement('video'), cv = document.createElement('video');
@@ -932,23 +932,30 @@ function makeMixer(screen, cam) {
     const W = canvas.width, H = canvas.height;
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     if (sv.videoWidth) ctx.drawImage(sv, 0, 0, W, H);
-    if (cam && cv.videoWidth) {
+    const fsrc = cam && cv.videoWidth ? cv : faceImg;
+    if (fsrc) {
+      const fw = fsrc.videoWidth || fsrc.width, fh = fsrc.videoHeight || fsrc.height;
       const r = Math.min(W, H) * m.size / 2;
       const cx = Math.min(W - r - 4, Math.max(r + 4, m.x * W)), cy = Math.min(H - r - 4, Math.max(r + 4, m.y * H));
-      const s = Math.max((2 * r) / cv.videoWidth, (2 * r) / cv.videoHeight);
-      const w = cv.videoWidth * s, h = cv.videoHeight * s;
+      const s = Math.max((2 * r) / fw, (2 * r) / fh);
+      const w = fw * s, h = fh * s;
       ctx.save();
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
-      ctx.translate(cx, cy); if (m.mirror) ctx.scale(-1, 1);
-      ctx.drawImage(cv, -w / 2, -h / 2, w, h);
+      ctx.translate(cx, cy); if (m.mirror && fsrc === cv) ctx.scale(-1, 1);
+      ctx.drawImage(fsrc, -w / 2, -h / 2, w, h);
       ctx.restore();
       ctx.lineWidth = Math.max(3, r * 0.06); ctx.strokeStyle = '#fff';
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
     }
   }
   // A worker timer keeps drawing even when you switch to another tab or window.
-  const worker = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 33)'], { type: 'text/javascript' })));
-  worker.onmessage = draw;
+  let worker;
+  try {
+    worker = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 33)'], { type: 'text/javascript' })));
+    worker.onmessage = draw;
+  } catch {
+    const t = setInterval(draw, 33); worker = { terminate: () => clearInterval(t) };
+  }
   draw();
   const out = canvas.captureStream(30);
   // Sound: mix the screen's sound and your microphone together.
@@ -1055,6 +1062,54 @@ async function showRecord() {
     preview.onpointerup = preview.onpointercancel = () => { preview.onpointermove = null; };
   });
 
+  // Try to use two cameras at once (front + back on phones, two cameras on computers).
+  async function openTwoCameras(audio) {
+    let mainVideo = { facingMode: 'environment' }, faceVideo = { facingMode: 'user' };
+    if (!isPhone()) {
+      let cams = [];
+      try { cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput' && d.deviceId); } catch {}
+      if (cams.length < 2) return null;
+      const faceId = camSel.value && cams.some((c) => c.deviceId === camSel.value) ? camSel.value : cams[0].deviceId;
+      mainVideo = { deviceId: { exact: cams.find((c) => c.deviceId !== faceId).deviceId } };
+      faceVideo = { deviceId: { exact: faceId } };
+    }
+    let main = null, face = null;
+    const stopAll = () => [main, face].forEach((st) => st && st.getTracks().forEach((t) => t.stop()));
+    try { main = await navigator.mediaDevices.getUserMedia({ video: { ...mainVideo, width: { ideal: 1280 }, height: { ideal: 720 } }, audio }); }
+    catch { try { main = await navigator.mediaDevices.getUserMedia({ video: mainVideo }); } catch { return null; } }
+    try { face = await navigator.mediaDevices.getUserMedia({ video: { ...faceVideo, width: { ideal: 640 } } }); } catch {}
+    await new Promise((r) => setTimeout(r, 700)); // some phones switch the first camera off when the second one starts
+    const mt = main.getVideoTracks()[0], ft = face && face.getVideoTracks()[0];
+    const ok = ft && mt.readyState === 'live' && ft.readyState === 'live' && !mt.muted && !ft.muted &&
+      (!mt.getSettings().deviceId || mt.getSettings().deviceId !== ft.getSettings().deviceId);
+    if (!ok) { stopAll(); return null; }
+    return { main, face };
+  }
+  // Take a picture of your face with a 3-2-1 countdown, for devices with one camera at a time.
+  async function takeFacePicture() {
+    const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+    preview.srcObject = st;
+    stage.classList.add('mirror');
+    hideMsg();
+    await new Promise((r) => (preview.readyState >= 2 ? r() : preview.addEventListener('loadeddata', r, { once: true })));
+    for (const n of [3, 2, 1]) {
+      if (leaving) break;
+      toast(`📸 Smile! Taking a picture of your face for the bubble in ${n}…`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    const c = document.createElement('canvas');
+    const side = Math.min(preview.videoWidth, preview.videoHeight) || 480;
+    c.width = c.height = side;
+    const g = c.getContext('2d');
+    g.translate(side, 0); g.scale(-1, 1); // mirrored, like looking in a mirror
+    g.drawImage(preview, (preview.videoWidth - side) / 2, (preview.videoHeight - side) / 2, side, side, 0, 0, side, side);
+    st.getTracks().forEach((t) => t.stop());
+    preview.srcObject = null;
+    stage.classList.remove('mirror');
+    toast('📸 Got it!');
+    return c;
+  }
+
   function setSource(s) {
     if (recording()) return;
     source = s;
@@ -1099,34 +1154,28 @@ async function showRecord() {
             toast('No microphone found, recording without sound');
           }
         } else if (source === 'dual') {
-          // Your back camera films what you see, your front camera puts your face in a bubble.
-          showMsg('Starting both cameras… If your browser asks, press Allow.', false);
-          let mainVideo = { facingMode: facing === 'user' ? 'environment' : 'user' }, faceVideo = { facingMode: facing };
-          if (!isPhone()) {
-            // Computers: use two different cameras (e.g. webcam + a second camera or phone-as-webcam).
-            let cams = [];
-            try { cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput' && d.deviceId); } catch {}
-            if (cams.length < 2) {
-              throw Object.assign(new Error('one camera'), { name: 'DualError', oneCam: true });
-            }
-            const faceId = camSel.value && cams.some((c) => c.deviceId === camSel.value) ? camSel.value : cams[0].deviceId;
-            const mainId = cams.find((c) => c.deviceId !== faceId).deviceId;
-            mainVideo = { deviceId: { exact: mainId } }; faceVideo = { deviceId: { exact: faceId } };
+          // Your face in a bubble + the other way (what's in front of you).
+          showMsg('Starting your cameras… If your browser asks, press Allow.', false);
+          const audio = micSel.value ? { deviceId: { exact: micSel.value } } : true;
+          const two = await openTwoCameras(audio);
+          if (two) {
+            mixer = makeMixer(two.main, two.face);
+            mixer.mirror = true;
+          } else if (!isPhone() && canScreen) {
+            // A computer with one camera: the other way is your screen.
+            throw Object.assign(new Error('one camera'), { name: 'ToScreen' });
+          } else {
+            // Only one camera works at a time: take a picture of your face, then film the other way.
+            const faceImg = await takeFacePicture();
+            if (leaving) return false;
+            showMsg('Starting your other camera…', false);
+            let main;
+            try { main = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio }); }
+            catch { main = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); }
+            mixer = makeMixer(main, null, faceImg);
+            toast('Your device can only use one camera at a time, so your face is a picture in the bubble.');
           }
-          const main = await navigator.mediaDevices.getUserMedia({
-            video: { ...mainVideo, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: micSel.value ? { deviceId: { exact: micSel.value } } : true,
-          }).catch(() => navigator.mediaDevices.getUserMedia({ video: mainVideo }));
-          let face = null;
-          try { face = await navigator.mediaDevices.getUserMedia({ video: { ...faceVideo, width: { ideal: 640 } } }); } catch {}
-          if (!face || main.getVideoTracks()[0].readyState === 'ended') {
-            if (face) face.getTracks().forEach((t) => t.stop());
-            if (main.getVideoTracks()[0].readyState === 'ended') main.getTracks().forEach((t) => t.stop());
-            throw Object.assign(new Error("This device can't use both cameras at the same time."), { name: 'DualError' });
-          }
-          mixer = makeMixer(main, face);
           mixer.size = +bubbleSize.value;
-          mixer.mirror = facing === 'user';
           Object.defineProperty(mixer, 'x', { get: () => bubble.x });
           Object.defineProperty(mixer, 'y', { get: () => bubble.y });
           stream = mixer.stream;
@@ -1163,10 +1212,11 @@ async function showRecord() {
       } catch (e) {
         stream = null;
         if (leaving) return false;
-        if (e.name === 'DualError' && e.oneCam) {
-          showMsg('This computer only has one camera, so it can\'t film your face and something else at once. Plug in a second camera, or use 🖥 Screen + 😀 face to show your screen with your face on top.', false);
-        } else if (e.name === 'DualError') {
-          showMsg("Your device can't use both cameras at the same time. Press 📷 Camera to go back to one camera, or use 🔄 Flip camera.", false);
+        if (e.name === 'ToScreen') {
+          setTimeout(() => {
+            setSource('both');
+            showMsg('This computer has one camera, so the other way will be your screen. Press the red button and pick what to show. Your face goes in the bubble.', false);
+          });
         } else if (source === 'screen' || source === 'both') {
           showMsg(e.name === 'NotAllowedError'
             ? 'Screen recording was cancelled. Press the red button to try again.'
