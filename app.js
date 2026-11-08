@@ -14,8 +14,8 @@ function toast(msg) {
 function fmtTime(sec) {
   if (!isFinite(sec)) return '';
   sec = Math.round(sec);
-  const m = Math.floor(sec / 60), s = sec % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 function timeAgo(iso) {
   const s = (Date.now() - new Date(iso)) / 1000;
@@ -80,6 +80,43 @@ function noteWatched(v) {
   const w = watchedChannels(); w[v.channelId] = (w[v.channelId] || 0) + 1;
   prefs.set('watching', JSON.stringify(w));
 }
+// ⭐ Stars: favourite videos. VidGame: follow a channel (like subscribing).
+const MAX_SECONDS = 48 * 3600; // videos can be up to 48 hours long
+const SHORT_SECONDS = 60;      // a "short" is 1 minute or less
+function readJson(key) { try { return JSON.parse(prefs.get(key, '{}')) || {}; } catch { return {}; } }
+const starred = () => readJson('stars');
+const isStarred = (v) => !!starred()[v.id];
+function toggleStar(v) {
+  const s = starred();
+  if (s[v.id]) delete s[v.id]; else s[v.id] = Date.now();
+  prefs.set('stars', JSON.stringify(s));
+  return !!s[v.id];
+}
+const starCount = (v) => (v.baseStars || 0) + (isStarred(v) ? 1 : 0);
+const vidgamed = () => readJson('vidgamed');
+const isVidgamed = (channelId) => !!vidgamed()[channelId];
+function toggleVidgame(v) {
+  const g = vidgamed();
+  if (g[v.channelId]) delete g[v.channelId];
+  else g[v.channelId] = { name: v.channelName || 'Someone', badge: v.badge || {}, at: Date.now() };
+  prefs.set('vidgamed', JSON.stringify(g));
+  return !!g[v.channelId];
+}
+const vidgamerCount = (v) => (v.baseVidgamers || 0) + (isVidgamed(v.channelId) ? 1 : 0);
+const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+// Work out how long a video file is (in seconds).
+function probeDuration(blob) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    v.preload = 'metadata'; v.muted = true;
+    const url = URL.createObjectURL(blob);
+    const done = (d) => { URL.revokeObjectURL(url); resolve(d); };
+    v.onloadedmetadata = () => fixDuration(v).then(done);
+    v.onerror = () => done(NaN);
+    setTimeout(() => done(NaN), 8000);
+    v.src = url;
+  });
+}
 function viewsText(n) { n = n || 0; return `${n} view${n === 1 ? '' : 's'}`; }
 
 function render(id) {
@@ -109,13 +146,13 @@ async function tx(mode, fn) {
   });
 }
 // Example videos from the "VidGame Examples" channel, so Home always has something to watch.
-const EXAMPLES_CHANNEL = { channelId: 'vidgame-examples', channelName: 'VidGame Examples', badge: { type: 'emoji', emoji: '⭐', color: '#e11d48' } };
+const EXAMPLES_CHANNEL = { channelId: 'vidgame-examples', channelName: 'VidGame Examples', badge: { type: 'emoji', emoji: '⭐', color: '#e11d48' }, baseVidgamers: 1250 };
 const EXAMPLES = [
-  { id: 'ex-ball', title: 'Bouncing ball challenge', file: 'examples/ball.webm', hoursAgo: 5, baseViews: 128 },
-  { id: 'ex-tutorial', title: 'How to record a video on VidGame', file: 'tutorial.webm', hoursAgo: 20, baseViews: 210 },
-  { id: 'ex-count', title: 'Colour countdown 10 to 1', file: 'examples/count.webm', hoursAgo: 30, baseViews: 54 },
-  { id: 'ex-rocket', title: 'Rocket launch into space', file: 'examples/rocket.webm', hoursAgo: 60, baseViews: 342 },
-  { id: 'ex-wave', title: 'Waving at everyone', file: 'examples/wave.webm', hoursAgo: 400, baseViews: 87 },
+  { id: 'ex-ball', title: 'Bouncing ball challenge', file: 'examples/ball.webm', hoursAgo: 5, baseViews: 128, stars: 31, duration: 6 },
+  { id: 'ex-tutorial', title: 'How to record a video on VidGame', file: 'tutorial.webm', hoursAgo: 20, baseViews: 210, stars: 57, duration: 44 },
+  { id: 'ex-count', title: 'Colour countdown 10 to 1', file: 'examples/count.webm', hoursAgo: 30, baseViews: 54, stars: 9, duration: 6 },
+  { id: 'ex-rocket', title: 'Rocket launch into space', file: 'examples/rocket.webm', hoursAgo: 60, baseViews: 342, stars: 88, duration: 6 },
+  { id: 'ex-wave', title: 'Waving at everyone', file: 'examples/wave.webm', hoursAgo: 400, baseViews: 87, stars: 14, duration: 6 },
 ];
 function exampleVideos() {
   let first = +prefs.get('firstSeen', 0);
@@ -126,7 +163,7 @@ function exampleVideos() {
     ...EXAMPLES_CHANNEL,
     id: e.id, title: e.title, type: 'video/webm', size: 0, recorded: true, example: true,
     src: (window.VIDGAME_MEDIA && window.VIDGAME_MEDIA[e.file]) || e.file,
-    views: e.baseViews + (extra[e.id] || 0),
+    views: e.baseViews + (extra[e.id] || 0), baseStars: e.stars, duration: e.duration,
     createdAt: new Date(first - e.hoursAgo * 36e5).toISOString(),
   }));
 }
@@ -155,8 +192,10 @@ function mediaUrl(v) {
   if (!urls.has(v.id)) urls.set(v.id, URL.createObjectURL(v.blob));
   return urls.get(v.id);
 }
-async function uploadVideo(blob, title, recorded) {
+async function uploadVideo(blob, title, recorded, duration) {
   if (!blob.type.startsWith('video/')) throw new Error('That file is not a video.');
+  if (!isFinite(duration)) duration = await probeDuration(blob);
+  if (duration > MAX_SECONDS) throw new Error(`That video is ${fmtTime(duration)} long. Videos can be up to 48 hours.`);
   const v = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
     title: (title || 'Untitled video').slice(0, 120),
@@ -164,6 +203,7 @@ async function uploadVideo(blob, title, recorded) {
     size: blob.size,
     views: 0,
     recorded,
+    duration: isFinite(duration) ? duration : undefined,
     createdAt: new Date().toISOString(),
     channelId: myChannelId(),
     channelName: channelName(),
@@ -200,7 +240,12 @@ function fillGrid(grid, videos) {
     a.querySelector('h3').textContent = v.title;
     if (isMine(v)) { paintAvatar(a.querySelector('.avatar')); a.querySelector('.by-name').textContent = channelName(); }
     else { paintAvatar(a.querySelector('.avatar'), v.channelName || 'Someone', v.badge || {}); a.querySelector('.by-name').textContent = v.channelName || 'Someone'; }
-    a.querySelector('.stats').textContent = `${viewsText(v.views)} · ${timeAgo(v.createdAt)}`;
+    const stars = starCount(v);
+    a.querySelector('.stats').textContent = `${viewsText(v.views)}${stars ? ` · ⭐ ${stars}` : ''} · ${timeAgo(v.createdAt)}`;
+    if (v.duration <= SHORT_SECONDS) {
+      const tag = document.createElement('span'); tag.className = 'short-tag'; tag.textContent = '⚡ Short';
+      a.querySelector('.thumb').appendChild(tag);
+    }
     const vid = a.querySelector('video');
     vid.src = mediaUrl(v) + '#t=0.5';
     vid.addEventListener('loadedmetadata', async () => {
@@ -248,16 +293,19 @@ async function showHome() {
   const brandNew = videos.filter((v) => ageHours(v) < 24 * 7).slice(0, 12);
   // Popular right now: lots of views, and newer videos count for more.
   const popular = videos.filter((v) => (v.views || 0) > 0)
-    .map((v) => ({ v, score: (v.views || 0) / Math.pow(ageHours(v) + 2, 1.2) }))
+    .map((v) => ({ v, score: ((v.views || 0) + starCount(v) * 5) / Math.pow(ageHours(v) + 2, 1.2) }))
     .sort((x, y) => y.score - x.score).slice(0, 12).map((x) => x.v);
   // People you watch: channels you keep coming back to.
   const watched = watchedChannels();
-  const following = videos.filter((v) => !isMine(v) && watched[v.channelId])
-    .sort((x, y) => watched[y.channelId] - watched[x.channelId] || y.createdAt.localeCompare(x.createdAt)).slice(0, 12);
+  const weight = (v) => (watched[v.channelId] || 0) + (isVidgamed(v.channelId) ? 1000 : 0);
+  const following = videos.filter((v) => !isMine(v) && weight(v))
+    .sort((x, y) => weight(y) - weight(x) || y.createdAt.localeCompare(x.createdAt)).slice(0, 12);
+  const shorts = videos.filter((v) => v.duration <= SHORT_SECONDS).slice(0, 12);
 
   addShelf(box, '🆕 Brand new', 'Posted in the last 7 days', brandNew, true, 'New videos show up here as soon as they are posted.');
-  addShelf(box, '👀 People you watch', 'Channels you watch a lot', following, true, "Watch someone's video and their channel shows up here.");
+  addShelf(box, '👀 People you watch', "Channels you VidGame or watch a lot", following, true, "Watch someone's video and their channel shows up here.");
   addShelf(box, '🔥 Popular right now', 'Most watched lately', popular, true, 'Videos with the most views right now show up here.');
+  addShelf(box, '⚡ Shorts', '1 minute or less', shorts, true, 'Quick videos of 1 minute or less show up here.');
   addShelf(box, '📺 All videos', `${videos.length} video${videos.length === 1 ? '' : 's'}`, videos, false, 'No videos yet.', false, true);
 }
 showHome.token = 0;
@@ -761,6 +809,40 @@ async function showWatch(id) {
     document.querySelector('.watch-channel').removeAttribute('href');
     document.getElementById('delete').hidden = true;
   }
+  // ⭐ star button on the side
+  const starBtn = document.getElementById('star-btn');
+  const paintStar = () => {
+    const on = isStarred(v);
+    starBtn.setAttribute('aria-pressed', on);
+    starBtn.querySelector('.rail-icon').textContent = on ? '★' : '☆';
+    starBtn.title = on ? 'Starred. Press to un-star' : 'Star this video';
+    document.getElementById('star-count').textContent = starCount(v).toLocaleString();
+  };
+  paintStar();
+  starBtn.onclick = () => {
+    const on = toggleStar(v);
+    paintStar();
+    starBtn.classList.remove('pop'); void starBtn.offsetWidth; if (on) starBtn.classList.add('pop');
+    toast(on ? '⭐ Starred! Find it in Stars at the bottom.' : 'Star taken off');
+  };
+  // 🎮 VidGame button (like subscribing)
+  const vgBtn = document.getElementById('vidgame-btn'), vgCount = document.getElementById('watch-vidgamers');
+  const paintVg = () => {
+    vgCount.textContent = plural(vidgamerCount(v), 'VidGamer');
+    const on = isVidgamed(v.channelId);
+    vgBtn.textContent = on ? '✓ VidGamed' : '🎮 VidGame';
+    vgBtn.classList.toggle('on', on);
+  };
+  if (isMine(v)) vgCount.textContent = '';
+  else {
+    vgBtn.hidden = false;
+    paintVg();
+    vgBtn.onclick = () => {
+      const on = toggleVidgame(v);
+      paintVg();
+      toast(on ? `You VidGamed ${v.channelName || 'this channel'}! Their videos are in VidGames at the bottom.` : `You stopped VidGaming ${v.channelName || 'this channel'}`);
+    };
+  }
   document.getElementById('watch-info').textContent =
     `${viewsText(v.views)} · ${timeAgo(v.createdAt)}` + (v.example ? ' · Example video' : ` · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in VidGame' : ''}`);
   const dl = document.getElementById('download');
@@ -776,6 +858,44 @@ async function showWatch(id) {
     location.hash = '#/channel';
   };
   cleanup = () => { player.pause(); document.title = 'VidGame'; };
+}
+
+// ---------- Stars and VidGames pages ----------
+async function showStars() {
+  render('tpl-list');
+  document.getElementById('list-title').textContent = '⭐ Your stars';
+  document.getElementById('list-sub').textContent = 'Videos you starred. Press ☆ next to any video to add it here.';
+  let videos = [];
+  try { videos = await store.list(); } catch (e) { toast(e.message); }
+  const grid = document.getElementById('grid'); if (!grid) return;
+  const s = starred();
+  const mine = videos.filter((v) => s[v.id]).sort((a, b) => s[b.id] - s[a.id]);
+  if (mine.length) fillGrid(grid, mine);
+  else { document.getElementById('empty-text').textContent = "You haven't starred any videos yet."; document.getElementById('empty').hidden = false; }
+}
+async function showVidgames() {
+  render('tpl-list');
+  document.getElementById('list-title').textContent = '🎮 VidGames';
+  const g = vidgamed(), ids = Object.keys(g);
+  document.getElementById('list-sub').textContent = ids.length
+    ? `You VidGame ${plural(ids.length, 'channel')}. Their newest videos are here.`
+    : 'Press 🎮 VidGame under a video to follow that channel. Their videos show up here.';
+  const chips = document.getElementById('list-chips');
+  for (const id of ids) {
+    const c = document.createElement('span'); c.className = 'chip';
+    c.innerHTML = '<span class="avatar"></span><span class="chip-name"></span><button title="Stop VidGaming">✕</button>';
+    paintAvatar(c.querySelector('.avatar'), g[id].name, g[id].badge);
+    c.querySelector('.chip-name').textContent = g[id].name;
+    c.querySelector('button').setAttribute('aria-label', 'Stop VidGaming ' + g[id].name);
+    c.querySelector('button').onclick = () => { toggleVidgame({ channelId: id }); showVidgames(); };
+    chips.appendChild(c);
+  }
+  let videos = [];
+  try { videos = await store.list(); } catch (e) { toast(e.message); }
+  const grid = document.getElementById('grid'); if (!grid) return;
+  const list = videos.filter((v) => !isMine(v) && g[v.channelId]);
+  if (list.length) fillGrid(grid, list);
+  else { document.getElementById('empty-text').textContent = ids.length ? 'No videos from them yet.' : "You don't VidGame anyone yet."; document.getElementById('empty').hidden = false; }
 }
 
 // ---------- record ----------
@@ -983,7 +1103,11 @@ async function showRecord() {
     timer.textContent = '0:00';
     badge.hidden = false;
     setPausedUi(false);
-    tick = setInterval(() => { if (recorder.state === 'recording') timer.textContent = fmtTime(++elapsed); }, 1000);
+    tick = setInterval(() => {
+      if (recorder.state !== 'recording') return;
+      timer.textContent = fmtTime(++elapsed);
+      if (elapsed >= MAX_SECONDS) { toast('You reached 48 hours, the longest a video can be. Recording stopped.'); recorder.stop(); }
+    }, 1000);
     btnStart.hidden = true;
     btnPause.hidden = typeof recorder.pause !== 'function';
     btnStop.hidden = false;
@@ -1003,7 +1127,7 @@ async function showRecord() {
     btnSave.disabled = true;
     btnSave.textContent = 'Posting…';
     try {
-      const v = await uploadVideo(blob, titleInput.value.trim(), true);
+      const v = await uploadVideo(blob, titleInput.value.trim(), true, elapsed);
       toast('Video posted to your channel!');
       location.hash = '#/watch/' + v.id;
     } catch (e) {
@@ -1079,11 +1203,13 @@ function route() {
   const [, page, id] = location.hash.split('/');
   window.scrollTo(0, 0);
   document.querySelectorAll('.bottom-bar .tab').forEach((t) =>
-    t.classList.toggle('active', t.dataset.tab === (page === 'channel' ? 'channel' : !page ? 'home' : '')));
+    t.classList.toggle('active', t.dataset.tab === (['channel', 'stars', 'vidgames'].includes(page) ? page : !page ? 'home' : '')));
   refreshAvatars();
   if (page === 'record') return showRecord();
   if (page === 'watch' && id) return showWatch(id);
   if (page === 'channel') return showChannel();
+  if (page === 'stars') return showStars();
+  if (page === 'vidgames') return showVidgames();
   return showHome();
 }
 function runSearch() {
