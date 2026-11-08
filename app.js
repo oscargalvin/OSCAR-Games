@@ -337,10 +337,10 @@ function createColorPicker(holder, startHex, onChange) {
   holder.innerHTML = `<div class="cp">
       <canvas class="cp-sv" width="236" height="150" aria-label="Pick a shade"></canvas>
       <input class="cp-hue" type="range" min="0" max="359" aria-label="Pick a colour">
-      <div class="cp-row"><span class="cp-swatch"></span><input class="cp-hex" maxlength="7" aria-label="Colour code"><span class="cp-label">Drag in the box for lighter or darker</span></div>
+      <div class="cp-row"><span class="cp-swatch"></span><span class="cp-label">Slide the rainbow to pick a colour, then drag in the box for lighter or darker</span></div>
     </div>`;
   const sv = holder.querySelector('.cp-sv'), ctx = sv.getContext('2d');
-  const hue = holder.querySelector('.cp-hue'), sw = holder.querySelector('.cp-swatch'), hexIn = holder.querySelector('.cp-hex');
+  const hue = holder.querySelector('.cp-hue'), sw = holder.querySelector('.cp-swatch');
   let st = hexToHsv(startHex || '#e11d48');
   const W = sv.width, H = sv.height;
   function draw() {
@@ -353,10 +353,9 @@ function createColorPicker(holder, startHex, onChange) {
     ctx.lineWidth = 3; ctx.strokeStyle = st.v > 0.5 && st.s < 0.5 ? '#000' : '#fff';
     ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.stroke();
   }
-  function emit(fromHex) {
+  function emit() {
     const hex = hsvToHex(st.h, st.s, st.v);
     sw.style.background = hex;
-    if (!fromHex) hexIn.value = hex.toUpperCase();
     hue.value = Math.round(st.h);
     draw();
     onChange(hex);
@@ -372,15 +371,10 @@ function createColorPicker(holder, startHex, onChange) {
   sv.addEventListener('pointermove', (e) => { if (dragging) pick(e); });
   sv.addEventListener('pointerup', () => { dragging = false; });
   hue.addEventListener('input', () => { st.h = +hue.value; if (st.s < 0.05 && st.v > 0.95) { st.s = 1; } emit(); });
-  hexIn.addEventListener('input', () => {
-    let v = hexIn.value.trim(); if (!v.startsWith('#')) v = '#' + v;
-    if (/^#[0-9a-f]{6}$/i.test(v)) { st = hexToHsv(v.toLowerCase()); emit(true); }
-  });
   sw.style.background = hsvToHex(st.h, st.s, st.v);
-  hexIn.value = hsvToHex(st.h, st.s, st.v).toUpperCase();
   hue.value = Math.round(st.h);
   draw();
-  return { set(hex) { st = hexToHsv(hex); sw.style.background = hex; hexIn.value = hex.toUpperCase(); hue.value = Math.round(st.h); draw(); } };
+  return { set(hex) { st = hexToHsv(hex); sw.style.background = hex; hue.value = Math.round(st.h); draw(); } };
 }
 
 // ---------- drawing pad for the badge ----------
