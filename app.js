@@ -25,9 +25,17 @@ function timeAgo(iso) {
 }
 function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'; }
 // Small saved settings (channel name, tutorial seen). Storage can be blocked, so never rely on it.
+// If the browser blocks saving (private window, strict settings), keep settings in memory so things still work until you close the tab.
+const memoryPrefs = {};
 const prefs = {
-  get(k, d) { try { const v = localStorage.getItem('vidgame.' + k); return v === null ? d : v; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('vidgame.' + k, v); } catch {} },
+  get(k, d) {
+    try { const v = localStorage.getItem('vidgame.' + k); if (v !== null) return v; } catch {}
+    return k in memoryPrefs ? memoryPrefs[k] : d;
+  },
+  set(k, v) {
+    memoryPrefs[k] = v;
+    try { localStorage.setItem('vidgame.' + k, v); } catch { prefs.blocked = true; }
+  },
 };
 const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#16a34a', '#ca8a04', '#ea580c', '#e11d48', '#db2777', '#4f46e5', '#0891b2', '#475569', '#111827'];
 const BADGE_EMOJIS = ['😎', '🎮', '🔥', '⚽', '🏀', '🚀', '🦖', '🐱', '🐶', '🦊', '🐼', '🦁', '🐸', '👾', '🤖', '👻', '💎', '⭐', '🌈', '🍕', '🎸', '🏆', '⚡', '🎬'];
@@ -412,11 +420,10 @@ function setupBadgeEditor(onSaved) {
       draft.drawing = pad.export();
     }
     prefs.set('badge', JSON.stringify(draft));
-    if (getBadge().type !== draft.type) { toast("Your browser couldn't save the badge"); return; }
     editor.hidden = true;
     refreshAvatars();
     onSaved();
-    toast('Badge saved');
+    toast(prefs.blocked ? "Badge changed. Your browser won't keep it after you close this tab." : 'Badge saved');
   };
 }
 
