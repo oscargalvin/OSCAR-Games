@@ -1259,7 +1259,7 @@ async function showRecord() {
           // Your face in a bubble + the other way (what's in front of you).
           showMsg('Starting your cameras… If your browser asks, press Allow.', false);
           const audio = micSel.value ? { deviceId: { exact: micSel.value } } : true;
-          const two = isPhone() ? null : await openTwoCameras(audio);
+          const two = await openTwoCameras(audio);
           if (two) {
             mixer = makeMixer(two.main, two.face, null, stage);
             mixer.mirror = true;
@@ -1276,6 +1276,7 @@ async function showRecord() {
             }
             mixer = makeMixer(main, null, null, stage);
             mixer.single = true; mixer.sameCam = true; mixer.facing = 'user'; mixer.mirrorMain = true;
+            if (isPhone()) setTimeout(() => toast("This phone's browser can only use one camera at a time, so the background is from your front camera too."), 400);
           }
           mixer.size = +bubbleSize.value;
           Object.defineProperty(mixer, 'x', { get: () => bubble.x });
