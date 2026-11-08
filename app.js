@@ -59,6 +59,19 @@ function paintAvatar(el, name = channelName(), badge = getBadge()) {
   }
 }
 function refreshAvatars() { document.querySelectorAll('#tab-avatar, #ch-avatar, #watch-avatar').forEach((el) => paintAvatar(el)); }
+function myChannelId() {
+  let id = prefs.get('channelId', '');
+  if (!id) { id = 'ch_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); prefs.set('channelId', id); }
+  return id;
+}
+const isMine = (v) => !v.channelId || v.channelId === myChannelId();
+// Which channels you watch, and how often, for the "People you watch" section.
+function watchedChannels() { try { return JSON.parse(prefs.get('watching', '{}')) || {}; } catch { return {}; } }
+function noteWatched(v) {
+  if (isMine(v)) return;
+  const w = watchedChannels(); w[v.channelId] = (w[v.channelId] || 0) + 1;
+  prefs.set('watching', JSON.stringify(w));
+}
 function viewsText(n) { n = n || 0; return `${n} view${n === 1 ? '' : 's'}`; }
 
 function render(id) {
@@ -111,6 +124,9 @@ async function uploadVideo(blob, title, recorded) {
     views: 0,
     recorded,
     createdAt: new Date().toISOString(),
+    channelId: myChannelId(),
+    channelName: channelName(),
+    badge: getBadge(),
     blob,
   };
   await store.put(v);
@@ -141,8 +157,8 @@ function fillGrid(grid, videos) {
       <div class="thumb"><video muted preload="metadata" playsinline></video><span class="duration" hidden></span></div>
       <h3></h3><p class="by"><span class="avatar"></span><span class="by-name"></span></p><p class="stats"></p>`;
     a.querySelector('h3').textContent = v.title;
-    paintAvatar(a.querySelector('.avatar'));
-    a.querySelector('.by-name').textContent = channelName();
+    if (isMine(v)) { paintAvatar(a.querySelector('.avatar')); a.querySelector('.by-name').textContent = channelName(); }
+    else { paintAvatar(a.querySelector('.avatar'), v.channelName || 'Someone', v.badge || {}); a.querySelector('.by-name').textContent = v.channelName || 'Someone'; }
     a.querySelector('.stats').textContent = `${viewsText(v.views)} · ${timeAgo(v.createdAt)}`;
     const vid = a.querySelector('video');
     vid.src = mediaUrl(v) + '#t=0.5';
@@ -171,12 +187,47 @@ async function showHome() {
   wirePostButtons();
   let videos = [];
   try { videos = await store.list(); } catch (e) { toast(e.message); }
+  const box = document.getElementById('sections');
+  if (!box || !document.getElementById('home-tut-video')) return; // you moved to another page
+  const empty = document.getElementById('empty');
   const q = searchBox.value.trim().toLowerCase();
-  if (q) videos = videos.filter((v) => v.title.toLowerCase().includes(q));
-  document.getElementById('empty').hidden = videos.length > 0;
-  if (q && !videos.length) document.querySelector('#empty p').textContent = `No videos match "${searchBox.value}".`;
-  const grid = document.getElementById('grid');
-  if (grid && document.getElementById('home-tut-video')) fillGrid(grid, videos);
+  if (q) {
+    const found = videos.filter((v) => v.title.toLowerCase().includes(q) || (v.channelName || '').toLowerCase().includes(q));
+    document.getElementById('featured').hidden = true;
+    empty.hidden = found.length > 0;
+    empty.querySelector('p').textContent = `No videos match "${searchBox.value}".`;
+    if (found.length) addShelf(box, `Search results for "${searchBox.value}"`, `${found.length} found`, found, false);
+    return;
+  }
+  empty.hidden = videos.length > 0;
+  if (!videos.length) return;
+  const now = Date.now();
+  const ageHours = (v) => (now - new Date(v.createdAt)) / 36e5;
+
+  // Brand new: posted in the last 7 days, newest first.
+  const brandNew = videos.filter((v) => ageHours(v) < 24 * 7).slice(0, 12);
+  // Popular right now: lots of views, and newer videos count for more.
+  const popular = videos.filter((v) => (v.views || 0) > 0)
+    .map((v) => ({ v, score: (v.views || 0) / Math.pow(ageHours(v) + 2, 1.2) }))
+    .sort((x, y) => y.score - x.score).slice(0, 12).map((x) => x.v);
+  // People you watch: channels you keep coming back to.
+  const watched = watchedChannels();
+  const following = videos.filter((v) => !isMine(v) && watched[v.channelId])
+    .sort((x, y) => watched[y.channelId] - watched[x.channelId] || y.createdAt.localeCompare(x.createdAt)).slice(0, 12);
+
+  if (brandNew.length) addShelf(box, '🆕 Brand new', 'Just posted', brandNew, true);
+  if (popular.length) addShelf(box, '🔥 Popular right now', 'Most watched lately', popular, true);
+  if (following.length) addShelf(box, '👀 People you watch', 'Channels you watch a lot', following, true);
+  addShelf(box, '📺 All videos', `${videos.length} video${videos.length === 1 ? '' : 's'}`, videos, false);
+}
+function addShelf(box, title, sub, videos, asRow) {
+  const sec = document.createElement('section');
+  sec.className = 'shelf';
+  sec.innerHTML = `<div class="shelf-head"><h2></h2><small></small></div><div class="${asRow ? 'row' : 'grid'}"></div>`;
+  sec.querySelector('h2').textContent = title;
+  sec.querySelector('small').textContent = sub;
+  box.appendChild(sec);
+  fillGrid(sec.lastElementChild, videos);
 }
 
 // ---------- your channel ----------
@@ -207,7 +258,7 @@ async function showChannel() {
   setupBadgeEditor(() => { paint(); showChannelVideos(); });
   async function showChannelVideos() {
     let videos = [];
-    try { videos = await store.list(); } catch (e) { toast(e.message); }
+    try { videos = (await store.list()).filter(isMine); } catch (e) { toast(e.message); }
     const views = videos.reduce((n, v) => n + (v.views || 0), 0);
     if (!document.getElementById('ch-stats')) return;
     document.getElementById('ch-stats').textContent =
@@ -534,6 +585,7 @@ async function showWatch(id) {
     if (!v) throw new Error('Video not found.');
     v.views = (v.views || 0) + 1;
     await store.put(v);
+    noteWatched(v);
   } catch (e) { app.innerHTML = `<p class="empty">${e.message} <a class="btn" href="#/">Back</a></p>`; return; }
   const player = document.getElementById('player');
   if (!player) return; // you already moved to another page
@@ -541,8 +593,15 @@ async function showWatch(id) {
   player.addEventListener('loadedmetadata', () => fixDuration(player).then(() => player.play().catch(() => {})), { once: true });
   document.getElementById('watch-title').textContent = v.title;
   document.title = v.title + ' · VidGame';
-  document.getElementById('watch-channel').textContent = channelName();
-  paintAvatar(document.getElementById('watch-avatar'));
+  if (isMine(v)) {
+    document.getElementById('watch-channel').textContent = channelName();
+    paintAvatar(document.getElementById('watch-avatar'));
+  } else {
+    document.getElementById('watch-channel').textContent = v.channelName || 'Someone';
+    paintAvatar(document.getElementById('watch-avatar'), v.channelName || 'Someone', v.badge || {});
+    document.querySelector('.watch-channel').removeAttribute('href');
+    document.getElementById('delete').hidden = true;
+  }
   document.getElementById('watch-info').textContent =
     `${viewsText(v.views)} · ${timeAgo(v.createdAt)} · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in VidGame' : ''}`;
   const dl = document.getElementById('download');

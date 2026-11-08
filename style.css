@@ -372,3 +372,16 @@ select {
   background: var(--panel); color: var(--text); font: 600 15px ui-monospace, Menlo, Consolas, monospace; text-transform: uppercase;
 }
 .cp-label { font-size: 12px; color: var(--muted); }
+
+/* ---------- home sections ---------- */
+.sections { display: grid; gap: 30px; }
+.shelf { display: grid; gap: 12px; min-width: 0; }
+.shelf-head { display: flex; align-items: baseline; gap: 10px; }
+.shelf-head h2 { margin: 0; font-size: 19px; }
+.shelf-head small { color: var(--muted); font-size: 13px; }
+.row {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 280px); gap: 16px;
+  overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; overscroll-behavior-x: contain;
+}
+.row > .card { scroll-snap-align: start; }
+@media (max-width: 640px) { .row { grid-auto-columns: 78%; } }
