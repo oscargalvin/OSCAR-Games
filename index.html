@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OscarTube</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23e11d48'/><path d='M9 7l8 5-8 5z' fill='white'/></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="#/"><span class="logo-mark">▶</span> OscarTube</a>
+    <input id="search" class="search" type="search" placeholder="Search videos">
+    <nav class="actions">
+      <a class="btn btn-primary" href="#/record">● Record</a>
+      <label class="btn">
+        ⬆ Upload
+        <input id="upload-input" type="file" accept="video/*" hidden>
+      </label>
+    </nav>
+  </header>
+
+  <main id="app"></main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <template id="tpl-home">
+    <section>
+      <h1 class="page-title">Videos</h1>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty" hidden>
+        <p>No videos yet.</p>
+        <a class="btn btn-primary" href="#/record">● Record your first video</a>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-watch">
+    <section class="watch">
+      <video id="player" class="player" controls autoplay playsinline></video>
+      <h1 id="watch-title" class="watch-title"></h1>
+      <div class="watch-meta">
+        <span id="watch-info"></span>
+        <span class="spacer"></span>
+        <a id="download" class="btn" download>⬇ Download</a>
+        <button id="delete" class="btn btn-danger">Delete</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-record">
+    <section class="record">
+      <h1 class="page-title">Record a video</h1>
+      <div class="stage">
+        <video id="preview" class="player" autoplay muted playsinline></video>
+        <div id="rec-badge" class="rec-badge" hidden><span class="dot"></span> <span id="timer">0:00</span></div>
+        <div id="cam-msg" class="cam-msg">Starting camera…</div>
+      </div>
+
+      <div class="controls">
+        <select id="camera-select" title="Camera"></select>
+        <select id="mic-select" title="Microphone"></select>
+        <label class="check"><input id="mirror" type="checkbox" checked> Mirror</label>
+      </div>
+
+      <div class="controls">
+        <button id="btn-start" class="btn btn-primary btn-big" disabled>● Start recording</button>
+        <button id="btn-pause" class="btn btn-big" hidden>❚❚ Pause</button>
+        <button id="btn-stop" class="btn btn-danger btn-big" hidden>■ Stop</button>
+      </div>
+
+      <div id="review" class="review" hidden>
+        <h2>Your recording</h2>
+        <video id="review-player" class="player" controls playsinline></video>
+        <input id="title" class="title-input" type="text" maxlength="120" placeholder="Give your video a title">
+        <div class="controls">
+          <button id="btn-save" class="btn btn-primary btn-big">Save video</button>
+          <a id="btn-download-rec" class="btn btn-big" download="recording.webm">⬇ Download</a>
+          <button id="btn-retake" class="btn btn-big">↺ Record again</button>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
