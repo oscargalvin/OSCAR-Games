@@ -137,23 +137,35 @@
   <template id="tpl-record">
     <section class="record">
       <h1 class="page-title">Record a video</h1>
+      <div class="source-toggle" role="group" aria-label="What to record">
+        <button id="src-camera" class="src-btn active" aria-pressed="true">📷 Camera</button>
+        <button id="src-screen" class="src-btn" aria-pressed="false">🖥 Screen</button>
+      </div>
       <div class="stage">
         <video id="preview" class="player" autoplay muted playsinline></video>
         <div id="rec-badge" class="rec-badge" hidden><span class="dot"></span> <span id="timer">0:00</span></div>
-        <div id="cam-msg" class="cam-msg">Starting camera…</div>
+        <div id="paused-cover" class="paused-cover" hidden>
+          <strong>❚❚ Paused</strong>
+          <span>Take a break. This part won't be in your video.</span>
+        </div>
+        <div id="cam-msg" class="cam-msg">
+          <p id="cam-msg-text">Starting camera…</p>
+          <button id="cam-retry" class="btn" hidden>Try again</button>
+        </div>
       </div>
 
       <div class="controls">
-        <select id="camera-select" title="Camera"></select>
-        <select id="mic-select" title="Microphone"></select>
-        <label class="check"><input id="mirror" type="checkbox" checked> Mirror</label>
+        <select id="camera-select" title="Camera" aria-label="Camera" hidden></select>
+        <select id="mic-select" title="Microphone" aria-label="Microphone" hidden></select>
+        <label class="check" id="mirror-wrap"><input id="mirror" type="checkbox" checked> Mirror</label>
       </div>
 
-      <div class="controls">
-        <button id="btn-start" class="btn btn-primary btn-big" disabled>● Start recording</button>
+      <div class="rec-controls">
         <button id="btn-pause" class="btn btn-big" hidden>❚❚ Pause</button>
+        <button id="btn-start" class="rec-btn" aria-label="Start recording"><span></span></button>
         <button id="btn-stop" class="btn btn-danger btn-big" hidden>■ Stop</button>
       </div>
+      <p id="rec-label" class="rec-label">Press the red button to start recording</p>
 
       <div id="review" class="review" hidden>
         <h2>Your recording</h2>

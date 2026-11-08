@@ -86,10 +86,10 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 20px calc(110px + env(sa
 .stage { position: relative; }
 .stage.mirror #preview { transform: scaleX(-1); }
 .cam-msg {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  color: var(--muted); text-align: center; padding: 20px;
+  position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 12px;
+  color: var(--text); text-align: center; padding: 20px; background: rgba(0,0,0,0.55); border-radius: var(--radius);
 }
-.cam-msg:empty { display: none; }
+.cam-msg p { margin: 0; max-width: 46ch; }
 .rec-badge {
   position: absolute; top: 14px; left: 14px;
   display: flex; align-items: center; gap: 8px;
@@ -254,3 +254,27 @@ select {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
 }
+
+/* ---------- recorder ---------- */
+.source-toggle { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
+.src-btn {
+  padding: 8px 16px; border-radius: 999px; border: 1px solid var(--panel-2);
+  background: var(--panel); color: var(--muted); font: inherit; font-weight: 600; cursor: pointer;
+}
+.src-btn.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.src-btn:disabled { opacity: 0.5; cursor: default; }
+.rec-controls { display: flex; align-items: center; justify-content: center; gap: 18px; margin-top: 18px; min-height: 84px; }
+.rec-btn {
+  width: 78px; height: 78px; border-radius: 50%; border: 5px solid var(--text); background: transparent;
+  display: grid; place-items: center; cursor: pointer; padding: 0; flex: none;
+}
+.rec-btn span { width: 58px; height: 58px; border-radius: 50%; background: var(--accent); transition: all 0.2s; }
+.rec-btn:hover span { transform: scale(0.94); }
+.rec-btn:disabled { opacity: 0.4; cursor: default; }
+.rec-label { text-align: center; color: var(--muted); margin: 8px 0 0; }
+.paused-cover {
+  position: absolute; inset: 0; border-radius: var(--radius); background: rgba(0,0,0,0.6);
+  display: grid; place-content: center; text-align: center; gap: 6px; padding: 16px;
+}
+.paused-cover strong { font-size: 24px; }
+.paused-cover span { color: var(--muted); }

@@ -244,28 +244,26 @@ function pickMimeType() {
 
 async function showRecord() {
   render('tpl-record');
-  const preview = document.getElementById('preview');
-  const stage = document.querySelector('.stage');
-  const msg = document.getElementById('cam-msg');
-  const camSel = document.getElementById('camera-select');
-  const micSel = document.getElementById('mic-select');
-  const mirror = document.getElementById('mirror');
-  const btnStart = document.getElementById('btn-start');
-  const btnPause = document.getElementById('btn-pause');
-  const btnStop = document.getElementById('btn-stop');
-  const badge = document.getElementById('rec-badge');
-  const timer = document.getElementById('timer');
-  const review = document.getElementById('review');
-  const reviewPlayer = document.getElementById('review-player');
-  const titleInput = document.getElementById('title');
-  const btnSave = document.getElementById('btn-save');
-  const btnDl = document.getElementById('btn-download-rec');
-  const btnRetake = document.getElementById('btn-retake');
+  const $ = (id) => document.getElementById(id);
+  const preview = $('preview'), stage = document.querySelector('.stage');
+  const msgBox = $('cam-msg'), msgText = $('cam-msg-text'), retry = $('cam-retry');
+  const camSel = $('camera-select'), micSel = $('mic-select'), mirror = $('mirror'), mirrorWrap = $('mirror-wrap');
+  const srcCamera = $('src-camera'), srcScreen = $('src-screen');
+  const btnStart = $('btn-start'), btnPause = $('btn-pause'), btnStop = $('btn-stop');
+  const badge = $('rec-badge'), timer = $('timer'), pausedCover = $('paused-cover'), recLabel = $('rec-label');
+  const review = $('review'), reviewPlayer = $('review-player'), titleInput = $('title');
+  const btnSave = $('btn-save'), btnDl = $('btn-download-rec'), btnRetake = $('btn-retake');
 
+  let source = 'camera';
   let stream = null, recorder = null, chunks = [], blob = null, blobUrl = null;
-  let elapsed = 0, tick = null, leaving = false;
+  let elapsed = 0, tick = null, leaving = false, starting = null;
 
-  const stopStream = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; };
+  const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
+  const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  const canScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  if (!canScreen) srcScreen.hidden = true;
+
+  const stopStream = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; preview.srcObject = null; };
   cleanup = () => {
     leaving = true;
     if (recorder && recorder.state !== 'inactive') recorder.stop();
@@ -274,47 +272,97 @@ async function showRecord() {
     if (blobUrl) URL.revokeObjectURL(blobUrl);
   };
 
-  mirror.onchange = () => stage.classList.toggle('mirror', mirror.checked);
-  stage.classList.toggle('mirror', mirror.checked);
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
-    msg.textContent = 'This browser cannot record video. Try Chrome or Edge.';
-    return;
+  function showMsg(text, withRetry) {
+    msgText.textContent = text;
+    retry.hidden = !withRetry;
+    msgBox.hidden = false;
   }
+  function hideMsg() { msgBox.hidden = true; }
+  const recording = () => recorder && recorder.state !== 'inactive';
 
-  async function startCamera() {
+  mirror.onchange = () => stage.classList.toggle('mirror', mirror.checked && source === 'camera');
+
+  function setSource(s) {
+    if (recording()) return;
+    source = s;
+    srcCamera.classList.toggle('active', s === 'camera'); srcCamera.setAttribute('aria-pressed', s === 'camera');
+    srcScreen.classList.toggle('active', s === 'screen'); srcScreen.setAttribute('aria-pressed', s === 'screen');
+    camSel.hidden = mirrorWrap.hidden = s === 'screen';
+    stage.classList.toggle('mirror', mirror.checked && s === 'camera');
     stopStream();
-    msg.textContent = 'Starting camera…';
-    btnStart.disabled = true;
-    const video = camSel.value ? { deviceId: { exact: camSel.value } } : {};
-    const audio = micSel.value ? { deviceId: { exact: micSel.value } } : true;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...video },
-        audio,
-      });
-    } catch (e) {
-      // Fall back to camera only if there is no microphone.
-      try { stream = await navigator.mediaDevices.getUserMedia({ video: true }); toast('No microphone found, recording without sound'); }
-      catch (e2) {
-        const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
-        msg.textContent = e2.name === 'NotAllowedError'
-          ? (inFrame
-            ? "This preview window can't use your camera. Open VidGame in its own browser tab to record. You can still upload a video with ＋ Post."
-            : 'Camera access was blocked. Click the camera icon in the address bar, allow it, then reload the page.')
-          : 'No camera found. Plug one in and reload the page.';
-        return;
-      }
-    }
-    if (leaving) return stopStream();
-    preview.srcObject = stream;
-    msg.textContent = '';
-    btnStart.disabled = false;
-    await listDevices();
+    if (s === 'camera') startCamera();
+    else showMsg('Press the red button, then pick the screen or window you want to record.', false);
   }
+  srcCamera.onclick = () => setSource('camera');
+  srcScreen.onclick = () => setSource('screen');
+
+  // Turn on the camera (or screen). Returns true when there is something to record.
+  async function startSource() {
+    if (stream) return true;
+    if (starting) return starting;
+    starting = (async () => {
+      if (!canRecord) { showMsg("This browser can't record video. Open VidGame in Chrome, Edge or Safari.", false); return false; }
+      try {
+        if (source === 'camera') {
+          showMsg('Starting camera… If your browser asks, press Allow.', false);
+          const video = camSel.value ? { deviceId: { exact: camSel.value } } : {};
+          const audio = micSel.value ? { deviceId: { exact: micSel.value } } : true;
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...video }, audio });
+          } catch (e) {
+            if (e.name === 'NotAllowedError' || e.name === 'SecurityError') throw e;
+            // Maybe there's no microphone, or the chosen device is gone: try camera only.
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            toast('No microphone found, recording without sound');
+          }
+        } else {
+          const screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+          // Add the microphone so you can talk over the screen recording.
+          try {
+            const mic = await navigator.mediaDevices.getUserMedia({ audio: micSel.value ? { deviceId: { exact: micSel.value } } : true });
+            mic.getAudioTracks().forEach((t) => screen.addTrack(t));
+          } catch {}
+          stream = screen;
+          // If you press the browser's "Stop sharing" button, finish the recording.
+          stream.getVideoTracks()[0].addEventListener('ended', () => { if (recording()) recorder.stop(); else stopStream(); });
+        }
+      } catch (e) {
+        stream = null;
+        if (leaving) return false;
+        if (source === 'screen') {
+          showMsg(e.name === 'NotAllowedError'
+            ? 'Screen recording was cancelled. Press the red button to try again.'
+            : "Screen recording couldn't start on this device. Try the 📷 Camera instead.", false);
+        } else if (e.name === 'NotAllowedError' || e.name === 'SecurityError') {
+          if (inFrame) showMsg("This preview window can't use your camera. Open VidGame in its own browser tab to record, or use ＋ Post to upload a video.", false);
+          else showMsg('Your browser blocked the camera. Click the camera icon in the address bar, choose Allow, then press Try again.', true);
+        } else if (e.name === 'NotFoundError' || e.name === 'OverconstrainedError') {
+          showMsg(canScreen
+            ? "No camera was found on this device. Plug one in and press Try again, or switch to 🖥 Screen to record your screen instead."
+            : 'No camera was found on this device. Plug one in and press Try again.', true);
+        } else if (e.name === 'NotReadableError') {
+          showMsg('Your camera is being used by another app (like Zoom or Teams). Close it, then press Try again.', true);
+        } else {
+          showMsg("The camera couldn't start (" + (e.message || e.name) + '). Press Try again.', true);
+        }
+        return false;
+      }
+      if (leaving) { stopStream(); return false; }
+      preview.srcObject = stream;
+      hideMsg();
+      listDevices();
+      return true;
+    })();
+    const ok = await starting;
+    starting = null;
+    return ok;
+  }
+  function startCamera() { return startSource(); }
+  retry.onclick = () => { stopStream(); startSource(); };
 
   async function listDevices() {
-    const devices = await navigator.mediaDevices.enumerateDevices();
+    let devices = [];
+    try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { return; }
     const fill = (sel, kind, label) => {
       const current = stream && stream.getTracks().find((t) => t.kind === kind.replace('input', ''));
       const currentId = current && current.getSettings().deviceId;
@@ -326,24 +374,47 @@ async function showRecord() {
         if (d.deviceId === currentId) o.selected = true;
         sel.appendChild(o);
       });
-      sel.hidden = sel.options.length < 2;
+      sel.hidden = sel.options.length < 2 || (kind === 'videoinput' && source === 'screen');
     };
     fill(camSel, 'videoinput', 'Camera');
     fill(micSel, 'audioinput', 'Microphone');
   }
-  camSel.onchange = startCamera;
-  micSel.onchange = startCamera;
+  camSel.onchange = () => { stopStream(); startSource(); };
+  micSel.onchange = () => { stopStream(); startSource(); };
 
-  btnStart.onclick = () => {
-    if (!stream) return;
+  function setPausedUi(p) {
+    pausedCover.hidden = !p;
+    badge.classList.toggle('paused', p);
+    btnPause.textContent = p ? '▶ Resume' : '❚❚ Pause';
+    recLabel.textContent = p ? 'Paused. Press Resume to keep going.' : 'Recording… press Pause for a break or Stop when you are done';
+  }
+
+  btnStart.onclick = async () => {
+    if (recording()) return;
+    btnStart.disabled = true;
+    const ok = await startSource();
+    btnStart.disabled = false;
+    if (!ok || leaving) return;
     chunks = [];
     const mimeType = pickMimeType();
-    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    try {
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    } catch {
+      recorder = new MediaRecorder(stream);
+    }
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     recorder.onstop = () => {
       clearInterval(tick);
       badge.hidden = true;
+      pausedCover.hidden = true;
+      srcCamera.disabled = srcScreen.disabled = false;
+      camSel.disabled = micSel.disabled = false;
       if (leaving) return;
+      if (source === 'screen') { stopStream(); showMsg('Press the red button to record your screen again.', false); }
+      btnPause.hidden = btnStop.hidden = true;
+      btnStart.hidden = false;
+      recLabel.textContent = 'Press the red button to record again';
+      if (!chunks.length) { toast('Nothing was recorded. Try again.'); return; }
       blob = new Blob(chunks, { type: (recorder.mimeType || 'video/webm').split(';')[0] });
       if (blobUrl) URL.revokeObjectURL(blobUrl);
       blobUrl = URL.createObjectURL(blob);
@@ -351,33 +422,33 @@ async function showRecord() {
       reviewPlayer.addEventListener('loadedmetadata', () => fixDuration(reviewPlayer), { once: true });
       btnDl.href = blobUrl;
       btnDl.download = 'recording.' + (blob.type.includes('mp4') ? 'mp4' : 'webm');
-      titleInput.value = 'My video ' + new Date().toLocaleString();
+      titleInput.value = 'My video ' + new Date().toLocaleDateString();
       review.hidden = false;
       btnSave.disabled = false;
       btnSave.textContent = 'Post video';
-      btnPause.hidden = btnStop.hidden = true;
-      camSel.disabled = micSel.disabled = false;
       review.scrollIntoView({ behavior: 'smooth' });
     };
+    // Paused time is never written to the file, so breaks don't show up in the video.
     recorder.start(1000);
     review.hidden = true;
     elapsed = 0;
     timer.textContent = '0:00';
     badge.hidden = false;
-    badge.classList.remove('paused');
+    setPausedUi(false);
     tick = setInterval(() => { if (recorder.state === 'recording') timer.textContent = fmtTime(++elapsed); }, 1000);
     btnStart.hidden = true;
-    btnPause.hidden = btnStop.hidden = false;
-    btnPause.textContent = '❚❚ Pause';
+    btnPause.hidden = typeof recorder.pause !== 'function';
+    btnStop.hidden = false;
+    srcCamera.disabled = srcScreen.disabled = true;
     camSel.disabled = micSel.disabled = true;
   };
 
   btnPause.onclick = () => {
-    if (recorder.state === 'recording') { recorder.pause(); btnPause.textContent = '▶ Resume'; badge.classList.add('paused'); }
-    else if (recorder.state === 'paused') { recorder.resume(); btnPause.textContent = '❚❚ Pause'; badge.classList.remove('paused'); }
+    if (recorder.state === 'recording') { recorder.pause(); setPausedUi(true); }
+    else if (recorder.state === 'paused') { recorder.resume(); setPausedUi(false); }
   };
-  btnStop.onclick = () => recorder && recorder.state !== 'inactive' && recorder.stop();
-  btnRetake.onclick = () => { review.hidden = true; reviewPlayer.pause(); btnStart.click(); };
+  btnStop.onclick = () => { if (recording()) recorder.stop(); };
+  btnRetake.onclick = () => { review.hidden = true; reviewPlayer.pause(); window.scrollTo(0, 0); btnStart.click(); };
 
   btnSave.onclick = async () => {
     if (!blob) return;
@@ -394,7 +465,9 @@ async function showRecord() {
     }
   };
 
-  startCamera();
+  stage.classList.toggle('mirror', mirror.checked);
+  if (!canRecord) showMsg("This browser can't record video. Open VidGame in Chrome, Edge or Safari.", false);
+  else startCamera();
 }
 
 // ---------- post sheet (record or upload) ----------
