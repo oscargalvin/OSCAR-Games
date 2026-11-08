@@ -164,8 +164,16 @@ class MainActivity : ComponentActivity() {
                 CompositionSettings.Builder().setAlpha(1f).setOffset(0.55f, -0.6f).setScale(0.38f, 0.38f).build(),
                 this,
             )
-            provider.bindToLifecycle(listOf(background, face))
-            status.text = "😀 Your face + background. Press ● Record."
+            try {
+                provider.bindToLifecycle(listOf(background, face))
+                status.text = "😀 Your face + background. Press ● Record."
+                return
+            } catch (e: Exception) {
+                provider.unbindAll()
+                status.text = "Sorry, this phone couldn't record both cameras together (${e.message}). Only the back camera is on."
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
+                return
+            }
         } else {
             provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
             status.text = "Sorry, this phone can't use the front and back cameras at the same time, so only the back camera is on."
