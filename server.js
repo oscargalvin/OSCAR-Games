@@ -1,4 +1,4 @@
-// Runs OscarTube on your own computer at http://localhost:3000.
+// Runs VidPlay on your own computer at http://localhost:3000.
 // You don't need this for the online version on GitHub Pages. No packages needed. Run with: npm start
 const http = require('http');
 const fs = require('fs');
@@ -27,5 +27,5 @@ http.createServer((req, res) => {
     res.end(data);
   });
 }).listen(PORT, () => {
-  console.log(`\n  OscarTube is running! Open http://localhost:${PORT} in Chrome or Edge.\n  Press Ctrl+C to stop.\n`);
+  console.log(`\n  VidPlay is running! Open http://localhost:${PORT} in Chrome or Edge.\n  Press Ctrl+C to stop.\n`);
 });

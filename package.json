@@ -1,5 +1,5 @@
 {
-  "name": "oscartube",
+  "name": "vidplay",
   "version": "1.0.0",
   "description": "A video app where you can record, upload and watch videos.",
   "private": true,

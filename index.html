@@ -2,35 +2,110 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OscarTube</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f0f12">
+  <title>VidPlay</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23e11d48'/><path d='M9 7l8 5-8 5z' fill='white'/></svg>">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <a class="logo" href="#/"><span class="logo-mark">▶</span> OscarTube</a>
-    <input id="search" class="search" type="search" placeholder="Search videos">
-    <nav class="actions">
-      <a class="btn btn-primary" href="#/record">● Record</a>
-      <label class="btn">
-        ⬆ Upload
-        <input id="upload-input" type="file" accept="video/*" hidden>
-      </label>
-    </nav>
+    <a class="logo" href="#/"><span class="logo-mark">▶</span> VidPlay</a>
+    <input id="search" class="search" type="search" placeholder="Search videos" aria-label="Search videos">
+    <button id="help-btn" class="icon-btn" title="Watch the tutorial" aria-label="Watch the tutorial">?</button>
   </header>
 
   <main id="app"></main>
+
+  <!-- Bottom bar -->
+  <nav class="bottom-bar" aria-label="Main">
+    <a class="tab" data-tab="home" href="#/">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
+      <span>Home</span>
+    </a>
+    <button id="post-btn" class="tab tab-post" data-tab="post" aria-label="Post a video">
+      <span class="post-circle">＋</span>
+      <span>Post</span>
+    </button>
+    <a class="tab" data-tab="channel" href="#/channel">
+      <span id="tab-avatar" class="avatar avatar-sm">V</span>
+      <span>Your channel</span>
+    </a>
+  </nav>
+
+  <!-- Post sheet -->
+  <div id="post-sheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <h2 id="sheet-title">Post a video</h2>
+      <a class="sheet-option" href="#/record" id="opt-record">
+        <span class="sheet-icon rec">●</span>
+        <span><strong>Record a video</strong><small>Use your camera and microphone</small></span>
+      </a>
+      <label class="sheet-option">
+        <span class="sheet-icon">⬆</span>
+        <span><strong>Upload a video</strong><small>Pick a video file from this device</small></span>
+        <input id="upload-input" type="file" accept="video/*" hidden>
+      </label>
+      <button id="sheet-cancel" class="btn sheet-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Tutorial -->
+  <div id="tutorial" class="tutorial" hidden role="dialog" aria-modal="true" aria-label="How to use VidPlay">
+    <div class="tut-bars" id="tut-bars"></div>
+    <button id="tut-skip" class="tut-skip">Skip</button>
+    <div class="tut-screen" id="tut-screen"></div>
+    <div class="tut-text">
+      <h2 id="tut-title"></h2>
+      <p id="tut-body"></p>
+      <div id="tut-extra"></div>
+    </div>
+    <div class="tut-controls">
+      <button id="tut-back" class="btn">Back</button>
+      <button id="tut-pause" class="btn" aria-label="Pause tutorial">❚❚</button>
+      <button id="tut-next" class="btn btn-primary">Next</button>
+    </div>
+  </div>
 
   <div id="toast" class="toast" hidden></div>
 
   <template id="tpl-home">
     <section>
       <h1 class="page-title">Videos</h1>
+      <button id="tut-card" class="tut-card">
+        <span class="tut-card-play">▶</span>
+        <span><strong>How to use VidPlay</strong><small>Watch the tutorial · 30 seconds</small></span>
+      </button>
       <div id="grid" class="grid"></div>
       <div id="empty" class="empty" hidden>
         <p>No videos yet.</p>
-        <a class="btn btn-primary" href="#/record">● Record your first video</a>
+        <button class="btn btn-primary open-post">＋ Post your first video</button>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-channel">
+    <section class="channel">
+      <div class="channel-head">
+        <span id="ch-avatar" class="avatar avatar-lg">V</span>
+        <div class="channel-info">
+          <h1 id="ch-name"></h1>
+          <form id="ch-form" class="ch-form" hidden>
+            <input id="ch-input" maxlength="40" aria-label="Channel name">
+            <button class="btn btn-primary">Save</button>
+          </form>
+          <p id="ch-stats" class="muted"></p>
+          <div class="channel-actions">
+            <button id="ch-edit" class="btn">Edit name</button>
+            <button id="ch-tutorial" class="btn">Watch tutorial</button>
+          </div>
+        </div>
+      </div>
+      <h2 class="section-title">Your videos</h2>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty" hidden>
+        <p>Your channel has no videos yet.</p>
+        <button class="btn btn-primary open-post">＋ Post a video</button>
       </div>
     </section>
   </template>
@@ -39,11 +114,17 @@
     <section class="watch">
       <video id="player" class="player" controls autoplay playsinline></video>
       <h1 id="watch-title" class="watch-title"></h1>
+      <a class="watch-channel" href="#/channel"><span id="watch-avatar" class="avatar avatar-sm">V</span> <span id="watch-channel"></span></a>
       <div class="watch-meta">
         <span id="watch-info"></span>
         <span class="spacer"></span>
         <a id="download" class="btn" download>⬇ Download</a>
         <button id="delete" class="btn btn-danger">Delete</button>
+      </div>
+      <div id="confirm-delete" class="confirm" hidden>
+        <span>Delete this video? This can't be undone.</span>
+        <button id="confirm-yes" class="btn btn-danger">Yes, delete</button>
+        <button id="confirm-no" class="btn">Keep it</button>
       </div>
     </section>
   </template>
@@ -74,7 +155,7 @@
         <video id="review-player" class="player" controls playsinline></video>
         <input id="title" class="title-input" type="text" maxlength="120" placeholder="Give your video a title">
         <div class="controls">
-          <button id="btn-save" class="btn btn-primary btn-big">Save video</button>
+          <button id="btn-save" class="btn btn-primary btn-big">Post video</button>
           <a id="btn-download-rec" class="btn btn-big" download="recording.webm">⬇ Download</a>
           <button id="btn-retake" class="btn btn-big">↺ Record again</button>
         </div>

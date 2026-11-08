@@ -1,4 +1,4 @@
-// OscarTube front end: library, watch page, upload, and in-app recording.
+// VidPlay front end: home, channel, watch page, posting (record or upload) and the tutorial.
 const app = document.getElementById('app');
 const searchBox = document.getElementById('search');
 let cleanup = null; // runs when leaving a page (e.g. turns the camera off)
@@ -24,12 +24,28 @@ function timeAgo(iso) {
   return 'just now';
 }
 function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'; }
+// Small saved settings (channel name, tutorial seen). Storage can be blocked, so never rely on it.
+const prefs = {
+  get(k, d) { try { const v = localStorage.getItem('vidplay.' + k); return v === null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('vidplay.' + k, v); } catch {} },
+};
+const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#ea580c', '#db2777', '#4f46e5', '#16a34a'];
+function channelName() { return prefs.get('channel', 'My Channel'); }
+function paintAvatar(el, name = channelName()) {
+  if (!el) return;
+  el.textContent = (name.trim()[0] || 'V').toUpperCase();
+  let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  el.style.setProperty('--avatar', AVATAR_COLORS[h % AVATAR_COLORS.length]);
+}
+function refreshAvatars() { document.querySelectorAll('#tab-avatar, #ch-avatar, #watch-avatar').forEach((el) => paintAvatar(el)); }
+function viewsText(n) { n = n || 0; return `${n} view${n === 1 ? '' : 's'}`; }
+
 function render(id) {
   app.innerHTML = '';
   app.appendChild(document.getElementById(id).content.cloneNode(true));
 }
 // ---------- storage: videos are kept in this browser (IndexedDB) ----------
-const DB_NAME = 'oscartube', STORE = 'videos';
+const DB_NAME = 'vidplay', STORE = 'videos';
 let dbPromise = null;
 function openDb() {
   if (!dbPromise) dbPromise = new Promise((resolve, reject) => {
@@ -94,26 +110,19 @@ function fixDuration(video) {
   });
 }
 
-// ---------- home ----------
-async function showHome() {
-  render('tpl-home');
-  const grid = document.getElementById('grid');
-  let videos = [];
-  try { videos = await store.list(); } catch (e) { toast(e.message); }
-  const q = searchBox.value.trim().toLowerCase();
-  if (q) videos = videos.filter((v) => v.title.toLowerCase().includes(q));
-  document.getElementById('empty').hidden = videos.length > 0;
-  if (q && !videos.length) document.querySelector('#empty p').textContent = `No videos match "${searchBox.value}".`;
-
+// ---------- video grid (used by home and channel) ----------
+function fillGrid(grid, videos) {
   for (const v of videos) {
     const a = document.createElement('a');
     a.className = 'card';
     a.href = '#/watch/' + v.id;
     a.innerHTML = `
-      <div class="thumb"><video muted preload="metadata"></video><span class="duration" hidden></span></div>
-      <h3></h3><p></p>`;
+      <div class="thumb"><video muted preload="metadata" playsinline></video><span class="duration" hidden></span></div>
+      <h3></h3><p class="by"><span class="avatar"></span><span class="by-name"></span></p><p class="stats"></p>`;
     a.querySelector('h3').textContent = v.title;
-    a.querySelector('p').textContent = `${v.views || 0} view${v.views === 1 ? "" : "s"} · ${timeAgo(v.createdAt)}`;
+    paintAvatar(a.querySelector('.avatar'));
+    a.querySelector('.by-name').textContent = channelName();
+    a.querySelector('.stats').textContent = `${viewsText(v.views)} · ${timeAgo(v.createdAt)}`;
     const vid = a.querySelector('video');
     vid.src = mediaUrl(v) + '#t=0.5';
     vid.addEventListener('loadedmetadata', async () => {
@@ -126,6 +135,62 @@ async function showHome() {
     a.addEventListener('mouseleave', () => vid.pause());
     grid.appendChild(a);
   }
+}
+function wirePostButtons() {
+  document.querySelectorAll('.open-post').forEach((b) => (b.onclick = openPostSheet));
+}
+
+// ---------- home ----------
+async function showHome() {
+  render('tpl-home');
+  document.getElementById('tut-card').onclick = () => tutorial.open();
+  wirePostButtons();
+  let videos = [];
+  try { videos = await store.list(); } catch (e) { toast(e.message); }
+  const q = searchBox.value.trim().toLowerCase();
+  if (q) videos = videos.filter((v) => v.title.toLowerCase().includes(q));
+  document.getElementById('empty').hidden = videos.length > 0;
+  if (q && !videos.length) document.querySelector('#empty p').textContent = `No videos match "${searchBox.value}".`;
+  fillGrid(document.getElementById('grid'), videos);
+}
+
+// ---------- your channel ----------
+async function showChannel() {
+  render('tpl-channel');
+  wirePostButtons();
+  const nameEl = document.getElementById('ch-name');
+  const form = document.getElementById('ch-form');
+  const input = document.getElementById('ch-input');
+  const editBtn = document.getElementById('ch-edit');
+  const paint = () => { nameEl.textContent = channelName(); refreshAvatars(); };
+  paint();
+  editBtn.onclick = () => {
+    input.value = channelName();
+    form.hidden = false; nameEl.hidden = true; editBtn.hidden = true;
+    input.focus(); input.select();
+  };
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const name = input.value.trim();
+    if (name) prefs.set('channel', name);
+    form.hidden = true; nameEl.hidden = false; editBtn.hidden = false;
+    paint();
+    showChannelVideos();
+    toast('Channel name saved');
+  };
+  document.getElementById('ch-tutorial').onclick = () => tutorial.open();
+  async function showChannelVideos() {
+    let videos = [];
+    try { videos = await store.list(); } catch (e) { toast(e.message); }
+    const views = videos.reduce((n, v) => n + (v.views || 0), 0);
+    document.getElementById('ch-stats').textContent =
+      `${videos.length} video${videos.length === 1 ? '' : 's'} · ${viewsText(views)}`;
+    document.getElementById('empty').hidden = videos.length > 0;
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    fillGrid(grid, videos);
+  }
+  showChannelVideos();
 }
 
 // ---------- watch ----------
@@ -142,20 +207,24 @@ async function showWatch(id) {
   player.src = mediaUrl(v);
   player.addEventListener('loadedmetadata', () => fixDuration(player).then(() => player.play().catch(() => {})), { once: true });
   document.getElementById('watch-title').textContent = v.title;
-  document.title = v.title + ' · OscarTube';
+  document.title = v.title + ' · VidPlay';
+  document.getElementById('watch-channel').textContent = channelName();
+  paintAvatar(document.getElementById('watch-avatar'));
   document.getElementById('watch-info').textContent =
-    `${v.views} view${v.views === 1 ? "" : "s"} · ${timeAgo(v.createdAt)} · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in OscarTube' : ''}`;
+    `${viewsText(v.views)} · ${timeAgo(v.createdAt)} · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in VidPlay' : ''}`;
   const dl = document.getElementById('download');
   dl.href = mediaUrl(v);
   dl.download = v.title.replace(/[^\w\- ]+/g, '').trim() + '.' + extOf(v);
-  document.getElementById('delete').onclick = async () => {
-    if (!confirm(`Delete "${v.title}"? This can't be undone.`)) return;
+  const confirmBox = document.getElementById('confirm-delete');
+  document.getElementById('delete').onclick = () => { confirmBox.hidden = false; };
+  document.getElementById('confirm-no').onclick = () => { confirmBox.hidden = true; };
+  document.getElementById('confirm-yes').onclick = async () => {
     await store.remove(v.id);
     URL.revokeObjectURL(urls.get(v.id)); urls.delete(v.id);
     toast('Video deleted');
-    location.hash = '#/';
+    location.hash = '#/channel';
   };
-  cleanup = () => { player.pause(); document.title = 'OscarTube'; };
+  cleanup = () => { player.pause(); document.title = 'VidPlay'; };
 }
 
 // ---------- record ----------
@@ -279,7 +348,7 @@ async function showRecord() {
       titleInput.value = 'My video ' + new Date().toLocaleString();
       review.hidden = false;
       btnSave.disabled = false;
-      btnSave.textContent = 'Save video';
+      btnSave.textContent = 'Post video';
       btnPause.hidden = btnStop.hidden = true;
       camSel.disabled = micSel.disabled = false;
       review.scrollIntoView({ behavior: 'smooth' });
@@ -307,46 +376,194 @@ async function showRecord() {
   btnSave.onclick = async () => {
     if (!blob) return;
     btnSave.disabled = true;
-    btnSave.textContent = 'Saving…';
+    btnSave.textContent = 'Posting…';
     try {
       const v = await uploadVideo(blob, titleInput.value.trim(), true);
-      toast('Video saved!');
+      toast('Video posted to your channel!');
       location.hash = '#/watch/' + v.id;
     } catch (e) {
       toast(e.message);
       btnSave.disabled = false;
-      btnSave.textContent = 'Save video';
+      btnSave.textContent = 'Post video';
     }
   };
 
   startCamera();
 }
 
-// ---------- upload from file ----------
+// ---------- post sheet (record or upload) ----------
+const sheet = document.getElementById('post-sheet');
+function openPostSheet() { sheet.hidden = false; document.getElementById('opt-record').focus(); }
+function closePostSheet() { sheet.hidden = true; }
+document.getElementById('post-btn').onclick = openPostSheet;
+document.getElementById('sheet-cancel').onclick = closePostSheet;
+document.getElementById('opt-record').addEventListener('click', closePostSheet);
+sheet.addEventListener('click', (e) => { if (e.target === sheet) closePostSheet(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closePostSheet(); });
+
 document.getElementById('upload-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
+  closePostSheet();
   if (!file) return;
   toast('Uploading ' + file.name + '…');
   try {
     const v = await uploadVideo(file, file.name.replace(/\.[^.]+$/, ''), false);
-    toast('Uploaded!');
+    toast('Video posted to your channel!');
     location.hash = '#/watch/' + v.id;
   } catch (err) { toast(err.message); }
 });
+
+// ---------- tutorial: a short "video" that plays itself, with Back / Pause / Next ----------
+const TAP = (x, y) => `<span class="m-tap" style="left:${x};top:${y}"></span>`;
+const PHONE_HOME = `<div class="m-top"><span class="logo-mark">▶</span>VidPlay</div>
+  <div class="m-grid"><div class="m-thumb"></div><div class="m-thumb"></div><div class="m-thumb"></div><div class="m-thumb"></div></div>`;
+const PHONE_BAR = `<div class="m-bar"><span></span><span class="m-plus">＋</span><span class="m-me"></span></div>`;
+const TUTORIAL_STEPS = [
+  {
+    title: 'Welcome to VidPlay',
+    body: 'Make videos, post them, and watch them back. This quick tutorial shows you how.',
+    screen: `<div class="m-hello"><div><span class="logo-mark">▶</span><b>VidPlay</b></div></div>`,
+  },
+  {
+    title: 'Tap Post to make a video',
+    body: 'The big red ＋ button at the bottom lets you record a new video or upload one you already have.',
+    screen: PHONE_HOME + PHONE_BAR + TAP('calc(50% - 19px)', 'calc(100% - 50px)'),
+  },
+  {
+    title: 'Pick Record or Upload',
+    body: 'Record uses your camera and microphone. Upload picks a video file from your device.',
+    screen: PHONE_HOME + PHONE_BAR + `<div class="m-sheet"><div><b>●</b> Record a video</div><div>⬆ Upload a video</div></div>`,
+  },
+  {
+    title: 'Press the red button to record',
+    body: 'Allow the camera when your browser asks. Press Start to record, Pause if you need a break, and Stop when you are done.',
+    screen: `<div class="m-cam"></div><span class="m-badge">0:07</span><span class="m-rec"></span>`,
+  },
+  {
+    title: 'Give it a title and post it',
+    body: 'Watch your recording back first. If you like it, type a title and press Post video.',
+    screen: `<div class="m-review"><div class="m-thumb"></div><div class="m-input"><span>My first video!!</span></div><div class="m-post">Post video</div></div>`,
+  },
+  {
+    title: 'Find it on Your channel',
+    body: 'Everything you post is on Your channel, at the bottom right. Give your channel a name to get started.',
+    screen: `<div class="m-top"><span class="logo-mark">▶</span>VidPlay</div>
+      <div class="m-channel"><span class="avatar" id="tut-avatar"></span><b id="tut-chname"></b><small>3 videos · 12 views</small>
+      <div class="m-grid"><div class="m-thumb"></div><div class="m-thumb"></div></div></div>` + PHONE_BAR + TAP('calc(83% - 19px)', 'calc(100% - 42px)'),
+    extra: `<input id="tut-name-input" class="tut-name" maxlength="40" placeholder="Your channel name" aria-label="Your channel name">`,
+    last: true,
+  },
+];
+const STEP_MS = 5500;
+const tutorial = (() => {
+  const el = document.getElementById('tutorial');
+  const bars = document.getElementById('tut-bars');
+  const screen = document.getElementById('tut-screen');
+  const pauseBtn = document.getElementById('tut-pause');
+  const nextBtn = document.getElementById('tut-next');
+  const backBtn = document.getElementById('tut-back');
+  let i = 0, elapsed = 0, last = 0, paused = false, raf = 0;
+
+  bars.innerHTML = TUTORIAL_STEPS.map(() => '<div class="tut-bar"><i></i></div>').join('');
+  const fills = [...bars.querySelectorAll('i')];
+
+  function show(n) {
+    i = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, n));
+    const step = TUTORIAL_STEPS[i];
+    elapsed = 0;
+    screen.innerHTML = step.screen;
+    document.getElementById('tut-title').textContent = step.title;
+    document.getElementById('tut-body').textContent = step.body;
+    document.getElementById('tut-extra').innerHTML = step.extra || '';
+    fills.forEach((f, k) => (f.style.width = k < i ? '100%' : '0%'));
+    backBtn.disabled = i === 0;
+    nextBtn.textContent = step.last ? 'Start using VidPlay' : 'Next';
+    if (step.last) {
+      const input = document.getElementById('tut-name-input');
+      const preview = () => {
+        const name = input.value.trim() || channelName();
+        document.getElementById('tut-chname').textContent = name;
+        paintAvatar(document.getElementById('tut-avatar'), name);
+      };
+      input.value = prefs.get('channel', '') ;
+      input.oninput = preview;
+      input.onkeydown = (e) => { if (e.key === 'Enter') finish(); };
+      input.onfocus = () => setPaused(true);
+      preview();
+    }
+  }
+  function setPaused(p) {
+    paused = p;
+    pauseBtn.textContent = p ? '▶' : '❚❚';
+    pauseBtn.setAttribute('aria-label', p ? 'Play tutorial' : 'Pause tutorial');
+  }
+  function frame(t) {
+    const dt = last ? t - last : 0;
+    last = t;
+    if (!paused && !TUTORIAL_STEPS[i].last) {
+      elapsed += dt;
+      fills[i].style.width = Math.min(100, (elapsed / STEP_MS) * 100) + '%';
+      if (elapsed >= STEP_MS) show(i + 1);
+    } else if (TUTORIAL_STEPS[i].last) {
+      fills[i].style.width = '100%';
+    }
+    raf = requestAnimationFrame(frame);
+  }
+  function finish() {
+    const input = document.getElementById('tut-name-input');
+    if (input && input.value.trim()) prefs.set('channel', input.value.trim());
+    close();
+    route();
+  }
+  function close() {
+    el.hidden = true;
+    cancelAnimationFrame(raf);
+    prefs.set('tutorialSeen', '1');
+    refreshAvatars();
+  }
+  nextBtn.onclick = () => (TUTORIAL_STEPS[i].last ? finish() : show(i + 1));
+  backBtn.onclick = () => show(i - 1);
+  pauseBtn.onclick = () => setPaused(!paused);
+  document.getElementById('tut-skip').onclick = finish;
+  document.addEventListener('keydown', (e) => {
+    if (el.hidden || e.target.tagName === 'INPUT') return;
+    if (e.key === 'Escape') finish();
+    if (e.key === 'ArrowRight') nextBtn.click();
+    if (e.key === 'ArrowLeft') backBtn.click();
+  });
+  return {
+    open() {
+      closePostSheet();
+      el.hidden = false;
+      setPaused(false);
+      last = 0;
+      show(0);
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(frame);
+      nextBtn.focus();
+    },
+  };
+})();
+document.getElementById('help-btn').onclick = () => tutorial.open();
 
 // ---------- router ----------
 function route() {
   if (cleanup) { cleanup(); cleanup = null; }
   const [, page, id] = location.hash.split('/');
   window.scrollTo(0, 0);
+  document.querySelectorAll('.bottom-bar .tab').forEach((t) =>
+    t.classList.toggle('active', t.dataset.tab === (page === 'channel' ? 'channel' : !page ? 'home' : '')));
+  refreshAvatars();
   if (page === 'record') return showRecord();
   if (page === 'watch' && id) return showWatch(id);
+  if (page === 'channel') return showChannel();
   return showHome();
 }
 searchBox.addEventListener('input', () => {
-  if (location.hash.startsWith('#/watch') || location.hash.startsWith('#/record')) location.hash = '#/';
+  if (location.hash.length > 2) location.hash = '#/';
   else showHome();
 });
 window.addEventListener('hashchange', route);
 route();
+if (!prefs.get('tutorialSeen', '')) tutorial.open();

@@ -1,6 +1,6 @@
-# OscarTube
+# VidPlay
 
-A video app where you can record videos with your camera and mic, upload video files, and watch them back.
+A video app where you can record videos with your camera and mic, upload video files, post them to your channel, and watch them back.
 
 ## Use it online
 
@@ -30,9 +30,12 @@ To use a different port: `set PORT=4000 && npm start` (Windows) or `PORT=4000 np
 
 ## How to use it
 
-- **Record:** click **● Record**, allow the camera and microphone when the browser asks, then press **Start recording**. You can pause, resume and stop. After stopping you can watch it back, give it a title, and **Save video**, **Download** it, or **Record again**. Pick a different camera or mic from the dropdowns if you have more than one.
-- **Upload:** click **⬆ Upload** and pick a video file from your computer.
-- **Watch:** click any video on the home page. Each watch counts a view. You can download or delete it from there.
+- **Tutorial:** the first time you open VidPlay, a short tutorial plays and shows you how everything works. You can name your channel at the end. Watch it again any time with the **?** button at the top, the tutorial card on Home, or **Watch tutorial** on Your channel.
+- **Bottom bar:** **Home** shows all videos, the red **＋ Post** button lets you record or upload, and **Your channel** shows your channel name, stats and videos.
+- **Record:** tap **＋ Post**, then **Record a video**. Allow the camera and microphone when the browser asks, then press **Start recording**. You can pause, resume and stop. After stopping you can watch it back, give it a title, and **Post video**, **Download** it, or **Record again**. Pick a different camera or mic from the dropdowns if you have more than one.
+- **Upload:** tap **＋ Post**, then **Upload a video**, and pick a video file from your computer.
+- **Your channel:** tap **Edit name** to rename your channel.
+- **Watch:** click any video. Each watch counts a view. You can download or delete it from there.
 - **Search:** type in the search box to filter videos by title.
 
 ## Where videos are saved
