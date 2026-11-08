@@ -449,3 +449,5 @@ select {
 .stage.both #preview { cursor: grab; touch-action: none; }
 .stage.both #preview:active { cursor: grabbing; }
 #bubble-wrap input { accent-color: var(--accent); width: 120px; vertical-align: middle; }
+#dual-cam[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.stage.dual #preview { cursor: grab; touch-action: none; }
