@@ -1,4 +1,4 @@
-// Runs VidPlay on your own computer at http://localhost:3000.
+// Runs VidGame on your own computer at http://localhost:3000.
 // You don't need this for the online version on GitHub Pages. No packages needed. Run with: npm start
 const http = require('http');
 const fs = require('fs');
@@ -6,7 +6,7 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = __dirname;
-const ALLOWED = new Set(['/index.html', '/app.js', '/style.css']);
+const ALLOWED = new Set(['/index.html', '/app.js', '/style.css', '/tutorial.webm']);
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -14,6 +14,7 @@ const TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webm': 'video/webm',
 };
 
 http.createServer((req, res) => {
@@ -27,5 +28,5 @@ http.createServer((req, res) => {
     res.end(data);
   });
 }).listen(PORT, () => {
-  console.log(`\n  VidPlay is running! Open http://localhost:${PORT} in Chrome or Edge.\n  Press Ctrl+C to stop.\n`);
+  console.log(`\n  VidGame is running! Open http://localhost:${PORT} in Chrome or Edge.\n  Press Ctrl+C to stop.\n`);
 });

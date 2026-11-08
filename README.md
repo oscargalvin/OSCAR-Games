@@ -1,4 +1,4 @@
-# VidPlay
+# VidGame
 
 A video app where you can record videos with your camera and mic, upload video files, post them to your channel, and watch them back.
 
@@ -30,7 +30,7 @@ To use a different port: `set PORT=4000 && npm start` (Windows) or `PORT=4000 np
 
 ## How to use it
 
-- **Tutorial:** the first time you open VidPlay, a short tutorial plays and shows you how everything works. You can name your channel at the end. Watch it again any time with the **?** button at the top, the tutorial card on Home, or **Watch tutorial** on Your channel.
+- **Tutorial video:** the first time you open VidGame, a short tutorial video shows how to record and post a video, and you can name your channel. The same video is at the top of Home, and the **?** button plays it again. It's `tutorial.webm`.
 - **Bottom bar:** **Home** shows all videos, the red **＋ Post** button lets you record or upload, and **Your channel** shows your channel name, stats and videos.
 - **Record:** tap **＋ Post**, then **Record a video**. Allow the camera and microphone when the browser asks, then press **Start recording**. You can pause, resume and stop. After stopping you can watch it back, give it a title, and **Post video**, **Download** it, or **Record again**. Pick a different camera or mic from the dropdowns if you have more than one.
 - **Upload:** tap **＋ Post**, then **Upload a video**, and pick a video file from your computer.
@@ -56,4 +56,5 @@ Videos are saved inside the browser you recorded them in (in its storage, called
 
 - `server.js` runs the app on your own computer (not needed for the online version)
 - `index.html`, `app.js`, `style.css` are the website
+- `tutorial.webm` is the tutorial video
 - `start.bat` is the one-click starter for Windows

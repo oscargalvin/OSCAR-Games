@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0f0f12">
-  <title>VidPlay</title>
+  <title>VidGame</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23e11d48'/><path d='M9 7l8 5-8 5z' fill='white'/></svg>">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <a class="logo" href="#/"><span class="logo-mark">▶</span> VidPlay</a>
+    <a class="logo" href="#/"><span class="logo-mark">▶</span> VidGame</a>
     <input id="search" class="search" type="search" placeholder="Search videos" aria-label="Search videos">
     <button id="help-btn" class="icon-btn" title="Watch the tutorial" aria-label="Watch the tutorial">?</button>
   </header>
@@ -50,20 +50,19 @@
     </div>
   </div>
 
-  <!-- Tutorial -->
-  <div id="tutorial" class="tutorial" hidden role="dialog" aria-modal="true" aria-label="How to use VidPlay">
-    <div class="tut-bars" id="tut-bars"></div>
-    <button id="tut-skip" class="tut-skip">Skip</button>
-    <div class="tut-screen" id="tut-screen"></div>
-    <div class="tut-text">
-      <h2 id="tut-title"></h2>
-      <p id="tut-body"></p>
-      <div id="tut-extra"></div>
-    </div>
-    <div class="tut-controls">
-      <button id="tut-back" class="btn">Back</button>
-      <button id="tut-pause" class="btn" aria-label="Pause tutorial">❚❚</button>
-      <button id="tut-next" class="btn btn-primary">Next</button>
+  <!-- Tutorial (first open, and the ? button) -->
+  <div id="tutorial" class="tutorial" hidden role="dialog" aria-modal="true" aria-labelledby="tut-title">
+    <div class="tut-box">
+      <div class="tut-head">
+        <h2 id="tut-title">How to record on VidGame</h2>
+        <button id="tut-skip" class="tut-skip">Skip</button>
+      </div>
+      <video id="tut-video" class="tut-video" playsinline controls muted loop></video>
+      <p class="tut-hint">Watch how to record and post a video, then name your channel.</p>
+      <div class="tut-name-row">
+        <input id="tut-name-input" class="tut-name" maxlength="40" placeholder="Your channel name" aria-label="Your channel name">
+        <button id="tut-done" class="btn btn-primary">Start using VidGame</button>
+      </div>
     </div>
   </div>
 
@@ -71,11 +70,17 @@
 
   <template id="tpl-home">
     <section>
-      <h1 class="page-title">Videos</h1>
-      <button id="tut-card" class="tut-card">
-        <span class="tut-card-play">▶</span>
-        <span><strong>How to use VidPlay</strong><small>Watch the tutorial · 30 seconds</small></span>
-      </button>
+      <h1 class="page-title">Home</h1>
+      <div id="featured" class="featured">
+        <video id="home-tut-video" class="player" playsinline controls muted></video>
+        <div class="featured-info">
+          <span class="badge">Tutorial</span>
+          <h2>How to record a video on VidGame</h2>
+          <p class="muted">Tap ＋ Post, choose Record, press the red button, then post it to your channel.</p>
+          <a class="by" href="#/"><span class="logo-mark sm">▶</span> VidGame</a>
+        </div>
+      </div>
+      <h2 class="section-title">Your videos</h2>
       <div id="grid" class="grid"></div>
       <div id="empty" class="empty" hidden>
         <p>No videos yet.</p>

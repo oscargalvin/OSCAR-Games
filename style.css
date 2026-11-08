@@ -195,17 +195,20 @@ select {
 .sheet-cancel { margin-top: 4px; padding: 12px; }
 @keyframes slide-up { from { transform: translateY(100%); } }
 
-/* ---------- tutorial card on home ---------- */
-.tut-card {
-  display: flex; align-items: center; gap: 14px; width: 100%; max-width: 420px;
-  margin: 0 0 22px; padding: 12px 14px; border: 1px solid var(--panel-2); border-radius: var(--radius);
-  background: linear-gradient(135deg, #2a1220, var(--panel)); color: var(--text);
-  font: inherit; text-align: left; cursor: pointer;
+/* ---------- featured tutorial on home ---------- */
+.featured {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; align-items: center;
+  margin-bottom: 30px;
 }
-.tut-card:hover { filter: brightness(1.15); }
-.tut-card-play {
-  display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
-  background: var(--accent); color: white; flex: none; font-size: 16px;
+.featured .player { aspect-ratio: 9 / 16; max-height: 70vh; width: auto; max-width: 100%; justify-self: center; object-fit: contain; }
+.featured-info { display: grid; gap: 8px; align-content: center; min-width: 0; }
+.featured-info h2 { margin: 0; font-size: 22px; text-wrap: balance; }
+.featured-info .by { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.badge { justify-self: start; background: var(--accent); color: white; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; letter-spacing: 0.04em; text-transform: uppercase; }
+.logo-mark.sm { width: 24px; height: 24px; font-size: 10px; border-radius: 7px; }
+@media (max-width: 760px) {
+  .featured { grid-template-columns: 1fr; }
+  .featured .player { max-height: 52vh; }
 }
 
 /* ---------- channel ---------- */
@@ -230,75 +233,23 @@ select {
 }
 .confirm span { flex: 1; min-width: 180px; }
 
-/* ---------- tutorial overlay (plays like a short video) ---------- */
+/* ---------- tutorial overlay ---------- */
 .tutorial {
-  position: fixed; inset: 0; z-index: 40; background: #09090b;
-  display: flex; flex-direction: column; align-items: center;
-  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px calc(18px + env(safe-area-inset-bottom, 0px));
-  overflow-y: auto;
+  position: fixed; inset: 0; z-index: 40; background: rgba(5, 5, 8, 0.92);
+  display: grid; place-items: center; overflow-y: auto;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(12px + env(safe-area-inset-bottom, 0px));
 }
-.tut-bars { display: flex; gap: 4px; width: 100%; max-width: 520px; }
-.tut-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.2); overflow: hidden; }
-.tut-bar i { display: block; height: 100%; width: 0; background: white; }
-.tut-skip {
-  align-self: flex-end; margin: 8px max(0px, calc((100% - 520px) / 2)) 0 0;
-  background: none; border: 0; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; padding: 6px;
+.tut-box { width: 100%; max-width: 420px; display: grid; gap: 12px; }
+.tut-head { display: flex; align-items: center; gap: 10px; }
+.tut-head h2 { margin: 0; font-size: 20px; flex: 1; }
+.tut-skip { background: none; border: 0; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; padding: 6px; }
+.tut-video { width: 100%; aspect-ratio: 9 / 16; max-height: 62vh; background: black; border-radius: var(--radius); object-fit: contain; }
+.tut-hint { margin: 0; color: var(--muted); text-align: center; }
+.tut-name-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.tut-name {
+  flex: 1; min-width: 160px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--panel-2);
+  background: var(--panel); color: var(--text); font: inherit; font-size: 16px;
 }
-.tut-screen {
-  position: relative; width: 100%; max-width: 360px; aspect-ratio: 9 / 13; max-height: 46vh;
-  margin: 8px 0 18px; border-radius: 22px; background: var(--bg);
-  border: 6px solid #26262e; overflow: hidden; flex: none;
-}
-.tut-text { width: 100%; max-width: 440px; text-align: center; min-height: 140px; }
-.tut-text h2 { margin: 0 0 6px; font-size: 22px; }
-.tut-text p { margin: 0 0 10px; color: var(--muted); font-size: 16px; }
-.tut-name { width: 100%; max-width: 300px; text-align: center; }
-.tut-controls { display: flex; gap: 10px; margin-top: auto; padding-top: 12px; }
-.tut-controls .btn { min-width: 64px; }
-
-/* mini app pieces drawn inside the tutorial phone */
-.m-top { position: absolute; top: 0; left: 0; right: 0; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--panel-2); font-weight: 700; font-size: 13px; }
-.m-top .logo-mark { width: 18px; height: 18px; font-size: 8px; border-radius: 5px; }
-.m-grid { position: absolute; top: 44px; left: 10px; right: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.m-thumb { aspect-ratio: 16/10; border-radius: 6px; background: linear-gradient(135deg, #334, #223); }
-.m-thumb:nth-child(2) { background: linear-gradient(135deg, #3b2030, #2a1a30); }
-.m-thumb:nth-child(3) { background: linear-gradient(135deg, #1e3a3a, #1a2a33); }
-.m-thumb:nth-child(4) { background: linear-gradient(135deg, #3a3320, #2a2a1a); }
-.m-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 46px; display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; justify-items: center; border-top: 1px solid var(--panel-2); background: var(--bg); }
-.m-bar span { width: 18px; height: 18px; border-radius: 5px; background: var(--muted); opacity: 0.6; }
-.m-bar .m-plus { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); opacity: 1; color: white; display: grid; place-items: center; font-size: 20px; margin-top: -14px; }
-.m-bar .m-me { border-radius: 50%; background: #7c3aed; opacity: 1; }
-.m-sheet { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px; background: var(--panel); border-radius: 14px 14px 0 0; display: grid; gap: 8px; animation: slide-up 0.5s 0.9s both ease-out; }
-.m-sheet div { height: 34px; border-radius: 8px; background: var(--panel-2); display: flex; align-items: center; gap: 8px; padding: 0 10px; font-size: 12px; font-weight: 600; }
-.m-sheet div b { color: var(--accent); }
-.m-cam { position: absolute; inset: 0 0 70px; background: radial-gradient(circle at 50% 45%, #5a4a5a 0 18%, #2a2a36 19% 100%); }
-.m-cam::after { content: ""; position: absolute; left: 50%; top: 66%; width: 90px; height: 60px; transform: translateX(-50%); border-radius: 50% 50% 0 0; background: #5a4a5a; }
-.m-rec { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); width: 46px; height: 46px; border-radius: 50%; border: 4px solid white; display: grid; place-items: center; }
-.m-rec::before { content: ""; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); transition: all 0.3s; animation: rec-press 4s infinite; }
-.m-badge { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); border-radius: 999px; padding: 3px 9px; font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 5px; animation: show-late 4s infinite; }
-.m-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
-@keyframes rec-press { 0%, 20% { border-radius: 50%; width: 30px; height: 30px; } 30%, 80% { border-radius: 5px; width: 18px; height: 18px; } 90%, 100% { border-radius: 50%; width: 30px; height: 30px; } }
-@keyframes show-late { 0%, 25% { opacity: 0; } 30%, 80% { opacity: 1; } 90%, 100% { opacity: 0; } }
-.m-review { position: absolute; inset: 0; padding: 12px; display: grid; align-content: start; gap: 10px; }
-.m-review .m-thumb { aspect-ratio: 16/10; position: relative; }
-.m-review .m-thumb::after { content: "▶"; position: absolute; inset: 0; display: grid; place-items: center; color: white; font-size: 20px; }
-.m-input { height: 32px; border-radius: 7px; border: 1px solid var(--panel-2); background: var(--panel); font-size: 12px; display: flex; align-items: center; padding: 0 8px; overflow: hidden; white-space: nowrap; }
-.m-input span { display: inline-block; overflow: hidden; width: 0; animation: type 2.4s 0.4s steps(16) forwards; }
-@keyframes type { to { width: 16ch; } }
-.m-post { height: 34px; border-radius: 999px; background: var(--accent); color: white; font-weight: 700; font-size: 13px; display: grid; place-items: center; animation: pulse 1.2s 2.8s infinite; }
-@keyframes pulse { 50% { transform: scale(1.05); } }
-.m-channel { position: absolute; top: 44px; left: 0; right: 0; display: grid; justify-items: center; gap: 6px; }
-.m-channel .avatar { width: 56px; height: 56px; font-size: 24px; }
-.m-channel b { font-size: 15px; }
-.m-channel small { color: var(--muted); font-size: 11px; }
-.m-channel .m-grid { position: static; width: calc(100% - 20px); margin-top: 6px; }
-.m-tap { position: absolute; width: 38px; height: 38px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.85); animation: tap 1.6s 0.3s infinite; pointer-events: none; }
-@keyframes tap { 0% { transform: scale(1.5); opacity: 0; } 30% { transform: scale(1); opacity: 1; } 60%, 100% { transform: scale(0.8); opacity: 0; } }
-.m-hello { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
-.m-hello .logo-mark { width: 84px; height: 84px; font-size: 34px; border-radius: 22px; animation: pop 0.7s ease-out both; }
-.m-hello b { display: block; margin-top: 12px; font-size: 22px; animation: fade-up 0.6s 0.4s both; }
-@keyframes pop { from { transform: scale(0.3) rotate(-15deg); opacity: 0; } }
-@keyframes fade-up { from { transform: translateY(10px); opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition: none !important; }

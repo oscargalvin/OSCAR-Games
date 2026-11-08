@@ -1,4 +1,4 @@
-// VidPlay front end: home, channel, watch page, posting (record or upload) and the tutorial.
+// VidGame front end: home, channel, watch page, posting (record or upload) and the tutorial.
 const app = document.getElementById('app');
 const searchBox = document.getElementById('search');
 let cleanup = null; // runs when leaving a page (e.g. turns the camera off)
@@ -26,8 +26,8 @@ function timeAgo(iso) {
 function fmtSize(b) { return b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'; }
 // Small saved settings (channel name, tutorial seen). Storage can be blocked, so never rely on it.
 const prefs = {
-  get(k, d) { try { const v = localStorage.getItem('vidplay.' + k); return v === null ? d : v; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('vidplay.' + k, v); } catch {} },
+  get(k, d) { try { const v = localStorage.getItem('vidgame.' + k); return v === null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('vidgame.' + k, v); } catch {} },
 };
 const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#ea580c', '#db2777', '#4f46e5', '#16a34a'];
 function channelName() { return prefs.get('channel', 'My Channel'); }
@@ -45,7 +45,7 @@ function render(id) {
   app.appendChild(document.getElementById(id).content.cloneNode(true));
 }
 // ---------- storage: videos are kept in this browser (IndexedDB) ----------
-const DB_NAME = 'vidplay', STORE = 'videos';
+const DB_NAME = 'vidgame', STORE = 'videos';
 let dbPromise = null;
 function openDb() {
   if (!dbPromise) dbPromise = new Promise((resolve, reject) => {
@@ -143,7 +143,10 @@ function wirePostButtons() {
 // ---------- home ----------
 async function showHome() {
   render('tpl-home');
-  document.getElementById('tut-card').onclick = () => tutorial.open();
+  const tv = document.getElementById('home-tut-video');
+  tv.src = TUTORIAL_SRC;
+  if (document.getElementById('tutorial').hidden) tv.play().catch(() => {});
+  cleanup = () => tv.pause();
   wirePostButtons();
   let videos = [];
   try { videos = await store.list(); } catch (e) { toast(e.message); }
@@ -207,11 +210,11 @@ async function showWatch(id) {
   player.src = mediaUrl(v);
   player.addEventListener('loadedmetadata', () => fixDuration(player).then(() => player.play().catch(() => {})), { once: true });
   document.getElementById('watch-title').textContent = v.title;
-  document.title = v.title + ' · VidPlay';
+  document.title = v.title + ' · VidGame';
   document.getElementById('watch-channel').textContent = channelName();
   paintAvatar(document.getElementById('watch-avatar'));
   document.getElementById('watch-info').textContent =
-    `${viewsText(v.views)} · ${timeAgo(v.createdAt)} · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in VidPlay' : ''}`;
+    `${viewsText(v.views)} · ${timeAgo(v.createdAt)} · ${fmtSize(v.size)}${v.recorded ? ' · Recorded in VidGame' : ''}`;
   const dl = document.getElementById('download');
   dl.href = mediaUrl(v);
   dl.download = v.title.replace(/[^\w\- ]+/g, '').trim() + '.' + extOf(v);
@@ -224,7 +227,7 @@ async function showWatch(id) {
     toast('Video deleted');
     location.hash = '#/channel';
   };
-  cleanup = () => { player.pause(); document.title = 'VidPlay'; };
+  cleanup = () => { player.pause(); document.title = 'VidGame'; };
 }
 
 // ---------- record ----------
@@ -294,8 +297,11 @@ async function showRecord() {
       // Fall back to camera only if there is no microphone.
       try { stream = await navigator.mediaDevices.getUserMedia({ video: true }); toast('No microphone found, recording without sound'); }
       catch (e2) {
+        const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
         msg.textContent = e2.name === 'NotAllowedError'
-          ? 'Camera access was blocked. Click the camera icon in the address bar, allow it, then reload the page.'
+          ? (inFrame
+            ? "This preview window can't use your camera. Open VidGame in its own browser tab to record. You can still upload a video with ＋ Post."
+            : 'Camera access was blocked. Click the camera icon in the address bar, allow it, then reload the page.')
           : 'No camera found. Plug one in and reload the page.';
         return;
       }
@@ -414,134 +420,33 @@ document.getElementById('upload-input').addEventListener('change', async (e) => 
   } catch (err) { toast(err.message); }
 });
 
-// ---------- tutorial: a short "video" that plays itself, with Back / Pause / Next ----------
-const TAP = (x, y) => `<span class="m-tap" style="left:${x};top:${y}"></span>`;
-const PHONE_HOME = `<div class="m-top"><span class="logo-mark">▶</span>VidPlay</div>
-  <div class="m-grid"><div class="m-thumb"></div><div class="m-thumb"></div><div class="m-thumb"></div><div class="m-thumb"></div></div>`;
-const PHONE_BAR = `<div class="m-bar"><span></span><span class="m-plus">＋</span><span class="m-me"></span></div>`;
-const TUTORIAL_STEPS = [
-  {
-    title: 'Welcome to VidPlay',
-    body: 'Make videos, post them, and watch them back. This quick tutorial shows you how.',
-    screen: `<div class="m-hello"><div><span class="logo-mark">▶</span><b>VidPlay</b></div></div>`,
-  },
-  {
-    title: 'Tap Post to make a video',
-    body: 'The big red ＋ button at the bottom lets you record a new video or upload one you already have.',
-    screen: PHONE_HOME + PHONE_BAR + TAP('calc(50% - 19px)', 'calc(100% - 50px)'),
-  },
-  {
-    title: 'Pick Record or Upload',
-    body: 'Record uses your camera and microphone. Upload picks a video file from your device.',
-    screen: PHONE_HOME + PHONE_BAR + `<div class="m-sheet"><div><b>●</b> Record a video</div><div>⬆ Upload a video</div></div>`,
-  },
-  {
-    title: 'Press the red button to record',
-    body: 'Allow the camera when your browser asks. Press Start to record, Pause if you need a break, and Stop when you are done.',
-    screen: `<div class="m-cam"></div><span class="m-badge">0:07</span><span class="m-rec"></span>`,
-  },
-  {
-    title: 'Give it a title and post it',
-    body: 'Watch your recording back first. If you like it, type a title and press Post video.',
-    screen: `<div class="m-review"><div class="m-thumb"></div><div class="m-input"><span>My first video!!</span></div><div class="m-post">Post video</div></div>`,
-  },
-  {
-    title: 'Find it on Your channel',
-    body: 'Everything you post is on Your channel, at the bottom right. Give your channel a name to get started.',
-    screen: `<div class="m-top"><span class="logo-mark">▶</span>VidPlay</div>
-      <div class="m-channel"><span class="avatar" id="tut-avatar"></span><b id="tut-chname"></b><small>3 videos · 12 views</small>
-      <div class="m-grid"><div class="m-thumb"></div><div class="m-thumb"></div></div></div>` + PHONE_BAR + TAP('calc(83% - 19px)', 'calc(100% - 42px)'),
-    extra: `<input id="tut-name-input" class="tut-name" maxlength="40" placeholder="Your channel name" aria-label="Your channel name">`,
-    last: true,
-  },
-];
-const STEP_MS = 5500;
+// ---------- tutorial video ----------
+// The tutorial is a real screen recording of the app (tutorial.webm).
+const TUTORIAL_SRC = window.VIDGAME_TUTORIAL_SRC || 'tutorial.webm';
 const tutorial = (() => {
   const el = document.getElementById('tutorial');
-  const bars = document.getElementById('tut-bars');
-  const screen = document.getElementById('tut-screen');
-  const pauseBtn = document.getElementById('tut-pause');
-  const nextBtn = document.getElementById('tut-next');
-  const backBtn = document.getElementById('tut-back');
-  let i = 0, elapsed = 0, last = 0, paused = false, raf = 0;
-
-  bars.innerHTML = TUTORIAL_STEPS.map(() => '<div class="tut-bar"><i></i></div>').join('');
-  const fills = [...bars.querySelectorAll('i')];
-
-  function show(n) {
-    i = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, n));
-    const step = TUTORIAL_STEPS[i];
-    elapsed = 0;
-    screen.innerHTML = step.screen;
-    document.getElementById('tut-title').textContent = step.title;
-    document.getElementById('tut-body').textContent = step.body;
-    document.getElementById('tut-extra').innerHTML = step.extra || '';
-    fills.forEach((f, k) => (f.style.width = k < i ? '100%' : '0%'));
-    backBtn.disabled = i === 0;
-    nextBtn.textContent = step.last ? 'Start using VidPlay' : 'Next';
-    if (step.last) {
-      const input = document.getElementById('tut-name-input');
-      const preview = () => {
-        const name = input.value.trim() || channelName();
-        document.getElementById('tut-chname').textContent = name;
-        paintAvatar(document.getElementById('tut-avatar'), name);
-      };
-      input.value = prefs.get('channel', '') ;
-      input.oninput = preview;
-      input.onkeydown = (e) => { if (e.key === 'Enter') finish(); };
-      input.onfocus = () => setPaused(true);
-      preview();
-    }
-  }
-  function setPaused(p) {
-    paused = p;
-    pauseBtn.textContent = p ? '▶' : '❚❚';
-    pauseBtn.setAttribute('aria-label', p ? 'Play tutorial' : 'Pause tutorial');
-  }
-  function frame(t) {
-    const dt = last ? t - last : 0;
-    last = t;
-    if (!paused && !TUTORIAL_STEPS[i].last) {
-      elapsed += dt;
-      fills[i].style.width = Math.min(100, (elapsed / STEP_MS) * 100) + '%';
-      if (elapsed >= STEP_MS) show(i + 1);
-    } else if (TUTORIAL_STEPS[i].last) {
-      fills[i].style.width = '100%';
-    }
-    raf = requestAnimationFrame(frame);
-  }
+  const video = document.getElementById('tut-video');
+  const input = document.getElementById('tut-name-input');
   function finish() {
-    const input = document.getElementById('tut-name-input');
-    if (input && input.value.trim()) prefs.set('channel', input.value.trim());
-    close();
+    const name = input.value.trim();
+    if (name) prefs.set('channel', name);
+    el.hidden = true;
+    video.pause();
+    prefs.set('tutorialSeen', '1');
     route();
   }
-  function close() {
-    el.hidden = true;
-    cancelAnimationFrame(raf);
-    prefs.set('tutorialSeen', '1');
-    refreshAvatars();
-  }
-  nextBtn.onclick = () => (TUTORIAL_STEPS[i].last ? finish() : show(i + 1));
-  backBtn.onclick = () => show(i - 1);
-  pauseBtn.onclick = () => setPaused(!paused);
+  document.getElementById('tut-done').onclick = finish;
   document.getElementById('tut-skip').onclick = finish;
-  document.addEventListener('keydown', (e) => {
-    if (el.hidden || e.target.tagName === 'INPUT') return;
-    if (e.key === 'Escape') finish();
-    if (e.key === 'ArrowRight') nextBtn.click();
-    if (e.key === 'ArrowLeft') backBtn.click();
-  });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(); });
+  document.addEventListener('keydown', (e) => { if (!el.hidden && e.key === 'Escape') finish(); });
   return {
     open() {
       closePostSheet();
+      if (!video.src) video.src = TUTORIAL_SRC;
+      input.value = prefs.get('channel', '');
       el.hidden = false;
-      setPaused(false);
-      last = 0;
-      show(0);
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(frame);
-      nextBtn.focus();
+      video.currentTime = 0;
+      video.play().catch(() => {});
     },
   };
 })();
