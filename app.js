@@ -912,14 +912,18 @@ function pickMimeType() {
 
 // Screen + face: draws the screen with your camera in a round bubble on top,
 // and mixes the screen's sound with your microphone, into one stream to record.
-function makeMixer(screen, cam, faceImg) {
+function makeMixer(screen, cam, faceImg, host) {
   const canvas = document.createElement('canvas');
+  canvas.className = 'player mix-canvas';
   const ctx = canvas.getContext('2d');
   const sv = document.createElement('video'), cv = document.createElement('video');
-  // Keep the videos on the page (tiny and invisible): some phones stop updating videos that aren't on the page.
+  // Keep the camera videos really on the page, just hidden behind the picture we draw:
+  // phones (especially iPhones) stop updating videos that aren't on the page.
   const hold = document.createElement('div');
-  hold.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;overflow:hidden';
-  document.body.appendChild(hold);
+  hold.className = 'mix-hold';
+  (host || document.body).appendChild(hold);
+  // Show the drawn picture itself as the preview (more reliable on phones than a video of it).
+  if (host) host.insertBefore(canvas, host.firstChild);
   for (const [v, src] of [[sv, screen], [cv, cam]]) {
     v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.autoplay = true;
     hold.appendChild(v);
@@ -1017,6 +1021,7 @@ function makeMixer(screen, cam, faceImg) {
     } catch { out.addTrack(audioIn[0]); }
   }
   m.stream = out;
+  m.canvas = canvas;
   // Swap which picture is big and which is in the bubble (works mid-video).
   m.swap = () => {
     if (!cam) return;
@@ -1039,6 +1044,7 @@ function makeMixer(screen, cam, faceImg) {
     if (ac) ac.close().catch(() => {});
     sv.srcObject = cv.srcObject = null;
     hold.remove();
+    canvas.remove();
   };
   return m;
 }
@@ -1080,6 +1086,7 @@ async function showRecord() {
 
   const stopStream = () => {
     if (mixer) { mixer.stop(); mixer = null; }
+    stage.classList.remove('mixing');
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null; preview.srcObject = null;
   };
@@ -1142,18 +1149,19 @@ async function showRecord() {
   };
   bubbleSize.oninput = () => { if (mixer) mixer.size = +bubbleSize.value; };
   // Drag the face bubble around the preview.
-  preview.addEventListener('pointerdown', (e) => {
-    if (!mixer) return;
+  stage.addEventListener('pointerdown', (e) => {
+    if (!mixer || e.target !== mixer.canvas) return;
     e.preventDefault();
-    preview.setPointerCapture(e.pointerId);
+    const el = mixer.canvas;
+    el.setPointerCapture(e.pointerId);
     const move = (ev) => {
-      const r = preview.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
       bubble.x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
       bubble.y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
     };
     move(e);
-    preview.onpointermove = move;
-    preview.onpointerup = preview.onpointercancel = () => { preview.onpointermove = null; };
+    el.onpointermove = move;
+    el.onpointerup = el.onpointercancel = () => { el.onpointermove = null; };
   });
 
   // Try to use two cameras at once (front + back on phones, two cameras on computers).
@@ -1251,9 +1259,9 @@ async function showRecord() {
           // Your face in a bubble + the other way (what's in front of you).
           showMsg('Starting your cameras… If your browser asks, press Allow.', false);
           const audio = micSel.value ? { deviceId: { exact: micSel.value } } : true;
-          const two = await openTwoCameras(audio);
+          const two = isPhone() ? null : await openTwoCameras(audio);
           if (two) {
-            mixer = makeMixer(two.main, two.face);
+            mixer = makeMixer(two.main, two.face, null, stage);
             mixer.mirror = true;
             mixer.twoCams = true;
           } else {
@@ -1266,7 +1274,7 @@ async function showRecord() {
               if (err.name === 'NotAllowedError' || err.name === 'SecurityError') throw err;
               main = await navigator.mediaDevices.getUserMedia({ video: true });
             }
-            mixer = makeMixer(main, null);
+            mixer = makeMixer(main, null, null, stage);
             mixer.single = true; mixer.sameCam = true; mixer.facing = 'user'; mixer.mirrorMain = true;
           }
           mixer.size = +bubbleSize.value;
@@ -1285,7 +1293,7 @@ async function showRecord() {
             try { cam = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing } }); } catch {}
             toast(cam ? 'No microphone found, recording without your voice' : "Your camera couldn't start, so only the screen will be recorded");
           }
-          mixer = makeMixer(screen, cam);
+          mixer = makeMixer(screen, cam, null, stage);
           mixer.size = +bubbleSize.value;
           mixer.mirror = facing === 'user';
           Object.defineProperty(mixer, 'x', { get: () => bubble.x });
@@ -1332,7 +1340,8 @@ async function showRecord() {
         return false;
       }
       if (leaving) { stopStream(); return false; }
-      preview.srcObject = stream;
+      preview.srcObject = mixer ? null : stream;
+      stage.classList.toggle('mixing', !!mixer);
       hideMsg();
       paintLiveControls();
 
