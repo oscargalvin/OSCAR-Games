@@ -246,7 +246,9 @@ function setupBadgeEditor(onSaved) {
   const pad = setupDrawingPad((dataUrl) => { draft.drawing = dataUrl; draft.type = 'drawing'; paintAvatar(preview, channelName(), draft); });
 
   $('be-emojis').innerHTML = BADGE_EMOJIS.map((e) => `<button type="button" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('');
-  $('be-colors').innerHTML = AVATAR_COLORS.map((c) => `<button type="button" data-color="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('');
+  $('be-colors').innerHTML = AVATAR_COLORS.map((c) => `<button type="button" data-color="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('')
+    + `<button type="button" class="rainbow-btn" data-any="1" aria-label="Pick any colour" title="Pick any colour"></button>`;
+  let bgPicker = null;
 
   function update() {
     const type = draft.type || 'letter';
@@ -255,7 +257,9 @@ function setupBadgeEditor(onSaved) {
     $('be-color-group').hidden = type === 'photo' || type === 'drawing';
     const color = draft.color || defaultColor(channelName());
     document.querySelectorAll('#be-emojis button').forEach((b) => b.classList.toggle('sel', b.dataset.emoji === draft.emoji));
-    document.querySelectorAll('#be-colors button').forEach((b) => b.classList.toggle('sel', b.dataset.color === color));
+    const isPreset = AVATAR_COLORS.includes(color);
+    document.querySelectorAll('#be-colors button').forEach((b) =>
+      b.classList.toggle('sel', b.dataset.any ? !isPreset || !$('be-picker').hidden : b.dataset.color === color));
     paintAvatar(preview, channelName(), draft);
   }
   function open() {
@@ -277,7 +281,23 @@ function setupBadgeEditor(onSaved) {
   }));
   $('be-letters').oninput = (e) => { draft.letters = e.target.value.replace(/\s/g, '').slice(0, 2); update(); };
   $('be-emojis').onclick = (e) => { const b = e.target.closest('button'); if (b) { draft.emoji = b.dataset.emoji; update(); } };
-  $('be-colors').onclick = (e) => { const b = e.target.closest('button'); if (b) { draft.color = b.dataset.color; update(); } };
+  $('be-colors').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.any) {
+      const box = $('be-picker');
+      box.hidden = !box.hidden;
+      const cur = draft.color || defaultColor(channelName());
+      if (!box.hidden) {
+        if (!bgPicker) bgPicker = createColorPicker(box, cur, (hex) => { draft.color = hex; update(); });
+        else bgPicker.set(cur);
+      }
+      update();
+      return;
+    }
+    draft.color = b.dataset.color;
+    if (bgPicker) bgPicker.set(draft.color);
+    update();
+  };
   $('be-photo').onchange = async (e) => {
     const file = e.target.files[0];
     e.target.value = '';
@@ -301,6 +321,68 @@ function setupBadgeEditor(onSaved) {
   };
 }
 
+// ---------- any-colour picker (shade box + hue slider + colour code) ----------
+function hsvToHex(h, s, v) {
+  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return '#' + [f(5), f(3), f(1)].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+}
+function hexToHsv(hex) {
+  const n = parseInt(hex.slice(1), 16), r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: (h * 60 + 360) % 360, s: max ? d / max : 0, v: max };
+}
+function createColorPicker(holder, startHex, onChange) {
+  holder.innerHTML = `<div class="cp">
+      <canvas class="cp-sv" width="236" height="150" aria-label="Pick a shade"></canvas>
+      <input class="cp-hue" type="range" min="0" max="359" aria-label="Pick a colour">
+      <div class="cp-row"><span class="cp-swatch"></span><input class="cp-hex" maxlength="7" aria-label="Colour code"><span class="cp-label">Drag in the box for lighter or darker</span></div>
+    </div>`;
+  const sv = holder.querySelector('.cp-sv'), ctx = sv.getContext('2d');
+  const hue = holder.querySelector('.cp-hue'), sw = holder.querySelector('.cp-swatch'), hexIn = holder.querySelector('.cp-hex');
+  let st = hexToHsv(startHex || '#e11d48');
+  const W = sv.width, H = sv.height;
+  function draw() {
+    ctx.fillStyle = hsvToHex(st.h, 1, 1); ctx.fillRect(0, 0, W, H);
+    let g = ctx.createLinearGradient(0, 0, W, 0); g.addColorStop(0, '#fff'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, '#000');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const x = st.s * W, y = (1 - st.v) * H;
+    ctx.lineWidth = 3; ctx.strokeStyle = st.v > 0.5 && st.s < 0.5 ? '#000' : '#fff';
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.stroke();
+  }
+  function emit(fromHex) {
+    const hex = hsvToHex(st.h, st.s, st.v);
+    sw.style.background = hex;
+    if (!fromHex) hexIn.value = hex.toUpperCase();
+    hue.value = Math.round(st.h);
+    draw();
+    onChange(hex);
+  }
+  let dragging = false;
+  const pick = (e) => {
+    const r = sv.getBoundingClientRect();
+    st.s = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    st.v = 1 - Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    emit();
+  };
+  sv.addEventListener('pointerdown', (e) => { e.preventDefault(); dragging = true; sv.setPointerCapture(e.pointerId); pick(e); });
+  sv.addEventListener('pointermove', (e) => { if (dragging) pick(e); });
+  sv.addEventListener('pointerup', () => { dragging = false; });
+  hue.addEventListener('input', () => { st.h = +hue.value; if (st.s < 0.05 && st.v > 0.95) { st.s = 1; } emit(); });
+  hexIn.addEventListener('input', () => {
+    let v = hexIn.value.trim(); if (!v.startsWith('#')) v = '#' + v;
+    if (/^#[0-9a-f]{6}$/i.test(v)) { st = hexToHsv(v.toLowerCase()); emit(true); }
+  });
+  sw.style.background = hsvToHex(st.h, st.s, st.v);
+  hexIn.value = hsvToHex(st.h, st.s, st.v).toUpperCase();
+  hue.value = Math.round(st.h);
+  draw();
+  return { set(hex) { st = hexToHsv(hex); sw.style.background = hex; hexIn.value = hex.toUpperCase(); hue.value = Math.round(st.h); draw(); } };
+}
+
 // ---------- drawing pad for the badge ----------
 const DRAW_COLORS = ['#111111', '#ffffff', '#e11d48', '#f97316', '#facc15', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#a16207', '#9ca3af'];
 function setupDrawingPad(onChange) {
@@ -309,8 +391,23 @@ function setupDrawingPad(onChange) {
   const W = canvas.width;
   let color = DRAW_COLORS[2], size = 14, erasing = false, filling = false, drawing = false, last = null, history = [], blank = true;
 
-  $('draw-colors').innerHTML = DRAW_COLORS.map((c) => `<button type="button" data-c="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('');
-  const markColor = () => document.querySelectorAll('#draw-colors button').forEach((b) => b.classList.toggle('sel', b.dataset.c === color && !erasing));
+  let custom = [];
+  function paintSwatches() {
+    const all = [...DRAW_COLORS, ...custom];
+    $('draw-colors').innerHTML = all.map((c) => `<button type="button" data-c="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('')
+      + `<button type="button" class="rainbow-btn" data-any="1" aria-label="Pick any colour" title="Pick any colour"></button>`;
+    markColor();
+  }
+  const markColor = () => document.querySelectorAll('#draw-colors button').forEach((b) => {
+    b.classList.toggle('sel', (b.dataset.c === color && !erasing) || (b.dataset.any && !$('draw-picker').hidden));
+  });
+  let picker = null;
+  function useCustom(hex) {
+    color = hex; erasing = false; $('draw-eraser').setAttribute('aria-pressed', 'false');
+    if (!DRAW_COLORS.includes(hex)) { custom = [hex, ...custom.filter((c) => c !== hex)].slice(0, 6); }
+    clearTimeout(useCustom.t);
+    useCustom.t = setTimeout(paintSwatches, 250); // wait until you stop dragging
+  }
   function reset() {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#ffffff';
@@ -351,7 +448,18 @@ function setupDrawingPad(onChange) {
 
   $('draw-colors').onclick = (e) => {
     const b = e.target.closest('button'); if (!b) return;
-    color = b.dataset.c; erasing = false; $('draw-eraser').setAttribute('aria-pressed', 'false'); markColor();
+    if (b.dataset.any) {
+      const box = $('draw-picker');
+      box.hidden = !box.hidden;
+      if (!box.hidden) {
+        if (!picker) picker = createColorPicker(box, color, useCustom);
+        else picker.set(color);
+      }
+      markColor();
+      return;
+    }
+    color = b.dataset.c;
+    if (picker) picker.set(color); erasing = false; $('draw-eraser').setAttribute('aria-pressed', 'false'); markColor();
     if (!filling) canvas.style.cursor = 'crosshair';
   };
   document.querySelectorAll('.draw-size').forEach((b) => (b.onclick = () => {
@@ -404,7 +512,7 @@ function setupDrawingPad(onChange) {
   $('draw-clear').onclick = () => { snapshot(); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, W); blank = true; onChange(canvas.toDataURL('image/png')); };
 
   reset();
-  markColor();
+  paintSwatches();
   return {
     load(dataUrl) {
       reset();

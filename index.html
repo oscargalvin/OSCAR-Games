@@ -147,6 +147,7 @@
               <canvas id="draw-canvas" class="draw-canvas" width="384" height="384" aria-label="Drawing area for your badge"></canvas>
               <div class="draw-tools">
                 <div id="draw-colors" class="draw-colors" role="group" aria-label="Pen colour"></div>
+                <div id="draw-picker" class="cp-holder" hidden></div>
                 <div class="draw-row" role="group" aria-label="Pen size">
                   <button class="draw-size" data-size="6" aria-label="Thin pen"><i style="width:6px;height:6px"></i></button>
                   <button class="draw-size sel" data-size="14" aria-label="Medium pen"><i style="width:12px;height:12px"></i></button>
@@ -165,6 +166,7 @@
           <div class="be-group" id="be-color-group">
             <h3>Background colour</h3>
             <div id="be-colors" class="be-colors"></div>
+            <div id="be-picker" class="cp-holder" hidden></div>
           </div>
           <div class="be-actions">
             <button id="be-save" class="btn btn-primary">Save badge</button>
